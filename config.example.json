@@ -68,7 +68,7 @@
     "maxTelegramChars": 3900
   },
   "web": {
-    "host": "code.communism.mom",
+    "host": "opencodez.example.com",
     "target": "http://192.168.1.50:4098",
     "preferHttp": true
   },
