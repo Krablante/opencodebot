@@ -1,6 +1,6 @@
 # Config And Runtime
 
-The repo contains source, defaults, and docs. Runtime config and state live under Politia state so the bot can be repaired, restarted, and shared without committing private values.
+The repo contains source, defaults, and docs. Runtime config and state live outside git so the bot can be repaired, restarted, and shared without committing private values.
 
 Create config once with:
 
@@ -11,22 +11,24 @@ npm run init-config
 Default runtime config path:
 
 ```text
-/home/bloob/politia/state/projects/tg/opencodebot/config.json
+./config.local.json
 ```
 
-`config.example.json` is the public shape and default baseline. The generated config is the local runtime copy. Edit the runtime copy for local behavior, and update `config.example.json` only when the shareable default shape changes.
+`config.example.json` is the public shape and default baseline. `npm run init-config` creates the local runtime copy and an editable `servers.json`. Edit the runtime copy for local behavior, and update `config.example.json` only when the shareable default shape changes.
 
 ## Loading
 
-The normal service reads `OPENCODEBOT_CONFIG` when it is set. If it is not set, the loader uses the default Politia state path above. If that file does not exist, it falls back to `config.example.json`; that fallback is useful for checks, but a real bot should have an explicit runtime config.
+The bot reads `OPENCODEBOT_CONFIG` when it is set. If it is not set, the loader uses `config.local.json` in the repo root. If that file does not exist, it falls back to `config.example.json`; that fallback is useful for checks, but a real bot should have an explicit runtime config.
 
-The loader also reads `paths.tokenEnv` and then overlays process environment variables on top. That means systemd, shell sessions, and local scripts can override values from `token.env` without editing the runtime JSON.
+Relative paths in config are resolved from the config file's directory. This keeps the same config shape usable on Linux and Windows.
 
-OpenCodez servers come from `paths.serversJson`, not from the main config body. This keeps the bot aligned with the same host list used by the rest of the Politia/OpenCodez setup.
+The loader also reads `paths.tokenEnv` and then overlays process environment variables on top. That means systemd, PowerShell, shell sessions, and local scripts can override values from `token.env` without editing the runtime JSON.
+
+OpenCodez servers come from `paths.serversJson`, not from the main config body. The public example points at `servers.example.json`; `npm run init-config` creates a local ignored `servers.json` for your real hosts.
 
 ## Secrets
 
-`token.env` is read by the systemd unit and local scripts for values such as the Telegram bot token, allowed user ids, and the OpenCodez password. Do not print it, paste it into docs, or commit it.
+`token.env` is read by local scripts and can also be read by the Linux systemd unit. It holds values such as the Telegram bot token, allowed user ids, and the OpenCodez password. Do not print it, paste it into docs, or commit it.
 
 The config names the environment variables to try. `telegram.tokenEnvNames` is checked first, but the loader can also recognize a Telegram-looking token from the env file. `telegram.allowedUserEnvNames` is checked first for user ids; if none are found, the loader falls back to env names that look like owner/user/allowed id variables. `opencode.passwordEnvNames` works the same simple way for the OpenCodez password.
 
@@ -126,18 +128,28 @@ If long prompts are being sent too early, raise `idleMs`. If ordinary messages a
 
 If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. Reconnects, progress events, and tool-only events do not release or clear the queue.
 
-`paths.uploadsDir` stores downloaded Telegram files. Uploaded files are runtime material and should stay out of git. WireGuard private keys and peer configs live under the configured Politia state path and `/etc/wireguard`, not in the repo.
+`paths.uploadsDir` stores downloaded Telegram files. Uploaded files are runtime material and should stay out of git. WireGuard private keys and peer configs live under the configured runtime state path and `/etc/wireguard` on Linux hosts, not in the repo.
 
 ## Useful Changes
 
-Use the runtime config for local behavior:
+Use the runtime config for local behavior on Linux/macOS:
 
 ```bash
-$EDITOR /home/bloob/politia/state/projects/tg/opencodebot/config.json
-sudo systemctl restart opencodebot.service
-journalctl -u opencodebot.service -n 80 --no-pager
+npm run init-config
+$EDITOR config.local.json
+$EDITOR servers.json
+npm start
 ```
 
-Before sharing the bot with a friend, the important knobs are usually `telegram.chatId`, `telegram.allowedUserIds`, `telegram.allowChatBootstrap`, `defaultPrompt.serverId`, `chatTemplates`, `mirror.hiddenTools`, attachment limits, and web base URLs.
+Use the same files from PowerShell on Windows:
+
+```powershell
+npm run init-config
+notepad .\config.local.json
+notepad .\servers.json
+npm start
+```
+
+Before sharing the bot with a friend, the important knobs are usually `telegram.chatId`, `telegram.allowedUserIds`, `telegram.allowChatBootstrap`, `defaultPrompt.serverID`, `chatTemplates`, `mirror.hiddenTools`, attachment limits, and web base URLs.
 
 When changing the config shape, update `config.example.json`, `src/config.mjs`, and the relevant docs together. Keep defaults reasonable and boring.

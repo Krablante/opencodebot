@@ -12,6 +12,7 @@ npm-debug.log*
 # but keep these ignored if a local copy is ever created in the project tree.
 config.json
 config.local.json
+servers.json
 state.json
 wireguard/
 *.key

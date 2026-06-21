@@ -5,12 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=bloob
-Group=bloob
-WorkingDirectory=/home/bloob/politia/projects/tg/opencodebot
-Environment=OPENCODEBOT_CONFIG=/home/bloob/politia/state/projects/tg/opencodebot/config.json
-EnvironmentFile=/home/bloob/politia/projects/tg/opencodebot/token.env
-ExecStart=/usr/bin/node /home/bloob/politia/projects/tg/opencodebot/src/main.mjs
+User=opencodebot
+Group=opencodebot
+WorkingDirectory=/opt/opencodebot
+Environment=OPENCODEBOT_CONFIG=/etc/opencodebot/config.local.json
+EnvironmentFile=/etc/opencodebot/token.env
+ExecStart=/usr/bin/node /opt/opencodebot/src/main.mjs
 Restart=on-failure
 RestartSec=5s
 

@@ -1,9 +1,9 @@
 {
   "paths": {
-    "tokenEnv": "/home/bloob/politia/projects/tg/opencodebot/token.env",
-    "serversJson": "/home/bloob/politia/services/harness/opencodez/servers.json",
-    "statePath": "/home/bloob/politia/state/projects/tg/opencodebot/state.json",
-    "uploadsDir": "/home/bloob/politia/state/projects/tg/opencodebot/uploads"
+    "tokenEnv": "token.env",
+    "serversJson": "servers.example.json",
+    "statePath": "state/state.json",
+    "uploadsDir": "state/uploads"
   },
   "telegram": {
     "chatId": null,
@@ -21,7 +21,7 @@
     "passwordEnvNames": ["OPENCODE_SERVER_PASSWORD", "OPENCODEZ_SERVER_PASSWORD"]
   },
   "defaultPrompt": {
-    "serverID": "nuc",
+    "serverID": "local",
     "agent": "build",
     "model": null
   },
@@ -81,6 +81,6 @@
     "lanSubnet": "192.168.1.0/24",
     "dns": "192.168.1.50",
     "wanInterface": "eno1",
-    "stateDir": "/home/bloob/politia/state/projects/tg/opencodebot/wireguard"
+    "stateDir": "state/wireguard"
   }
 }

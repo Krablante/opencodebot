@@ -1,0 +1,11 @@
+{
+  "servers": [
+    {
+      "id": "local",
+      "label": "Local OpenCodez",
+      "url": "http://127.0.0.1:4096",
+      "home": ".",
+      "offline_ok": true
+    }
+  ]
+}

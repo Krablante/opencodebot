@@ -18,7 +18,7 @@ With OpenCodez, this is especially convenient because the web UI is still the fu
 
 ## What Must Be Ready
 
-On the server side you need:
+On the server side you need a Linux host:
 
 - A machine running OpenCodez and opencodebot.
 - WireGuard installed on that machine: `wg` and `wg-quick` must exist.

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, "..")
-const defaultConfigPath = "/home/bloob/politia/state/projects/tg/opencodebot/config.json"
+const defaultConfigPath = path.join(projectRoot, "config.local.json")
 const exampleConfigPath = path.join(projectRoot, "config.example.json")
 const defaultHiddenTools = ["todo", "todowrite", "todo_write"]
 const defaultMultipartPrompts = { enabled: true, minChars: 3600, idleMs: 2000, maxParts: 20, maxChars: 120000 }
@@ -36,9 +36,16 @@ const defaultChatTemplates = {
 }
 
 export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaultConfigPath) {
-  const sourcePath = fs.existsSync(configPath) ? configPath : exampleConfigPath
+  const requestedPath = path.resolve(configPath || defaultConfigPath)
+  const sourcePath = fs.existsSync(requestedPath) ? requestedPath : exampleConfigPath
+  const configDir = path.dirname(sourcePath)
   const config = readJson(sourcePath)
-  const env = loadEnvFile(config.paths?.tokenEnv)
+  const tokenEnvPath = resolveConfigPath(config.paths?.tokenEnv || "token.env", configDir)
+  const serversJsonPath = resolveConfigPath(config.paths?.serversJson || "servers.example.json", configDir)
+  const statePath = resolveConfigPath(config.paths?.statePath || path.join("state", "state.json"), configDir)
+  const uploadsDir = resolveConfigPath(config.paths?.uploadsDir || path.join(path.dirname(statePath), "uploads"), configDir)
+  const wireguardStateDir = resolveConfigPath(config.wireguard?.stateDir || path.join(path.dirname(statePath), "wireguard"), configDir)
+  const env = loadEnvFile(tokenEnvPath)
   const mergedEnv = { ...env, ...process.env }
   const telegramToken = pickToken(mergedEnv, config.telegram?.tokenEnvNames || [])
   const allowedUserIds = uniqueNumbers([
@@ -48,8 +55,7 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
   const openCodePassword = pickValue(mergedEnv, config.opencode?.passwordEnvNames || [])
   const chatId = config.telegram?.chatId ?? readFirstNumber(mergedEnv, ["OPENCODEBOT_CHAT_ID", "TELEGRAM_CHAT_ID"])
   const mainTopicId = config.telegram?.mainTopicId ?? readFirstNumber(mergedEnv, ["OPENCODEBOT_MAIN_TOPIC_ID", "TELEGRAM_MAIN_TOPIC_ID"])
-  const servers = readServers(config.paths?.serversJson)
-  const statePath = config.paths?.statePath || "/home/bloob/politia/state/projects/tg/opencodebot/state.json"
+  const servers = readServers(serversJsonPath)
 
   return {
     ...config,
@@ -57,8 +63,10 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
     projectRoot,
     paths: {
       ...config.paths,
+      tokenEnv: tokenEnvPath,
+      serversJson: serversJsonPath,
       statePath,
-      uploadsDir: config.paths?.uploadsDir || path.join(path.dirname(statePath), "uploads"),
+      uploadsDir,
     },
     telegram: {
       ...config.telegram,
@@ -79,7 +87,15 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
     multipartPrompts: normalizeMultipartPrompts(config.multipartPrompts),
     attachments: normalizeAttachments(config.attachments),
     chatTemplates: normalizeChatTemplates(config.chatTemplates),
+    wireguard: {
+      ...config.wireguard,
+      stateDir: wireguardStateDir,
+    },
   }
+}
+
+function resolveConfigPath(filePath, baseDir) {
+  return path.isAbsolute(filePath) ? filePath : path.resolve(baseDir, filePath)
 }
 
 export function assertRuntimeConfig(config) {

@@ -18,7 +18,15 @@ Run smoke checks:
 npm run smoke
 ```
 
-Smoke includes local logic checks for `/new` parsing, tool formatting, prompt queue behavior, multipart prompt buffering, and attachment buffering. It then loads runtime config, checks Telegram `getMe`, probes OpenCodez servers, and verifies chat-template selection with a temporary session. It should not send prompts or print tokens.
+`npm run check` is implemented as a Node script so it works on Linux, macOS, and Windows without relying on shell glob expansion. Smoke includes local logic checks for `/new` parsing, tool formatting, prompt queue behavior, multipart prompt buffering, and attachment buffering. It then loads runtime config, checks Telegram `getMe`, probes OpenCodez servers, and verifies chat-template selection with a temporary session when the selected server is not marked `offline_ok`. It should not send prompts or print tokens.
+
+On Windows, use PowerShell and the same npm commands:
+
+```powershell
+npm run check
+npm run smoke
+npm start
+```
 
 ## Service
 
@@ -29,7 +37,7 @@ sudo systemctl restart opencodebot.service
 journalctl -u opencodebot.service -n 120 --no-pager
 ```
 
-The service file lives in `deploy/opencodebot.service`. The project runs on `nuc`, which is an infrastructure host, so avoid heavy build steps here unless there is a concrete reason.
+The service file lives in `deploy/opencodebot.service` and is Linux/systemd only. On Windows, run the bot directly with `npm start` in PowerShell. Do not add a Windows service wrapper until someone actually needs unattended Windows hosting.
 
 ## Change Style
 

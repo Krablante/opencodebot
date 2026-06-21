@@ -130,6 +130,11 @@ async function smokeTemplateSelection() {
     console.log("template-select: skipped")
     return
   }
+  const server = config.opencode.servers.find((item) => item.id === serverID)
+  if (server?.offlineOk) {
+    console.log(`template-select: skipped (${serverID} is offline_ok)`)
+    return
+  }
   let session
   try {
     session = await client.createSession(serverID)

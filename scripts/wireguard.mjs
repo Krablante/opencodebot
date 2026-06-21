@@ -15,6 +15,11 @@ if (!command || !["init", "peer"].includes(command)) {
   process.exit(command ? 1 : 0)
 }
 
+if (process.platform !== "linux") {
+  console.error("The WireGuard server helper is Linux-only. Windows and macOS are supported as WireGuard clients using generated .conf files.")
+  process.exit(1)
+}
+
 if (command === "init") await initServer()
 if (command === "peer") await createPeer(process.argv[3] || "phone")
 

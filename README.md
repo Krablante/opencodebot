@@ -36,20 +36,32 @@ LAN browser, or optional WireGuard browser
 
 OpenCodez remains the main workspace. Telegram is the mirror/control surface for moments when a chat interface is more convenient.
 
+## Platforms
+
+The bot host supports Linux and Windows through Node.js and npm. Linux also has the optional systemd service template and WireGuard server helper. Windows is fully fine as a Telegram, browser, and WireGuard client; running the bot itself on Windows is just `npm start` in PowerShell.
+
 ## Setup
 
-Clone the repo and create a runtime config. Use `OPENCODEBOT_CONFIG` to keep local config wherever you prefer:
+Clone the repo and create a runtime config:
 
 ```bash
 git clone https://github.com/Krablante/opencodebot.git
 cd opencodebot
-OPENCODEBOT_CONFIG="$PWD/config.local.json" npm run init-config
+npm run init-config
 ```
 
-Edit runtime behavior before starting the bot:
+This creates `config.local.json` and `servers.json`. Edit both before starting the bot:
 
 ```bash
 $EDITOR config.local.json
+$EDITOR servers.json
+```
+
+PowerShell works the same way:
+
+```powershell
+notepad .\config.local.json
+notepad .\servers.json
 ```
 
 Secrets belong in `token.env`, not in git:
@@ -63,7 +75,13 @@ OPENCODE_PASSWORD=your-opencodez-password
 Run locally:
 
 ```bash
-OPENCODEBOT_CONFIG="$PWD/config.local.json" npm start
+npm start
+```
+
+Or in PowerShell:
+
+```powershell
+npm start
 ```
 
 The systemd unit in `deploy/` is a template. Edit its user, paths, env file, and `OPENCODEBOT_CONFIG` before installing it on your host.

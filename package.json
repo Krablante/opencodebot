@@ -23,7 +23,7 @@
   ],
   "scripts": {
     "start": "node src/main.mjs",
-    "check": "node --check src/*.mjs scripts/*.mjs",
+    "check": "node scripts/check.mjs",
     "smoke": "node scripts/smoke.mjs",
     "init-config": "node scripts/init-config.mjs",
     "wireguard": "node scripts/wireguard.mjs"
