@@ -38,11 +38,11 @@ OpenCodez remains the main workspace. Telegram is the mirror/control surface for
 
 ## Platforms
 
-The bot host supports Linux and Windows through Node.js and npm. Linux also has the optional systemd service template and WireGuard server helper. Windows is fully fine as a Telegram, browser, and WireGuard client; running the bot itself on Windows is just `npm start` in PowerShell.
+Docker Compose is the easiest deployment path on Linux, Windows, and macOS. The bot also runs directly through Node.js and npm. Linux has the optional systemd service template and WireGuard server helper. Windows is fully fine as a Telegram, browser, Docker, and WireGuard client.
 
 ## Setup
 
-Clone the repo and create a runtime config:
+Clone the repo and create local config:
 
 ```bash
 git clone https://github.com/Krablante/opencodebot.git
@@ -72,19 +72,25 @@ TELEGRAM_ALLOWED_USER_IDS=123456789
 OPENCODE_PASSWORD=your-opencodez-password
 ```
 
-Run locally:
+Run with Docker Compose:
 
 ```bash
-npm start
+mkdir -p state
+docker compose up -d --build
+docker compose logs -f opencodebot
 ```
 
-Or in PowerShell:
+PowerShell:
 
 ```powershell
-npm start
+New-Item -ItemType Directory -Force state
+docker compose up -d --build
+docker compose logs -f opencodebot
 ```
 
-The systemd unit in `deploy/` is a template. Edit its user, paths, env file, and `OPENCODEBOT_CONFIG` before installing it on your host.
+OpenCodez does not need to run in Docker. Put its normal LAN URL in `servers.json`; if OpenCodez runs on the same machine as Docker Desktop, `http://host.docker.internal:4096` is usually the right URL.
+
+For direct npm usage, run `npm start`. The systemd unit in `deploy/` is a Linux template for people who prefer systemd over Docker.
 
 ## Commands
 
@@ -104,6 +110,7 @@ Default chat templates are `d4flash`, `d4pro`, and `gpt55p`. Public defaults use
 
 - [Telegram Workflow](docs/telegram-workflow.md) covers topics, `/new`, `/q`, attachments, multipart prompts, rich messages, tools, final pins, and reconcile.
 - [Config And Runtime](docs/config-runtime.md) covers config loading, token handling, templates, mirror settings, attachments, and state.
+- [Docker](docs/docker.md) covers the recommended Compose deployment path.
 - [Development](docs/development.md) covers source layout, checks, smoke tests, service restart, and change style.
 - [WireGuard](docs/wireguard.md) covers the optional private access helper and what it does not own.
 

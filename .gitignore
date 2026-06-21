@@ -1,5 +1,6 @@
 token.env
 .env
+docker-compose.override.yml
 .env.*
 
 node_modules/
@@ -8,11 +9,11 @@ dist/
 *.log
 npm-debug.log*
 
-# Runtime state lives under /home/bloob/politia/state/projects/tg/opencodebot,
-# but keep these ignored if a local copy is ever created in the project tree.
+# Runtime state and local config should stay out of git.
 config.json
 config.local.json
 servers.json
+state/
 state.json
 wireguard/
 *.key

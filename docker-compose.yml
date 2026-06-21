@@ -1,0 +1,13 @@
+services:
+  opencodebot:
+    build: .
+    restart: unless-stopped
+    environment:
+      OPENCODEBOT_CONFIG: /app/config.local.json
+    volumes:
+      - ${OPENCODEBOT_CONFIG_FILE:-./config.local.json}:/app/config.local.json:ro
+      - ${OPENCODEBOT_SERVERS_FILE:-./servers.json}:/app/servers.json:ro
+      - ${OPENCODEBOT_TOKEN_ENV_FILE:-./token.env}:/app/token.env:ro
+      - ${OPENCODEBOT_STATE_DIR:-./state}:/app/state
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

@@ -22,6 +22,8 @@ The bot reads `OPENCODEBOT_CONFIG` when it is set. If it is not set, the loader 
 
 Relative paths in config are resolved from the config file's directory. This keeps the same config shape usable on Linux and Windows.
 
+The Docker Compose setup mounts `config.local.json`, `servers.json`, `token.env`, and `state/` into the container at the same `/app/...` paths. That means the config created by `npm run init-config` works for both direct npm usage and Docker. The only common Docker-specific edit is the OpenCodez URL in `servers.json`: use a LAN URL or `host.docker.internal`, not `127.0.0.1`, when OpenCodez runs on the host.
+
 The loader also reads `paths.tokenEnv` and then overlays process environment variables on top. That means systemd, PowerShell, shell sessions, and local scripts can override values from `token.env` without editing the runtime JSON.
 
 OpenCodez servers come from `paths.serversJson`, not from the main config body. The public example points at `servers.example.json`; `npm run init-config` creates a local ignored `servers.json` for your real hosts.

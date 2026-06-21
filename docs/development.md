@@ -28,6 +28,13 @@ npm run smoke
 npm start
 ```
 
+Docker checks use the same source tree:
+
+```bash
+docker compose build
+docker compose run --rm opencodebot npm run check
+```
+
 ## Service
 
 When runtime code changes on the live host, restart and check logs:
