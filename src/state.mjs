@@ -1,0 +1,225 @@
+import fs from "node:fs/promises"
+import path from "node:path"
+
+export class StateStore {
+  constructor(filePath) {
+    this.filePath = filePath
+    this.data = defaultState()
+    this.queue = Promise.resolve()
+  }
+
+  async load() {
+    try {
+      const text = await fs.readFile(this.filePath, "utf8")
+      this.data = { ...defaultState(), ...JSON.parse(text) }
+      this.data.bindings ||= []
+      this.data.pendingTopics ||= {}
+      this.data.pendingPrompts ||= []
+      this.data.mirroredAssistantMessages ||= []
+      this.data.mirroredUserMessages ||= []
+      this.data.seenSessions ||= []
+      this.data.telegram ||= {}
+      this.data.runtime ||= {}
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error
+      this.data = defaultState()
+      await this.save()
+    }
+    return this.data
+  }
+
+  async save() {
+    await fs.mkdir(path.dirname(this.filePath), { recursive: true })
+    const temp = `${this.filePath}.${process.pid}.tmp`
+    await fs.writeFile(temp, JSON.stringify(this.data, null, 2) + "\n", { mode: 0o600 })
+    await fs.rename(temp, this.filePath)
+  }
+
+  async update(mutator) {
+    this.queue = this.queue.then(async () => {
+      const result = await mutator(this.data)
+      await this.save()
+      return result
+    })
+    return this.queue
+  }
+
+  get chatId() {
+    return this.data.telegram.chatId ?? null
+  }
+
+  findBinding(serverID, sessionID) {
+    return this.data.bindings.find((binding) => !binding.disabled && binding.serverID === serverID && binding.sessionID === sessionID)
+  }
+
+  findBindingByTopic(chatId, topicId) {
+    return this.data.bindings.find(
+      (binding) => !binding.disabled && String(binding.chatId) === String(chatId) && String(binding.topicId ?? 0) === String(topicId ?? 0),
+    )
+  }
+
+  pendingTopic(topicId) {
+    return this.data.pendingTopics[String(topicId ?? 0)]
+  }
+
+  async setChatId(chatId) {
+    return this.update((data) => {
+      data.telegram.chatId = chatId
+    })
+  }
+
+  async setMirrorEnabled(enabled) {
+    return this.update((data) => {
+      data.telegram.mirrorEnabled = Boolean(enabled)
+    })
+  }
+
+  mirrorEnabled(config) {
+    return this.data.telegram.mirrorEnabled ?? config.telegram.mirrorEnabled ?? true
+  }
+
+  async bindTopic(binding) {
+    return this.update((data) => {
+      const existing = data.bindings.findIndex(
+        (item) => item.serverID === binding.serverID && item.sessionID === binding.sessionID,
+      )
+      const normalized = {
+        createdAt: new Date().toISOString(),
+        mirrorEnabled: true,
+        ...binding,
+      }
+      if (existing >= 0) data.bindings[existing] = { ...data.bindings[existing], ...normalized }
+      else data.bindings.push(normalized)
+      delete data.pendingTopics[String(binding.topicId ?? 0)]
+    })
+  }
+
+  hasSeenSession(serverID, sessionID) {
+    return this.data.seenSessions.includes(sessionKey(serverID, sessionID))
+  }
+
+  async markSeenSession(serverID, sessionID) {
+    return this.update((data) => {
+      data.seenSessions ||= []
+      const key = sessionKey(serverID, sessionID)
+      if (!data.seenSessions.includes(key)) data.seenSessions.push(key)
+      if (data.seenSessions.length > 5000) data.seenSessions = data.seenSessions.slice(-5000)
+    })
+  }
+
+  async seedSeenSessions(serverSessions) {
+    return this.update((data) => {
+      data.seenSessions ||= []
+      if (data.seenSessions.length) return false
+      data.seenSessions = serverSessions.map(([serverID, sessionID]) => sessionKey(serverID, sessionID))
+      return true
+    })
+  }
+
+  async updateBindingTitle(serverID, sessionID, title, titleSource = "opencode") {
+    return this.update((data) => {
+      const binding = data.bindings.find((item) => item.serverID === serverID && item.sessionID === sessionID)
+      if (!binding) return false
+      if (binding.title === title) return false
+      binding.title = title
+      binding.titleSource = titleSource
+      binding.titleUpdatedAt = new Date().toISOString()
+      return true
+    })
+  }
+
+  async addPendingTopic(topicId, pending) {
+    return this.update((data) => {
+      data.pendingTopics[String(topicId ?? 0)] = { createdAt: new Date().toISOString(), ...pending }
+    })
+  }
+
+  async addPendingPrompt(marker) {
+    return this.update((data) => {
+      const cutoff = Date.now() - 10 * 60 * 1000
+      data.pendingPrompts = data.pendingPrompts.filter((item) => Date.parse(item.createdAt) > cutoff)
+      data.pendingPrompts.push({ createdAt: new Date().toISOString(), ...marker })
+    })
+  }
+
+  async consumePendingPrompt(serverID, sessionID, text) {
+    const hash = promptHash(text)
+    return this.update((data) => {
+      const index = data.pendingPrompts.findIndex(
+        (item) => item.serverID === serverID && item.sessionID === sessionID && item.hash === hash,
+      )
+      if (index === -1) return false
+      data.pendingPrompts.splice(index, 1)
+      return true
+    })
+  }
+
+  isAssistantMirrored(serverID, sessionID, messageID) {
+    return this.data.mirroredAssistantMessages.includes(mirrorKey(serverID, sessionID, messageID))
+  }
+
+  async markAssistantMirrored(serverID, sessionID, messageID) {
+    return this.update((data) => {
+      data.mirroredAssistantMessages ||= []
+      const key = mirrorKey(serverID, sessionID, messageID)
+      if (!data.mirroredAssistantMessages.includes(key)) data.mirroredAssistantMessages.push(key)
+      if (data.mirroredAssistantMessages.length > 1000) {
+        data.mirroredAssistantMessages = data.mirroredAssistantMessages.slice(-1000)
+      }
+    })
+  }
+
+  isUserMirrored(serverID, sessionID, messageID) {
+    return this.data.mirroredUserMessages.includes(mirrorKey(serverID, sessionID, messageID))
+  }
+
+  async markUserMirrored(serverID, sessionID, messageID) {
+    return this.update((data) => {
+      data.mirroredUserMessages ||= []
+      const key = mirrorKey(serverID, sessionID, messageID)
+      if (!data.mirroredUserMessages.includes(key)) data.mirroredUserMessages.push(key)
+      if (data.mirroredUserMessages.length > 1000) {
+        data.mirroredUserMessages = data.mirroredUserMessages.slice(-1000)
+      }
+    })
+  }
+
+  async disableBinding(serverID, sessionID, reason) {
+    return this.update((data) => {
+      const binding = data.bindings.find((item) => item.serverID === serverID && item.sessionID === sessionID)
+      if (!binding) return false
+      binding.disabled = true
+      binding.disabledReason = reason
+      binding.disabledAt = new Date().toISOString()
+      return true
+    })
+  }
+}
+
+export function promptHash(text) {
+  let hash = 5381
+  for (const char of String(text)) hash = ((hash << 5) + hash + char.charCodeAt(0)) >>> 0
+  return hash.toString(16)
+}
+
+function defaultState() {
+  return {
+    version: 1,
+    telegram: {},
+    bindings: [],
+    pendingTopics: {},
+    pendingPrompts: [],
+    mirroredAssistantMessages: [],
+    mirroredUserMessages: [],
+    seenSessions: [],
+    runtime: {},
+  }
+}
+
+function sessionKey(serverID, sessionID) {
+  return `${serverID}:${sessionID}`
+}
+
+function mirrorKey(serverID, sessionID, messageID) {
+  return `${serverID}:${sessionID}:${messageID}`
+}

@@ -1,0 +1,34 @@
+{
+  "name": "opencodebot",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Telegram mirror and companion bot for OpenCodez sessions.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Krablante/opencodebot.git"
+  },
+  "homepage": "https://github.com/Krablante/opencodebot#readme",
+  "bugs": {
+    "url": "https://github.com/Krablante/opencodebot/issues"
+  },
+  "keywords": [
+    "telegram",
+    "opencode",
+    "opencodez",
+    "codex",
+    "ai-agent",
+    "wireguard",
+    "sse"
+  ],
+  "scripts": {
+    "start": "node src/main.mjs",
+    "check": "node --check src/*.mjs scripts/*.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "init-config": "node scripts/init-config.mjs",
+    "wireguard": "node scripts/wireguard.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,21 @@
+token.env
+.env
+.env.*
+
+node_modules/
+coverage/
+dist/
+*.log
+npm-debug.log*
+
+# Runtime state lives under /home/bloob/politia/state/projects/tg/opencodebot,
+# but keep these ignored if a local copy is ever created in the project tree.
+config.json
+config.local.json
+state.json
+wireguard/
+*.key
+*.conf
+*.png
+
+.DS_Store

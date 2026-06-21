@@ -1,0 +1,348 @@
+import { clampTelegram, escapeHtml } from "./telegram.mjs"
+import {
+  formatToolLine,
+  isHiddenTool,
+  isTaskTool,
+  shortError,
+  shortUsefulResult,
+  toolNameSet,
+} from "./tool-formatting.mjs"
+import {
+  isRichMessageError,
+  isTelegramFormattingError,
+  preparePlainAssistantText,
+  prepareRichMarkdown,
+  toolQuoteMarkdownV2,
+  withFinalAnswerMarker,
+} from "./rich-markdown.mjs"
+
+export { formatToolLine } from "./tool-formatting.mjs"
+
+export class MirrorRenderer {
+  constructor({ telegram, state, config }) {
+    this.telegram = telegram
+    this.state = state
+    this.config = config
+    this.sessions = new Map()
+    this.hiddenTools = toolNameSet(config.mirror?.hiddenTools || [])
+  }
+
+  async userPrompt(binding, text, origin = "web") {
+    await this.telegram.sendMessage({
+      chatId: binding.chatId,
+      topicId: binding.topicId,
+      text: clampTelegram(`💬 ${escapeHtml(text)}`, this.config.mirror.maxTelegramChars),
+    })
+  }
+
+  async assistantMessage(binding, text, { pin = true } = {}) {
+    const value = String(text || "").trim()
+    if (!value) return
+    this.closeToolBatch(binding)
+    const output = pin ? withFinalAnswerMarker(value) : value
+    const markdown = prepareRichMarkdown(output)
+    const sent = await this.sendAssistantMarkdown(binding, markdown, output)
+    if (pin && this.config.mirror.pinFinalAnswers !== false) await this.pinMessage(binding, sent.message_id)
+    return sent
+  }
+
+  async compactTools(binding, lines) {
+    for (const line of lines.filter(Boolean)) await this.appendToolLine(binding, line)
+  }
+
+  async reasoning(binding, text) {
+    // Reasoning parts are hidden in the web UI and are intentionally not mirrored.
+    return
+  }
+
+  async textDelta(binding, properties) {
+    const key = this.key(binding)
+    const session = this.ensureSession(key)
+    const textKey = properties.textID || properties.assistantMessageID || "assistant"
+    let block = session.texts.get(textKey)
+    if (!block) {
+      this.closeToolBatch(binding)
+      block = { text: "", messageId: null, timer: null, assistantMessageID: properties.assistantMessageID }
+      session.texts.set(textKey, block)
+    }
+    block.assistantMessageID ||= properties.assistantMessageID
+    block.text += properties.delta || ""
+  }
+
+  async textEnded(binding, properties) {
+    const key = this.key(binding)
+    const session = this.ensureSession(key)
+    const textKey = properties.textID || properties.assistantMessageID || "assistant"
+    let block = session.texts.get(textKey)
+    if (!block) {
+      this.closeToolBatch(binding)
+      block = { text: "", messageId: null, timer: null, assistantMessageID: properties.assistantMessageID }
+      session.texts.set(textKey, block)
+    }
+    block.assistantMessageID ||= properties.assistantMessageID
+    block.text = properties.text || block.text
+    await this.flushText(binding, block, true)
+    if (session.pendingFinalAssistantIds.has(block.assistantMessageID)) {
+      session.pendingFinalAssistantIds.delete(block.assistantMessageID)
+      await this.pinFinalAssistantMessage(binding, block.assistantMessageID)
+    }
+  }
+
+  async toolCalled(binding, properties) {
+    const session = this.ensureSession(this.key(binding))
+    if (session.tools.closed) session.tools = newToolBatch()
+    const input = properties.input || {}
+    const tool = properties.tool || "tool"
+    if (!this.shouldMirrorTool(tool)) {
+      if (properties.callID) session.hiddenToolCalls.add(properties.callID)
+      return
+    }
+    const reportedOnStart = isTaskTool(tool, input)
+    session.tools.calls.set(properties.callID, {
+      tool,
+      input,
+      reportedOnStart,
+    })
+    if (reportedOnStart) await this.appendToolLine(binding, formatToolLine(tool, input, true, ""))
+  }
+
+  async toolResult(binding, properties, ok) {
+    const session = this.ensureSession(this.key(binding))
+    if (properties.callID && session.hiddenToolCalls.has(properties.callID)) {
+      session.hiddenToolCalls.delete(properties.callID)
+      return
+    }
+    if (!this.shouldMirrorTool(properties.tool)) return
+    const call = session.tools.calls.get(properties.callID) || { tool: properties.tool || "tool", input: properties.input || {} }
+    if (!this.shouldMirrorTool(call.tool)) return
+    if (call.reportedOnStart && ok) return
+    const suffix = ok ? shortUsefulResult(properties) : shortError(properties)
+    await this.appendToolLine(binding, formatToolLine(call.tool, call.input, ok, suffix))
+  }
+
+  async flushText(binding, block, force) {
+    const rawText = block.finalMarked ? withFinalAnswerMarker(block.text || "...") : block.text || "..."
+    const payload = block.richFallback ? preparePlainAssistantText(rawText, this.config) : prepareRichMarkdown(rawText)
+    if (!block.messageId) {
+      const sent = await this.sendAssistantMarkdown(binding, payload, rawText, block)
+      block.messageId = sent.message_id
+      this.rememberAssistantMessage(binding, block.assistantMessageID, block.messageId)
+      return block.messageId
+    }
+    const now = Date.now()
+    if (!force && block.lastEdit && now - block.lastEdit < this.config.mirror.editDebounceMs) return
+    block.lastEdit = now
+    if (block.richFallback) {
+      await ignoreEditRace(() => this.telegram.editMessageText({ chatId: binding.chatId, messageId: block.messageId, text: payload }))
+    } else {
+      try {
+        await ignoreEditRace(() =>
+          this.telegram.editRichMessage({
+            chatId: binding.chatId,
+            messageId: block.messageId,
+            markdown: payload,
+            skipEntityDetection: true,
+          }),
+        )
+      } catch (error) {
+        if (!isRichMessageError(error)) throw error
+        block.richFallback = true
+        await ignoreEditRace(() =>
+          this.telegram.editMessageText({
+            chatId: binding.chatId,
+            messageId: block.messageId,
+            text: preparePlainAssistantText(rawText, this.config),
+          }),
+        )
+      }
+    }
+    this.rememberAssistantMessage(binding, block.assistantMessageID, block.messageId)
+    return block.messageId
+  }
+
+  async sendAssistantMarkdown(binding, markdown, rawText, block) {
+    try {
+      return await this.telegram.sendRichMessage({
+        chatId: binding.chatId,
+        topicId: binding.topicId,
+        markdown,
+        skipEntityDetection: true,
+      })
+    } catch (error) {
+      if (!isRichMessageError(error)) throw error
+      if (block) block.richFallback = true
+      return this.telegram.sendMessage({
+        chatId: binding.chatId,
+        topicId: binding.topicId,
+        text: preparePlainAssistantText(rawText, this.config),
+      })
+    }
+  }
+
+  async flushTools(binding, tools) {
+    const text = clampTelegram((tools.truncated ? "...\n" : "") + tools.lines.join("\n"), this.config.mirror.maxTelegramChars)
+    const markdown = toolQuoteMarkdownV2(text)
+    if (!tools.messageId) {
+      const sent = await this.sendToolQuote(binding, markdown, text, tools)
+      tools.messageId = sent.message_id
+      return
+    }
+    if (tools.formatFallback) {
+      await ignoreEditRace(() => this.telegram.editMessageText({ chatId: binding.chatId, messageId: tools.messageId, text, format: "plain" }))
+      return
+    }
+    try {
+      await ignoreEditRace(() =>
+        this.telegram.editMessageText({
+          chatId: binding.chatId,
+          messageId: tools.messageId,
+          text: markdown,
+          format: "markdownv2",
+        }),
+      )
+    } catch (error) {
+      if (!isTelegramFormattingError(error)) throw error
+      tools.formatFallback = true
+      await ignoreEditRace(() => this.telegram.editMessageText({ chatId: binding.chatId, messageId: tools.messageId, text, format: "plain" }))
+    }
+  }
+
+  async sendToolQuote(binding, markdown, fallbackText, tools) {
+    try {
+      return await this.telegram.sendMessage({
+        chatId: binding.chatId,
+        topicId: binding.topicId,
+        text: markdown,
+        format: "markdownv2",
+      })
+    } catch (error) {
+      if (!isTelegramFormattingError(error)) throw error
+      tools.formatFallback = true
+      return this.telegram.sendMessage({ chatId: binding.chatId, topicId: binding.topicId, text: fallbackText, format: "plain" })
+    }
+  }
+
+  async appendToolLine(binding, line) {
+    const session = this.ensureSession(this.key(binding))
+    if (session.tools.closed) session.tools = newToolBatch()
+    session.tools.lines.push(line)
+    if (session.tools.lines.length > this.config.mirror.toolBatchMaxLines) {
+      session.tools.lines = session.tools.lines.slice(-this.config.mirror.toolBatchMaxLines)
+      session.tools.truncated = true
+    }
+    await this.flushTools(binding, session.tools)
+  }
+
+  closeToolBatch(binding) {
+    const session = this.sessions.get(this.key(binding))
+    if (session?.tools) session.tools.closed = true
+  }
+
+  async pinMessage(binding, messageId) {
+    if (!messageId) return
+    try {
+      await this.telegram.pinChatMessage({ chatId: binding.chatId, messageId, disableNotification: false })
+    } catch (error) {
+      console.warn(`[opencodebot] failed to pin assistant message: ${error.message}`)
+    }
+  }
+
+  async pinFinalAssistantMessage(binding, assistantMessageID) {
+    if (!assistantMessageID) return
+    const session = this.ensureSession(this.key(binding))
+    const messageId = session?.assistantLastMessageIds.get(assistantMessageID)
+    if (!messageId) {
+      session.pendingFinalAssistantIds.add(assistantMessageID)
+      return
+    }
+    await this.markFinalAssistantMessage(binding, session, assistantMessageID, messageId)
+    if (this.config.mirror.pinFinalAnswers !== false) await this.pinMessage(binding, messageId)
+  }
+
+  async markFinalAssistantMessage(binding, session, assistantMessageID, messageId) {
+    const block = findAssistantBlock(session, assistantMessageID)
+    if (!block || block.finalMarked) return
+    const rawText = withFinalAnswerMarker(block.text || "...")
+    if (block.richFallback) {
+      await ignoreEditRace(() =>
+        this.telegram.editMessageText({
+          chatId: binding.chatId,
+          messageId,
+          text: preparePlainAssistantText(rawText, this.config),
+        }),
+      )
+    } else {
+      try {
+        await ignoreEditRace(() =>
+          this.telegram.editRichMessage({
+            chatId: binding.chatId,
+            messageId,
+            markdown: prepareRichMarkdown(rawText),
+            skipEntityDetection: true,
+          }),
+        )
+      } catch (error) {
+        if (!isRichMessageError(error)) throw error
+        block.richFallback = true
+        await ignoreEditRace(() =>
+          this.telegram.editMessageText({
+            chatId: binding.chatId,
+            messageId,
+            text: preparePlainAssistantText(rawText, this.config),
+          }),
+        )
+      }
+    }
+    block.finalMarked = true
+    block.lastEdit = Date.now()
+  }
+
+  rememberAssistantMessage(binding, assistantMessageID, messageId) {
+    if (!assistantMessageID || !messageId) return
+    const session = this.ensureSession(this.key(binding))
+    session.assistantLastMessageIds.set(assistantMessageID, messageId)
+  }
+
+  ensureSession(key) {
+    let session = this.sessions.get(key)
+    if (!session) {
+      session = {
+        texts: new Map(),
+        tools: newToolBatch(),
+        assistantLastMessageIds: new Map(),
+        hiddenToolCalls: new Set(),
+        pendingFinalAssistantIds: new Set(),
+      }
+      this.sessions.set(key, session)
+    }
+    return session
+  }
+
+  shouldMirrorTool(tool) {
+    return !isHiddenTool(tool, this.hiddenTools)
+  }
+
+  key(binding) {
+    return `${binding.serverID}:${binding.sessionID}`
+  }
+}
+
+function newToolBatch() {
+  return { calls: new Map(), lines: [], messageId: null, truncated: false, closed: false, formatFallback: false }
+}
+
+function findAssistantBlock(session, assistantMessageID) {
+  if (!session || !assistantMessageID) return null
+  for (const block of session.texts.values()) {
+    if (block.assistantMessageID === assistantMessageID) return block
+  }
+  return null
+}
+
+async function ignoreEditRace(fn) {
+  try {
+    await fn()
+  } catch (error) {
+    if (!/message is not modified|Too Many Requests/i.test(error.message)) throw error
+  }
+}

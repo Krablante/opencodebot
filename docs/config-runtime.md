@@ -1,0 +1,143 @@
+# Config And Runtime
+
+The repo contains source, defaults, and docs. Runtime config and state live under Politia state so the bot can be repaired, restarted, and shared without committing private values.
+
+Create config once with:
+
+```bash
+npm run init-config
+```
+
+Default runtime config path:
+
+```text
+/home/bloob/politia/state/projects/tg/opencodebot/config.json
+```
+
+`config.example.json` is the public shape and default baseline. The generated config is the local runtime copy. Edit the runtime copy for local behavior, and update `config.example.json` only when the shareable default shape changes.
+
+## Loading
+
+The normal service reads `OPENCODEBOT_CONFIG` when it is set. If it is not set, the loader uses the default Politia state path above. If that file does not exist, it falls back to `config.example.json`; that fallback is useful for checks, but a real bot should have an explicit runtime config.
+
+The loader also reads `paths.tokenEnv` and then overlays process environment variables on top. That means systemd, shell sessions, and local scripts can override values from `token.env` without editing the runtime JSON.
+
+OpenCodez servers come from `paths.serversJson`, not from the main config body. This keeps the bot aligned with the same host list used by the rest of the Politia/OpenCodez setup.
+
+## Secrets
+
+`token.env` is read by the systemd unit and local scripts for values such as the Telegram bot token, allowed user ids, and the OpenCodez password. Do not print it, paste it into docs, or commit it.
+
+The config names the environment variables to try. `telegram.tokenEnvNames` is checked first, but the loader can also recognize a Telegram-looking token from the env file. `telegram.allowedUserEnvNames` is checked first for user ids; if none are found, the loader falls back to env names that look like owner/user/allowed id variables. `opencode.passwordEnvNames` works the same simple way for the OpenCodez password.
+
+Non-secret behavior belongs in config: chat id, allowed user ids, default prompt profile, mirror options, hidden tools, multipart buffering, attachment limits, uploads paths, and optional WireGuard settings.
+
+## Telegram
+
+`telegram.chatId` pins the bot to the intended Telegram forum chat. `telegram.mainTopicId` is the topic used for general bot replies when there is no session-specific topic.
+
+`telegram.allowedUserIds` limits who can control the bot. Keep this explicit before handing the bot to someone else. `telegram.allowChatBootstrap` is useful only during first setup: if no chat is configured yet, the first allowed message can bind the bot to that chat. After setup, set the chat id and turn bootstrap off.
+
+`telegram.autocreateTopics` lets the bot create forum topics automatically for new OpenCodez sessions. This applies both to Telegram-created sessions and to web-originated OpenCodez sessions discovered through events or reconcile. Disable it if you want topic creation to be fully manual.
+
+## OpenCodez
+
+`opencode.baseUrl` is the local/default API origin used when a server-specific URL is not involved. `opencode.passwordEnvNames` lists env var names that may contain the OpenCodez password.
+
+`opencode.useServerHomeAsDirectory` controls the `directory` sent when the bot creates a session. When it is true and the selected server has a `home` field in `servers.json`, new sessions start there. When it is false, session creation leaves directory selection to OpenCodez defaults.
+
+Each server in `servers.json` should have an `id` and `url`. Optional fields are `label`, `home`, and `offline_ok`. Offline servers do not stop the bot; the event stream backs off and retries.
+
+## Prompt Profiles
+
+`defaultPrompt` is the fallback profile for Telegram-created sessions. It chooses the default OpenCodez server and the prompt metadata the bot can know before the first prompt: agent, model, and optional `opencodezTemplate`.
+
+`chatTemplates` are named profiles for `/new`. The built-in defaults are `d4flash`, `d4pro`, and `gpt55p`. Runtime config is merged with those defaults, so you can add a new template or override one existing template without copying every default.
+
+Each template can define:
+
+- `agent`: OpenCodez agent name.
+- `model.providerID`: provider id, such as `openai` or `deepseek`.
+- `model.modelID`: model id.
+- `model.variant`: optional model effort/variant.
+- `opencodezTemplate`: OpenCodez-side chat template name.
+
+Example:
+
+```json
+{
+  "chatTemplates": {
+    "fast": {
+      "agent": "build",
+      "model": { "providerID": "deepseek", "modelID": "deepseek-v4-flash", "variant": "max" },
+      "opencodezTemplate": "gpt55"
+    }
+  }
+}
+```
+
+Then start a topic with:
+
+```text
+/new fast work on the upload flow
+```
+
+## Mirror
+
+`mirror.enabled` is the main kill switch for OpenCodez-to-Telegram mirroring. Telegram commands can still exist around it, but assistant/tool events are ignored when mirroring is disabled.
+
+`mirror.pinFinalAnswers` pins final assistant answers in the topic. `mirror.deletePinServiceMessages` removes Telegram's automatic pin service messages when possible, keeping topics quieter.
+
+`mirror.finalMarker` is appended when the assistant step finishes normally. Keep it short; it is there to make final answers easy to spot in a busy topic.
+
+`mirror.maxTelegramChars` caps message size before the renderer splits or truncates output for Telegram limits. `mirror.editDebounceMs` controls how often an in-progress assistant message may be edited if streaming-style rendering is active. Current assistant text is normally sent as completed blocks, so this is mostly a safety knob.
+
+`mirror.showReasoningSummaries` controls whether reasoning summaries are mirrored. Keep it false unless you explicitly want that noise in Telegram.
+
+`mirror.hiddenTools` hides tool names from the live tool quote. This is useful for internal helper tools such as `todo`, `todowrite`, or other agent bookkeeping tools that do not help the Telegram reader.
+
+`mirror.toolBatchMaxLines` limits how many recent tool lines are kept in the expandable tool quote. Raising it gives more live detail; lowering it keeps Telegram topics quieter.
+
+## Multipart Prompts
+
+`multipartPrompts` is a small in-memory repair layer for Telegram clients that split long messages near Telegram limits. It is not a second prompt editor.
+
+`enabled` turns the buffer on or off. `minChars` decides how large a message must be before the bot treats it as a possible partial prompt. `idleMs` is how long the bot waits for more parts before sending. `maxParts` and `maxChars` stop accidental huge buffers.
+
+If long prompts are being sent too early, raise `idleMs`. If ordinary messages are getting buffered unexpectedly, raise `minChars`.
+
+## Attachments
+
+`attachments.enabled` controls Telegram file download support. Files are downloaded to `paths.uploadsDir`, attached to the next prompt, and later cleaned by age.
+
+`mediaGroupIdleMs` lets Telegram albums settle before processing. `promptIdleMs` is how long files can wait for the user to send the text prompt that should go with them.
+
+`maxFiles`, `maxFileBytes`, and `maxTotalBytes` are the safety limits. Keep them boring before sharing the bot; Telegram makes it easy to send more data than intended. `cleanupAfterMs` controls how long downloaded files remain on disk before cleanup.
+
+## Web And WireGuard
+
+`web.publicBaseUrl`, `web.privateBaseUrl`, and `web.preferHttp` are used when the bot builds links to OpenCodez web UI. `preferHttp` is mostly for private LAN links where HTTPS is not the useful default.
+
+`wireguard` exists for the optional helper script only. It can expose a private LAN web UI from outside the LAN, but the Telegram bot, OpenCodez API mirroring, long polling, and LAN web UI do not depend on WireGuard.
+
+## Paths And State
+
+`paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, mirror enabled state, pending Telegram-origin prompt ids, and known sessions. It should not contain full prompt queue text. The `/q` queue is memory-only and disappears on service restart by design.
+
+If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. Reconnects, progress events, and tool-only events do not release or clear the queue.
+
+`paths.uploadsDir` stores downloaded Telegram files. Uploaded files are runtime material and should stay out of git. WireGuard private keys and peer configs live under the configured Politia state path and `/etc/wireguard`, not in the repo.
+
+## Useful Changes
+
+Use the runtime config for local behavior:
+
+```bash
+$EDITOR /home/bloob/politia/state/projects/tg/opencodebot/config.json
+sudo systemctl restart opencodebot.service
+journalctl -u opencodebot.service -n 80 --no-pager
+```
+
+Before sharing the bot with a friend, the important knobs are usually `telegram.chatId`, `telegram.allowedUserIds`, `telegram.allowChatBootstrap`, `defaultPrompt.serverId`, `chatTemplates`, `mirror.hiddenTools`, attachment limits, and web base URLs.
+
+When changing the config shape, update `config.example.json`, `src/config.mjs`, and the relevant docs together. Keep defaults reasonable and boring.

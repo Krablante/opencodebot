@@ -1,0 +1,575 @@
+import { assertRuntimeConfig, loadConfig } from "./config.mjs"
+import { AttachmentBuffer, cleanupUploads, downloadTelegramFiles, extractTelegramFiles } from "./attachments.mjs"
+import { createBackendRequester, formatDuration } from "./backend-backoff.mjs"
+import { applyChatTemplate, parseNewTopicArgs } from "./chat-templates.mjs"
+import { createTelegramCommandHandlers } from "./commands.mjs"
+import { OpenCodeClient, profileFromMessages, profileFromSession, promptPayload, textFromPrompt, titleFromText } from "./opencode.mjs"
+import { MultipartPromptBuffer } from "./multipart-prompts.mjs"
+import { PromptQueue } from "./prompt-queue.mjs"
+import { formatToolLine, MirrorRenderer } from "./render.mjs"
+import { StateStore, promptHash } from "./state.mjs"
+import { escapeHtml, isAllowedMessage, TelegramClient, topicId } from "./telegram.mjs"
+
+const config = loadConfig()
+assertRuntimeConfig(config)
+
+const state = new StateStore(config.paths.statePath)
+await state.load()
+if (config.telegram.chatId && !state.chatId) await state.setChatId(config.telegram.chatId)
+
+const telegram = new TelegramClient(config.telegram.token)
+const botInfo = await telegram.getMe()
+const opencode = new OpenCodeClient(config)
+const renderer = new MirrorRenderer({ telegram, state, config })
+const abort = new AbortController()
+let shutdownRequested = false
+const backendRequester = createBackendRequester()
+const skippedBackendRequest = backendRequester.skipped
+const backendRequest = backendRequester.request
+const multipartPrompts = new MultipartPromptBuffer(config.multipartPrompts, flushTelegramPrompt, logError)
+const attachmentBuffer = new AttachmentBuffer({
+  settings: config.attachments,
+  uploadDir: config.paths.uploadsDir,
+  flushPrompt: flushTelegramPrompt,
+  onExpire: notifyAttachmentExpired,
+  onError: logError,
+})
+const promptQueue = new PromptQueue(sendTelegramPrompt)
+const commandHandlers = createTelegramCommandHandlers({ config, state, telegram, promptQueue, multipartPrompts, createPendingTopic })
+
+process.once("SIGINT", () => requestShutdown("SIGINT"))
+process.once("SIGTERM", () => requestShutdown("SIGTERM"))
+
+await telegram.deleteWebhook()
+await cleanupUploads(config.paths.uploadsDir, config.attachments.cleanupAfterMs).catch(logError)
+setInterval(() => cleanupUploads(config.paths.uploadsDir, config.attachments.cleanupAfterMs).catch(logError), 60 * 60 * 1000).unref?.()
+console.log(`[opencodebot] starting ${config.opencode.servers.length} OpenCodez event streams`)
+
+for (const server of config.opencode.servers) {
+  opencode.subscribeEvents(server.id, (source, event) => handleOpenCodeEvent(source, event).catch(logError), abort.signal)
+}
+
+reconcileLoop().catch(logError)
+
+await pollTelegram()
+
+async function pollTelegram() {
+  let offset = state.data.runtime.telegramUpdateOffset || undefined
+  while (!abort.signal.aborted) {
+    try {
+      const updates = await telegram.getUpdates(offset, 25, { signal: abort.signal })
+      for (const update of updates) {
+        offset = update.update_id + 1
+        await state.update((data) => {
+          data.runtime.telegramUpdateOffset = offset
+        })
+        if (update.message) await handleTelegramMessage(update.message)
+      }
+    } catch (error) {
+      if (abort.signal.aborted) break
+      logError(error)
+      await delay(2500, abort.signal).catch(() => {})
+    }
+  }
+}
+
+async function handleTelegramMessage(message) {
+  await cleanupOwnPinServiceMessage(message)
+  if (!isAllowedMessage(message, config)) return
+  const text = String(message.text || "").trim()
+  const caption = String(message.caption || "").trim()
+  const files = extractTelegramFiles(message)
+
+  const configuredChatId = state.chatId || config.telegram.chatId
+  if (!configuredChatId && config.telegram.allowChatBootstrap) {
+    await state.setChatId(message.chat.id)
+    await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "OpenCodez mirror chat connected." })
+  } else if (configuredChatId && String(configuredChatId) !== String(message.chat.id)) {
+    return
+  }
+
+  const promptKey = multipartPromptKey(message)
+  if (files.length) {
+    await handleAttachmentMessage(message, promptKey, files, caption)
+    return
+  }
+  if (!text) return
+  if (attachmentBuffer.has(promptKey) && !text.startsWith("/")) {
+    await flushAttachmentText(message, promptKey, text)
+    return
+  }
+
+  const command = parseCommand(text)
+
+  if (await commandHandlers.handle(message, command, promptKey)) return
+  if (text.startsWith("/")) {
+    await multipartPrompts.flushKey(promptKey)
+    await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Unknown command. Send /help for available commands." })
+    return
+  }
+
+  const binding = state.findBindingByTopic(message.chat.id, topicId(message))
+  if (binding) {
+    await queueTelegramPrompt(promptKey, text, { message, binding })
+    return
+  }
+
+  const pending = state.pendingTopic(topicId(message))
+  if (pending) {
+    await queueTelegramPrompt(promptKey, text, { message, pending })
+  }
+}
+
+async function queueTelegramPrompt(key, text, context) {
+  await multipartPrompts.push(key, text, context)
+}
+
+async function flushTelegramPrompt(context, text, files = []) {
+  if (context.binding) {
+    await sendTelegramPrompt(context.binding, text, files)
+    return
+  }
+  if (!context.pending) return
+  const session = await opencode.createSession(context.pending.serverID)
+  await applyChatTemplate(opencode, context.pending.serverID, session.id, context.pending.chatTemplate)
+  const newBinding = {
+    chatId: context.message.chat.id,
+    topicId: topicId(context.message),
+    serverID: context.pending.serverID,
+    sessionID: session.id,
+    title: context.pending.title || titleFromText(text || files[0]?.filename || "Attachments"),
+    titleSource: context.pending.titleSource || "auto",
+    chatTemplateName: context.pending.chatTemplateName,
+    agent: context.pending.chatTemplate?.agent,
+    model: context.pending.chatTemplate?.model,
+  }
+  await state.bindTopic(newBinding)
+  await state.markSeenSession(newBinding.serverID, newBinding.sessionID)
+  await sendTelegramPrompt(newBinding, text, files)
+}
+
+async function handleAttachmentMessage(message, promptKey, files, caption) {
+  if (config.attachments.enabled === false) {
+    await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Attachments are disabled for this bot." })
+    return
+  }
+  const context = promptContext(message)
+  if (!context) {
+    await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "No OpenCodez session is bound to this topic. Create one with /new, then send files here." })
+    return
+  }
+  try {
+    const downloads = await downloadTelegramFiles(telegram, files, config.paths.uploadsDir, config.attachments)
+    await attachmentBuffer.addFiles(promptKey, context, downloads, { text: caption, mediaGroupID: message.media_group_id || "" })
+  } catch (error) {
+    await telegram.sendMessage({
+      chatId: message.chat.id,
+      topicId: topicId(message),
+      text: `Could not attach file. <code>${escapeHtml(error.message)}</code>`,
+    })
+  }
+}
+
+async function flushAttachmentText(message, promptKey, text) {
+  const context = promptContext(message)
+  if (!context) {
+    await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "No OpenCodez session is bound to this topic. Create one with /new first." })
+    return
+  }
+  await attachmentBuffer.addText(promptKey, context, text)
+}
+
+async function notifyAttachmentExpired(context, files) {
+  await telegram.sendMessage({
+    chatId: context.message.chat.id,
+    topicId: topicId(context.message),
+    text: `Attachment batch expired: no prompt text arrived within ${formatDuration(config.attachments.promptIdleMs)} (${files.length} file${files.length === 1 ? "" : "s"}).`,
+  })
+}
+
+function promptContext(message) {
+  const binding = state.findBindingByTopic(message.chat.id, topicId(message))
+  if (binding) return { message, binding }
+  const pending = state.pendingTopic(topicId(message))
+  if (pending) return { message, pending }
+  return null
+}
+
+function multipartPromptKey(message) {
+  return `${message.chat.id}:${topicId(message)}:${message.from?.id || 0}`
+}
+
+async function createPendingTopic(message, args) {
+  const { serverID, title, titleSource, chatTemplateName, chatTemplate } = parseNewTopicArgs(args, {
+    servers: opencode.servers,
+    defaultServerID: config.defaultPrompt.serverID,
+    chatTemplates: config.chatTemplates,
+  })
+  const chatId = state.chatId || message.chat.id
+  const topic = await telegram.createForumTopic({ chatId, name: title, iconCustomEmojiId: await randomTopicIcon() })
+  await state.addPendingTopic(topic.message_thread_id, { serverID, title, titleSource, chatTemplateName, chatTemplate })
+  const suffix = chatTemplateName ? ` using <code>${escapeHtml(chatTemplateName)}</code>` : ""
+  await telegram.sendMessage({
+    chatId,
+    topicId: topic.message_thread_id,
+    text: `New OpenCodez topic for <code>${escapeHtml(serverID)}</code>${suffix}. Send the first prompt here.`,
+  })
+}
+
+async function sendTelegramPrompt(binding, text, files = []) {
+  promptQueue.markBusy(binding)
+  try {
+    const profile = await currentProfile(binding)
+    await state.addPendingPrompt({
+      serverID: binding.serverID,
+      sessionID: binding.sessionID,
+      hash: promptHash(text),
+    })
+    await opencode.promptAsync(binding.serverID, binding.sessionID, promptPayload(text, profile, files))
+    setTimeout(() => reconcileBinding(binding).catch(logError), 8000).unref?.()
+  } catch (error) {
+    promptQueue.markIdle(binding)
+    throw error
+  }
+}
+
+async function currentProfile(binding) {
+  const bindingProfile = {}
+  if (binding.agent) bindingProfile.agent = binding.agent
+  if (binding.model) bindingProfile.model = binding.model
+  if (bindingProfile.agent || bindingProfile.model) return { ...config.defaultPrompt, ...bindingProfile }
+  try {
+    const session = await opencode.getSession(binding.serverID, binding.sessionID)
+    const fromSession = profileFromSession(session)
+    if (fromSession.model || fromSession.agent) return { ...config.defaultPrompt, ...fromSession }
+  } catch {}
+  try {
+    const messages = await opencode.messages(binding.serverID, binding.sessionID)
+    const fromMessages = profileFromMessages(messages)
+    if (fromMessages.model || fromMessages.agent) return { ...config.defaultPrompt, ...fromMessages }
+  } catch {}
+  return config.defaultPrompt
+}
+
+async function handleOpenCodeEvent(server, event) {
+  const properties = event.properties || {}
+  const sessionID = properties.sessionID
+  if (!sessionID || !state.mirrorEnabled(config)) return
+
+  let binding = state.findBinding(server.id, sessionID)
+  if (!binding && event.type === "session.next.prompted" && config.telegram.autocreateTopics) {
+    binding = await createTopicForWebSession(server.id, sessionID, textFromPrompt(properties.prompt))
+  }
+  if (!binding || binding.disabled) return
+
+  try {
+    switch (event.type) {
+      case "session.next.prompted": {
+        promptQueue.markBusy(binding)
+        const text = textFromPrompt(properties.prompt)
+        if (!text) return
+        const consumed = await state.consumePendingPrompt(server.id, sessionID, text)
+        if (!consumed) await renderer.userPrompt(binding, text, "web")
+        if (properties.messageID) await state.markUserMirrored(server.id, sessionID, properties.messageID)
+        break
+      }
+      case "session.next.text.delta":
+        await renderer.textDelta(binding, properties)
+        break
+      case "session.next.text.ended":
+        await renderer.textEnded(binding, properties)
+        break
+      case "session.next.step.ended":
+        if (properties.finish === "stop") {
+          await renderer.pinFinalAssistantMessage(binding, properties.assistantMessageID)
+          await promptQueue.complete(binding)
+        }
+        await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
+        break
+      case "session.next.step.failed":
+        await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
+        await notifyRunFailed(binding, properties, promptQueue.clear(binding))
+        break
+      case "session.next.tool.called":
+        await renderer.toolCalled(binding, properties)
+        break
+      case "session.next.tool.success":
+        await renderer.toolResult(binding, properties, true)
+        break
+      case "session.next.tool.failed":
+        await renderer.toolResult(binding, properties, false)
+        break
+    }
+  } catch (error) {
+    await handleMirrorError(binding, error)
+  }
+}
+
+async function reconcileLoop() {
+  await seedExistingSessions()
+  while (!abort.signal.aborted) {
+    await delay(15_000, abort.signal).catch(() => {})
+    if (abort.signal.aborted) break
+    if (!state.mirrorEnabled(config)) continue
+    await reconcileSessions().catch(logError)
+    for (const binding of [...state.data.bindings].filter((item) => !item.disabled)) {
+      try {
+        await reconcileBinding(binding)
+      } catch (error) {
+        await handleMirrorError(binding, error).catch(logError)
+      }
+    }
+  }
+}
+
+async function seedExistingSessions() {
+  const seen = []
+  for (const server of config.opencode.servers) {
+    const sessions = await backendRequest(server.id, "seed sessions", () => opencode.listSessions(server.id))
+    if (sessions === skippedBackendRequest) continue
+    for (const session of sessions) seen.push([server.id, session.id])
+  }
+  const seeded = await state.seedSeenSessions(seen)
+  if (seeded) console.log(`[opencodebot] seeded ${seen.length} existing OpenCodez sessions`)
+}
+
+async function reconcileSessions() {
+  const chatId = state.chatId || config.telegram.chatId
+  if (!chatId || !config.telegram.autocreateTopics) return
+  for (const server of config.opencode.servers) {
+    const sessions = await backendRequest(server.id, "list sessions", () => opencode.listSessions(server.id))
+    if (sessions === skippedBackendRequest) continue
+    for (const session of sessions) {
+      const binding = state.findBinding(server.id, session.id)
+      if (isInternalSession(session)) {
+        await state.markSeenSession(server.id, session.id)
+        if (binding && !binding.disabled) await state.disableBinding(server.id, session.id, "internal subagent session")
+        continue
+      }
+      if (binding) {
+        await maybeSyncTopicTitle(binding, session.title)
+        continue
+      }
+      if (state.hasSeenSession(server.id, session.id)) continue
+      await state.markSeenSession(server.id, session.id)
+      await createTopicForSession(server.id, session)
+    }
+  }
+}
+
+async function maybeSyncTopicTitle(binding, title) {
+  if (!title || title === binding.title) return
+  if (binding.titleSource === "user") return
+  if (title.startsWith("New session -") && binding.title && !binding.title.startsWith("New session -")) return
+  try {
+    await telegram.editForumTopic({ chatId: binding.chatId, topicId: binding.topicId, name: title })
+    await state.updateBindingTitle(binding.serverID, binding.sessionID, title)
+  } catch (error) {
+    console.warn(`[opencodebot] topic title sync failed for ${binding.serverID}/${binding.sessionID}: ${error.message}`)
+  }
+}
+
+async function reconcileBinding(binding) {
+  const messages = await backendRequest(binding.serverID, "session messages", () => opencode.messages(binding.serverID, binding.sessionID))
+  if (messages === skippedBackendRequest) return
+  for (const message of messages) {
+    const info = message.info || message
+    if (info.role === "user") {
+      const text = textFromStoredMessage(message)
+      if (text && info.id && !state.isUserMirrored(binding.serverID, binding.sessionID, info.id)) {
+        const consumed = await state.consumePendingPrompt(binding.serverID, binding.sessionID, text)
+        if (!consumed) await renderer.userPrompt(binding, text, "web")
+        await state.markUserMirrored(binding.serverID, binding.sessionID, info.id)
+      }
+      continue
+    }
+    if (info.role !== "assistant" || !info.id) continue
+    if (!isCompleted(info)) continue
+    if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) continue
+    await renderStoredAssistantMessage(binding, message)
+    await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
+    if (info.finish === "stop") await promptQueue.complete(binding)
+  }
+}
+
+async function handleMirrorError(binding, error) {
+  if (/message thread not found/i.test(error.message || "")) {
+    await state.disableBinding(binding.serverID, binding.sessionID, "message thread not found")
+    console.warn(`[opencodebot] disabled missing Telegram topic binding ${binding.serverID}/${binding.sessionID}`)
+    return
+  }
+  throw error
+}
+
+async function notifyRunFailed(binding, properties, clearedQueue) {
+  const errorText = stepFailureText(properties)
+  const lines = ["<b>Run finished with an error.</b>"]
+  if (errorText) lines.push(escapeHtml(errorText))
+  if (clearedQueue.length) {
+    lines.push("", "<b>Cleared queued prompts:</b>")
+    lines.push(...clearedQueue.map((item) => `${item.index}. <code>${escapeHtml(item.summary)}</code>`))
+  }
+  await telegram.sendMessage({
+    chatId: binding.chatId,
+    topicId: binding.topicId,
+    text: lines.join("\n"),
+  })
+}
+
+function stepFailureText(properties) {
+  const error = properties.error || properties.exception || properties.reason
+  if (typeof error === "string") return error
+  if (error?.message) return error.message
+  if (properties.message) return properties.message
+  return ""
+}
+
+async function renderStoredAssistantMessage(binding, message) {
+  const info = message.info || message
+  const parts = message.parts || []
+  const toolLines = []
+  const textParts = []
+  for (const part of parts) {
+    if (part?.type === "text" && part.text) textParts.push(part.text)
+    const toolLine = compactStoredToolLine(part)
+    if (toolLine) toolLines.push(toolLine)
+  }
+  await renderer.compactTools(binding, toolLines)
+  await renderer.assistantMessage(binding, textParts.join("\n\n"), { pin: info.finish === "stop" })
+}
+
+function textFromStoredMessage(message) {
+  return (message.parts || [])
+    .filter((part) => part?.type === "text" && part.text)
+    .map((part) => part.text)
+    .join("\n")
+}
+
+function compactStoredToolLine(part) {
+  if (!part || part.type !== "tool") return ""
+  const tool = part.name || part.tool || "tool"
+  if (!renderer.shouldMirrorTool(tool)) return ""
+  const status = part.state?.status || part.state
+  const failed = status === "error" || status === "failed" || part.state?.error
+  const ok = !failed && (status === "completed" || status === "success")
+  if (!failed && !ok) return ""
+  return formatToolLine(tool, part.state?.input || part.input || {}, ok, failed ? part.state?.error?.message || "failed" : "")
+}
+
+function isCompleted(info) {
+  return Boolean(info.time?.completed || info.time?.failed || info.finished || info.completed)
+}
+
+async function randomTopicIcon() {
+  if (!config.telegram.randomTopicIcon) return undefined
+  try {
+    const stickers = await telegram.getForumTopicIconStickers()
+    const ids = stickers.map((sticker) => sticker.custom_emoji_id).filter(Boolean)
+    if (!ids.length) return undefined
+    return ids[Math.floor(Math.random() * ids.length)]
+  } catch (error) {
+    console.warn(`[opencodebot] random topic icon unavailable: ${error.message}`)
+    return undefined
+  }
+}
+
+function parseCommand(text) {
+  const match = text.match(/^\/(\w+)(?:@\w+)?(?:\s+([\s\S]*))?$/)
+  if (!match) return { name: "", args: "" }
+  return { name: match[1], args: match[2] || "" }
+}
+
+async function cleanupOwnPinServiceMessage(message) {
+  if (config.mirror.deletePinServiceMessages === false) return
+  const configuredChatId = state.chatId || config.telegram.chatId
+  if (!message?.pinned_message || String(message.chat?.id) !== String(configuredChatId)) return
+  if (message.pinned_message.from?.id !== botInfo.id) return
+  try {
+    await telegram.deleteMessage({ chatId: message.chat.id, messageId: message.message_id })
+  } catch (error) {
+    console.warn(`[opencodebot] failed to delete pin service message: ${error.message}`)
+  }
+}
+
+async function createTopicForWebSession(serverID, sessionID, promptText) {
+  const session = await opencode.getSession(serverID, sessionID).catch(() => null)
+  if (session) {
+    if (isInternalSession(session)) {
+      await state.markSeenSession(serverID, sessionID)
+      return null
+    }
+    return createTopicForSession(serverID, session, promptText)
+  }
+  const chatId = state.chatId || config.telegram.chatId
+  if (!chatId) return null
+  const title = titleFromText(promptText, `${serverID} ${sessionID}`)
+  const topic = await telegram.createForumTopic({ chatId, name: title, iconCustomEmojiId: await randomTopicIcon() })
+  const binding = { chatId, topicId: topic.message_thread_id, serverID, sessionID, title, titleSource: "auto" }
+  await state.bindTopic(binding)
+  await state.markSeenSession(serverID, sessionID)
+  return binding
+}
+
+async function createTopicForSession(serverID, session, fallbackText = "") {
+  if (isInternalSession(session)) {
+    await state.markSeenSession(serverID, session.id)
+    return null
+  }
+  const chatId = state.chatId || config.telegram.chatId
+  if (!chatId) return null
+  const title = session.title || titleFromText(fallbackText, `${serverID} ${session.id}`)
+  const topic = await telegram.createForumTopic({ chatId, name: title, iconCustomEmojiId: await randomTopicIcon() })
+  const binding = {
+    chatId,
+    topicId: topic.message_thread_id,
+    serverID,
+    sessionID: session.id,
+    title,
+    titleSource: session.title ? "opencode" : "auto",
+  }
+  await state.bindTopic(binding)
+  await state.markSeenSession(serverID, session.id)
+  return binding
+}
+
+function isInternalSession(session) {
+  return Boolean(session?.parentID || /\(@.+ subagent\)/i.test(session?.title || ""))
+}
+
+function logError(error) {
+  console.error(`[opencodebot] ${error.stack || error.message || error}`)
+}
+
+function requestShutdown(signalName) {
+  if (shutdownRequested) return
+  shutdownRequested = true
+  console.info(`[opencodebot] received ${signalName}, shutting down`)
+  abort.abort()
+  setTimeout(() => {
+    console.info("[opencodebot] shutdown grace elapsed, exiting")
+    process.exit(0)
+  }, 2000).unref?.()
+}
+
+function delay(ms, signal) {
+  if (signal?.aborted) return Promise.reject(abortError())
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(done, ms)
+    timer.unref?.()
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(abortError())
+    }
+    function done() {
+      signal?.removeEventListener?.("abort", onAbort)
+      resolve()
+    }
+    signal?.addEventListener?.("abort", onAbort, { once: true })
+  })
+}
+
+function abortError() {
+  const error = new Error("aborted")
+  error.name = "AbortError"
+  return error
+}
