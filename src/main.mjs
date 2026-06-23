@@ -78,17 +78,17 @@ async function pollTelegram() {
 
 async function handleTelegramMessage(message) {
   await cleanupOwnPinServiceMessage(message)
+  const configuredChatId = state.chatId || config.telegram.chatId
+  if (configuredChatId && String(configuredChatId) !== String(message.chat.id)) return
+  if (configuredChatId && (await handleTopicLifecycleMessage(message))) return
   if (!isAllowedMessage(message, config)) return
   const text = String(message.text || "").trim()
   const caption = String(message.caption || "").trim()
   const files = extractTelegramFiles(message)
 
-  const configuredChatId = state.chatId || config.telegram.chatId
   if (!configuredChatId && config.telegram.allowChatBootstrap) {
     await state.setChatId(message.chat.id)
     await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "OpenCodez mirror chat connected." })
-  } else if (configuredChatId && String(configuredChatId) !== String(message.chat.id)) {
-    return
   }
 
   const promptKey = multipartPromptKey(message)
@@ -337,6 +337,32 @@ function promptFeedbackAcceptedText() {
   return "🟢 Accepted by OpenCodez\n🧠 Waiting for the first events\n🪞 This message will disappear when mirroring starts"
 }
 
+async function handleTopicLifecycleMessage(message) {
+  if (message.forum_topic_deleted) {
+    await disableTopicMirror(message.chat.id, topicId(message), "Telegram topic deleted")
+    return true
+  }
+  if (message.forum_topic_closed) {
+    await disableTopicMirror(message.chat.id, topicId(message), "Telegram topic closed")
+    return true
+  }
+  return false
+}
+
+async function disableTopicMirror(chatId, targetTopicId, reason) {
+  const binding = state.findBindingByTopic(chatId, targetTopicId)
+  if (binding) {
+    await state.disableBinding(binding.serverID, binding.sessionID, reason)
+    await clearPromptFeedback(binding)
+    logInfo("telegram.topic.disabled_binding", { chatId, topicId: targetTopicId, serverID: binding.serverID, sessionID: binding.sessionID, reason })
+  }
+  if (state.pendingTopic(targetTopicId)) {
+    await state.removePendingTopic(targetTopicId)
+    logInfo("telegram.topic.removed_pending", { chatId, topicId: targetTopicId, reason })
+  }
+  return Boolean(binding)
+}
+
 async function currentProfile(binding) {
   const bindingProfile = {}
   if (binding.agent) bindingProfile.agent = binding.agent
@@ -538,12 +564,18 @@ async function reconcileBinding(binding) {
 }
 
 async function handleMirrorError(binding, error) {
-  if (/message thread not found/i.test(error.message || "")) {
-    await state.disableBinding(binding.serverID, binding.sessionID, "message thread not found")
-    console.warn(`[opencodebot] disabled missing Telegram topic binding ${binding.serverID}/${binding.sessionID}`)
+  if (isUnavailableTopicError(error)) {
+    await state.disableBinding(binding.serverID, binding.sessionID, error.message || "Telegram topic unavailable")
+    console.warn(`[opencodebot] disabled unavailable Telegram topic binding ${binding.serverID}/${binding.sessionID}: ${error.message}`)
     return
   }
   throw error
+}
+
+function isUnavailableTopicError(error) {
+  return /message thread not found|forum topic .*not found|topic .*not found|topic .*deleted|topic .*closed|message thread .*closed/i.test(
+    error.message || "",
+  )
 }
 
 async function notifyRunFailed(binding, properties, clearedQueue) {

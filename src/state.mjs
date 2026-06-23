@@ -163,6 +163,12 @@ export class StateStore {
     })
   }
 
+  async removePendingTopic(topicId) {
+    return this.update((data) => {
+      delete data.pendingTopics[String(topicId ?? 0)]
+    })
+  }
+
   async addPendingPrompt(marker) {
     return this.update((data) => {
       const cutoff = Date.now() - 10 * 60 * 1000
