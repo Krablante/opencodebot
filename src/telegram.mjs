@@ -161,6 +161,13 @@ export function topicId(message) {
   return message?.message_thread_id || 0
 }
 
+export function telegramMessageLink(chatId, messageId) {
+  if (!chatId || !messageId) return ""
+  const value = String(chatId)
+  if (value.startsWith("-100")) return `https://t.me/c/${value.slice(4)}/${messageId}`
+  return ""
+}
+
 export function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")

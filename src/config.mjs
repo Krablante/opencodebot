@@ -10,6 +10,7 @@ const defaultHiddenTools = ["todo", "todowrite", "todo_write"]
 const defaultMultipartPrompts = { enabled: true, minChars: 3600, idleMs: 2000, maxParts: 20, maxChars: 120000 }
 const defaultReconcile = { enabled: true, intervalMs: 15000, activeWindowMs: 2 * 60 * 60 * 1000, lookbackMs: 30000 }
 const defaultPromptFeedback = { enabled: true, accepted: true, queued: true, errors: true }
+const defaultFinalNotifications = { enabled: true, maxSentMarkers: 1000 }
 const defaultAttachments = {
   enabled: true,
   mediaGroupIdleMs: 2000,
@@ -89,6 +90,7 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
     multipartPrompts: normalizeMultipartPrompts(config.multipartPrompts),
     reconcile: normalizeReconcile(config.reconcile),
     promptFeedback: normalizePromptFeedback(config.promptFeedback),
+    finalNotifications: normalizeFinalNotifications(config.finalNotifications),
     attachments: normalizeAttachments(config.attachments),
     chatTemplates: normalizeChatTemplates(config.chatTemplates),
     wireguard: {
@@ -226,6 +228,13 @@ function normalizePromptFeedback(value = {}) {
     accepted: value.accepted !== false,
     queued: value.queued !== false,
     errors: value.errors !== false,
+  }
+}
+
+function normalizeFinalNotifications(value = {}) {
+  return {
+    enabled: value.enabled !== false,
+    maxSentMarkers: numberAtLeast(value.maxSentMarkers, defaultFinalNotifications.maxSentMarkers, 100),
   }
 }
 

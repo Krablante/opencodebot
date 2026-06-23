@@ -44,6 +44,10 @@
     "queued": true,
     "errors": true
   },
+  "finalNotifications": {
+    "enabled": true,
+    "maxSentMarkers": 1000
+  },
   "attachments": {
     "enabled": true,
     "mediaGroupIdleMs": 2000,

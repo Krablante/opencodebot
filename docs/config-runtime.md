@@ -116,6 +116,12 @@ If long prompts are being sent too early, raise `idleMs`. If ordinary messages a
 
 Each feedback class can be disabled separately with `accepted`, `queued`, and `errors`, but production use should normally keep error feedback on.
 
+## Final Notifications
+
+`finalNotifications` controls optional private DM notifications for final mirrored answers. Users opt in with `/notify_on` and opt out with `/notify_off`. The bot first verifies that it can DM the user, then stores the Telegram user id in state.
+
+The final DM is intentionally short: it names the topic, links to the final message in the Telegram topic, and does not include the final answer text. `maxSentMarkers` caps durable dedupe markers so live events plus reconcile do not send the same final notification twice.
+
 ## Reconcile
 
 `reconcile` is a bounded recovery path for the current or recent run. It is not a full historical backfill. When a Telegram prompt is sent, a web topic is autocreated, or a web-origin prompt arrives through events, the binding gets a `reconcileAfter` lower bound and a `reconcileUntil` expiry.
@@ -138,7 +144,7 @@ Each feedback class can be disabled separately with `accepted`, `queued`, and `e
 
 ## Paths And State
 
-`paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, mirror enabled state, pending Telegram-origin prompt ids, known sessions, per-session mirror markers, and bounded reconcile windows. It should not contain full prompt queue text. The `/q` queue is memory-only and disappears on service restart by design.
+`paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, mirror enabled state, pending Telegram-origin prompt ids, known sessions, per-session mirror markers, bounded reconcile windows, and final-notification opt-ins/dedupe markers. It should not contain full prompt queue text. The `/q` queue is memory-only and disappears on service restart by design.
 
 If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. Reconnects, progress events, and tool-only events do not release or clear the queue.
 

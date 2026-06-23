@@ -15,6 +15,9 @@ export function createTelegramCommandHandlers({ config, state, telegram, promptQ
     help: sendHelp,
     start: sendHelp,
     q: handleQueueCommand,
+    notify_on: handleNotifyOn,
+    notify_off: handleNotifyOff,
+    notify_status: handleNotifyStatus,
   }
 
   return {
@@ -65,6 +68,57 @@ export function createTelegramCommandHandlers({ config, state, telegram, promptQ
     }
   }
 
+  async function handleNotifyOn(message) {
+    if (config.finalNotifications?.enabled === false) {
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Final DM notifications are disabled in config." })
+      return
+    }
+    const userID = message.from?.id
+    if (!userID) {
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "I cannot identify the Telegram user for this command." })
+      return
+    }
+    try {
+      await telegram.sendMessage({
+        chatId: userID,
+        text: "🔔 Final answer notifications enabled\n🏁 I will DM you when a mirrored topic gets its final answer\n🔗 The DM will link to the final message",
+      })
+    } catch (error) {
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: topicId(message),
+        text: `I could not DM you yet. Open a private chat with this bot, press Start or send /start, then run <code>/notify_on</code> again.\n<code>${escapeHtml(error.message)}</code>`,
+      })
+      return
+    }
+    await state.enableFinalNotificationsFor(userID)
+    await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "🔔 Final DM notifications enabled." })
+  }
+
+  async function handleNotifyOff(message) {
+    const userID = message.from?.id
+    if (!userID) {
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "I cannot identify the Telegram user for this command." })
+      return
+    }
+    await state.disableFinalNotificationsFor(userID)
+    await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "🔕 Final DM notifications disabled." })
+  }
+
+  async function handleNotifyStatus(message) {
+    const userID = message.from?.id
+    if (!userID) {
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "I cannot identify the Telegram user for this command." })
+      return
+    }
+    const enabled = config.finalNotifications?.enabled !== false && state.finalNotificationsEnabledFor(userID)
+    await telegram.sendMessage({
+      chatId: message.chat.id,
+      topicId: topicId(message),
+      text: enabled ? "🔔 Final DM notifications are enabled for you." : "🔕 Final DM notifications are disabled for you.",
+    })
+  }
+
   async function sendHelp(message) {
     await telegram.sendMessage({
       chatId: message.chat.id,
@@ -82,6 +136,8 @@ export function createTelegramCommandHandlers({ config, state, telegram, promptQ
       "<code>/q &lt;prompt&gt;</code> - queue a prompt for this topic/session.",
       "<code>/q status</code> - show queued prompts.",
       "<code>/q delete &lt;number&gt;</code> - remove a queued prompt.",
+      "<code>/notify_on</code> / <code>/notify_off</code> - toggle final-answer DMs for you.",
+      "<code>/notify_status</code> - show your final-answer DM status.",
       "<code>/mirror_on</code> / <code>/mirror_off</code> - toggle web-to-Telegram mirroring.",
       "",
       `Templates: <code>${escapeHtml(templates)}</code>`,

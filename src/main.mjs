@@ -8,7 +8,7 @@ import { MultipartPromptBuffer } from "./multipart-prompts.mjs"
 import { PromptQueue } from "./prompt-queue.mjs"
 import { formatToolLine, MirrorRenderer } from "./render.mjs"
 import { StateStore, promptHash } from "./state.mjs"
-import { escapeHtml, isAllowedMessage, TelegramClient, topicId } from "./telegram.mjs"
+import { escapeHtml, isAllowedMessage, TelegramClient, telegramMessageLink, topicId } from "./telegram.mjs"
 import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
 
 const config = loadConfig()
@@ -22,7 +22,7 @@ const telegram = new TelegramClient(config.telegram.token)
 const botInfo = await telegram.getMe()
 const opencode = new OpenCodeClient(config)
 const promptFeedbackMessages = new Map()
-const renderer = new MirrorRenderer({ telegram, state, config, onMirrorMessage: clearPromptFeedback })
+const renderer = new MirrorRenderer({ telegram, state, config, onMirrorMessage: clearPromptFeedback, onFinalMessage: notifyFinalAnswerReady })
 const abort = new AbortController()
 let shutdownRequested = false
 const backendRequester = createBackendRequester()
@@ -323,6 +323,36 @@ async function clearPromptFeedback(binding) {
       logErrorEvent("prompt_feedback.delete.failed", error, { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId, messageId: item.messageId })
     }
   }
+}
+
+async function notifyFinalAnswerReady(binding, { assistantMessageID, messageId }) {
+  if (config.finalNotifications?.enabled === false) return
+  if (!messageId) return
+  if (state.finalNotificationSent(binding.serverID, binding.sessionID, assistantMessageID, messageId)) return
+  const userIds = state.finalNotificationUserIds()
+  if (!userIds.length) return
+  const link = telegramMessageLink(binding.chatId, messageId)
+  const title = binding.title || `Topic ${binding.topicId}`
+  const text = finalNotificationText({ title, link, serverID: binding.serverID })
+  for (const userId of userIds) {
+    try {
+      await telegram.sendMessage({ chatId: userId, text, disablePreview: true })
+      logInfo("final_notification.sent", { userId, serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId, messageId })
+    } catch (error) {
+      logErrorEvent("final_notification.failed", error, { userId, serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId, messageId })
+    }
+  }
+  await state.markFinalNotificationSent(binding.serverID, binding.sessionID, assistantMessageID, messageId, config.finalNotifications.maxSentMarkers)
+}
+
+function finalNotificationText({ title, link, serverID }) {
+  const topic = link ? `<a href="${escapeHtml(link)}">${escapeHtml(title)}</a>` : `<b>${escapeHtml(title)}</b>`
+  return [
+    "🏁 Final answer is ready",
+    `🧵 ${topic}`,
+    `🖥️ Server: <code>${escapeHtml(serverID)}</code>`,
+    "🔗 Tap the topic link to jump to the final message",
+  ].join("\n")
 }
 
 function promptFeedbackKey(binding) {
@@ -629,7 +659,7 @@ async function renderStoredAssistantMessage(binding, message) {
     if (toolLine) toolLines.push(toolLine)
   }
   await renderer.compactTools(binding, toolLines)
-  await renderer.assistantMessage(binding, textParts.join("\n\n"), { pin: info.finish === "stop" })
+  await renderer.assistantMessage(binding, textParts.join("\n\n"), { pin: info.finish === "stop", assistantMessageID: info.id })
 }
 
 function textFromStoredMessage(message) {

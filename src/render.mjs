@@ -20,11 +20,12 @@ import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
 export { formatToolLine } from "./tool-formatting.mjs"
 
 export class MirrorRenderer {
-  constructor({ telegram, state, config, onMirrorMessage }) {
+  constructor({ telegram, state, config, onMirrorMessage, onFinalMessage }) {
     this.telegram = telegram
     this.state = state
     this.config = config
     this.onMirrorMessage = onMirrorMessage
+    this.onFinalMessage = onFinalMessage
     this.sessions = new Map()
     this.hiddenTools = toolNameSet(config.mirror?.hiddenTools || [])
   }
@@ -38,7 +39,7 @@ export class MirrorRenderer {
     await this.notifyMirrorMessage(binding, message)
   }
 
-  async assistantMessage(binding, text, { pin = true } = {}) {
+  async assistantMessage(binding, text, { pin = true, assistantMessageID } = {}) {
     const value = String(text || "").trim()
     if (!value) return
     this.closeToolBatch(binding)
@@ -47,6 +48,7 @@ export class MirrorRenderer {
     const sent = await this.sendAssistantMarkdown(binding, markdown, output)
     await this.notifyMirrorMessage(binding, sent)
     if (pin && this.config.mirror.pinFinalAnswers !== false) await this.pinMessage(binding, sent.message_id)
+    if (pin) await this.notifyFinalMessage(binding, { assistantMessageID, messageId: sent.message_id })
     return sent
   }
 
@@ -302,6 +304,7 @@ export class MirrorRenderer {
     }
     await this.markFinalAssistantMessage(binding, session, assistantMessageID, messageId)
     if (this.config.mirror.pinFinalAnswers !== false) await this.pinMessage(binding, messageId)
+    await this.notifyFinalMessage(binding, { assistantMessageID, messageId })
   }
 
   async markFinalAssistantMessage(binding, session, assistantMessageID, messageId) {
@@ -379,6 +382,20 @@ export class MirrorRenderer {
         sessionID: binding.sessionID,
         topicId: binding.topicId,
         messageId: message.message_id,
+      })
+    }
+  }
+
+  async notifyFinalMessage(binding, details) {
+    if (!this.onFinalMessage || !details?.messageId) return
+    try {
+      await this.onFinalMessage(binding, details)
+    } catch (error) {
+      logErrorEvent("mirror.final.callback.failed", error, {
+        serverID: binding.serverID,
+        sessionID: binding.sessionID,
+        topicId: binding.topicId,
+        messageId: details.messageId,
       })
     }
   }

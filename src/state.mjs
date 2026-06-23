@@ -19,6 +19,9 @@ export class StateStore {
       this.data.mirroredUserMessages ||= []
       this.data.mirroredAssistantBySession ||= {}
       this.data.mirroredUserBySession ||= {}
+      this.data.finalNotifications ||= { enabledUserIds: [], sentMessages: [] }
+      this.data.finalNotifications.enabledUserIds ||= []
+      this.data.finalNotifications.sentMessages ||= []
       migrateMirroredMessages(this.data.mirroredAssistantMessages, this.data.mirroredAssistantBySession)
       migrateMirroredMessages(this.data.mirroredUserMessages, this.data.mirroredUserBySession)
       this.data.seenSessions ||= []
@@ -198,6 +201,46 @@ export class StateStore {
     })
   }
 
+  finalNotificationUserIds() {
+    return [...new Set((this.data.finalNotifications?.enabledUserIds || []).map(String))]
+  }
+
+  finalNotificationsEnabledFor(userID) {
+    return this.finalNotificationUserIds().includes(String(userID))
+  }
+
+  async enableFinalNotificationsFor(userID) {
+    return this.update((data) => {
+      data.finalNotifications ||= { enabledUserIds: [], sentMessages: [] }
+      data.finalNotifications.enabledUserIds ||= []
+      const value = String(userID)
+      if (!data.finalNotifications.enabledUserIds.map(String).includes(value)) data.finalNotifications.enabledUserIds.push(value)
+    })
+  }
+
+  async disableFinalNotificationsFor(userID) {
+    return this.update((data) => {
+      data.finalNotifications ||= { enabledUserIds: [], sentMessages: [] }
+      data.finalNotifications.enabledUserIds = (data.finalNotifications.enabledUserIds || []).filter((item) => String(item) !== String(userID))
+    })
+  }
+
+  finalNotificationSent(serverID, sessionID, assistantMessageID, messageID) {
+    return (this.data.finalNotifications?.sentMessages || []).includes(finalNotificationKey(serverID, sessionID, assistantMessageID, messageID))
+  }
+
+  async markFinalNotificationSent(serverID, sessionID, assistantMessageID, messageID, maxItems = 1000) {
+    return this.update((data) => {
+      data.finalNotifications ||= { enabledUserIds: [], sentMessages: [] }
+      data.finalNotifications.sentMessages ||= []
+      const key = finalNotificationKey(serverID, sessionID, assistantMessageID, messageID)
+      if (!data.finalNotifications.sentMessages.includes(key)) data.finalNotifications.sentMessages.push(key)
+      if (data.finalNotifications.sentMessages.length > maxItems) {
+        data.finalNotifications.sentMessages = data.finalNotifications.sentMessages.slice(-maxItems)
+      }
+    })
+  }
+
   isAssistantMirrored(serverID, sessionID, messageID) {
     return hasMirroredMessage(this.data.mirroredAssistantBySession, this.data.mirroredAssistantMessages, serverID, sessionID, messageID)
   }
@@ -249,6 +292,7 @@ function defaultState() {
     mirroredUserMessages: [],
     mirroredAssistantBySession: {},
     mirroredUserBySession: {},
+    finalNotifications: { enabledUserIds: [], sentMessages: [] },
     seenSessions: [],
     runtime: {},
   }
@@ -260,6 +304,10 @@ function sessionKey(serverID, sessionID) {
 
 function mirrorKey(serverID, sessionID, messageID) {
   return `${serverID}:${sessionID}:${messageID}`
+}
+
+function finalNotificationKey(serverID, sessionID, assistantMessageID, messageID) {
+  return `${serverID}:${sessionID}:${assistantMessageID || "unknown"}:${messageID || "unknown"}`
 }
 
 function sessionMirrorKey(serverID, sessionID) {

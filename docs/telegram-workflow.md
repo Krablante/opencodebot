@@ -21,6 +21,9 @@ When OpenCodez later updates a session title, the linked Telegram topic is renam
 /q <prompt>                       queue or send a prompt in this topic/session
 /q status                         show queued prompts
 /q delete <number>                remove a queued prompt by status number
+/notify_on                       enable final-answer DMs for you
+/notify_off                      disable final-answer DMs for you
+/notify_status                   show your final-answer DM status
 /mirror_on                        enable web-to-Telegram mirroring
 /mirror_off                       disable web-to-Telegram mirroring
 /help                             show commands and configured templates
@@ -56,6 +59,10 @@ Supported attachment inputs include documents, photos, videos, animations, audio
 `/q <prompt>` sends immediately when the bound OpenCodez session is idle. If the session is busy, the prompt is kept in memory for that session.
 
 The queue advances only after the same final-answer path used for `🏁` and pinning, where OpenCodez reports `finish === stop`. Progress notes, reconnects, and tool-only steps do not release the next queued prompt. If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. A service restart drops queued prompts instead of writing full user prompts into `state.json`.
+
+## Final Notifications
+
+`/notify_on`, `/notify_off`, and `/notify_status` control per-user private DM notifications for final answers. When enabled, the bot sends a short private message to that Telegram user when a final mirrored answer is ready. The DM links to the final topic message and does not include the final answer text.
 
 ## Mirror
 
