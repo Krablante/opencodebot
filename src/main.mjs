@@ -359,11 +359,11 @@ function promptFeedbackKey(binding) {
 }
 
 function promptFeedbackStartingText() {
-  return "🟡 Prompt received\n🚀 Sending it to OpenCodez\n🪞 This message will disappear when mirroring starts"
+  return "🟡 Prompt received\n🚀 Sending it to OpenCodez"
 }
 
 function promptFeedbackAcceptedText() {
-  return "🟢 Accepted by OpenCodez\n🧠 Waiting for the first events\n🪞 This message will disappear when mirroring starts"
+  return "🟢 Accepted by OpenCodez\n🧠 Waiting for the first events"
 }
 
 async function handleTopicLifecycleMessage(message) {
