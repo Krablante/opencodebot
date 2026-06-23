@@ -110,6 +110,18 @@ Then start a topic with:
 
 If long prompts are being sent too early, raise `idleMs`. If ordinary messages are getting buffered unexpectedly, raise `minChars`.
 
+## Prompt Feedback
+
+`promptFeedback` controls the small Telegram replies that make prompt delivery visible. When enabled, the bot says when OpenCodez accepted a prompt and reports unbound topics, backend rejection, or later session errors instead of failing silently.
+
+Each feedback class can be disabled separately with `accepted`, `queued`, and `errors`, but production use should normally keep error feedback on.
+
+## Reconcile
+
+`reconcile` is a bounded recovery path for the current or recent run. It is not a full historical backfill. When a Telegram prompt is sent, a web topic is autocreated, or a web-origin prompt arrives through events, the binding gets a `reconcileAfter` lower bound and a `reconcileUntil` expiry.
+
+`intervalMs` controls how often the recovery loop runs. `lookbackMs` gives a small safety margin before the triggering prompt or topic creation. `activeWindowMs` decides how long a binding stays eligible for missed-event recovery after current activity. Raising it helps very long runs; lowering it keeps old topics quieter sooner.
+
 ## Attachments
 
 `attachments.enabled` controls Telegram file download support. Files are downloaded to `paths.uploadsDir`, attached to the next prompt, and later cleaned by age.
@@ -126,7 +138,7 @@ If long prompts are being sent too early, raise `idleMs`. If ordinary messages a
 
 ## Paths And State
 
-`paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, mirror enabled state, pending Telegram-origin prompt ids, and known sessions. It should not contain full prompt queue text. The `/q` queue is memory-only and disappears on service restart by design.
+`paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, mirror enabled state, pending Telegram-origin prompt ids, known sessions, per-session mirror markers, and bounded reconcile windows. It should not contain full prompt queue text. The `/q` queue is memory-only and disappears on service restart by design.
 
 If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. Reconnects, progress events, and tool-only events do not release or clear the queue.
 

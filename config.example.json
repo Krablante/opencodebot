@@ -32,6 +32,18 @@
     "maxParts": 20,
     "maxChars": 120000
   },
+  "reconcile": {
+    "enabled": true,
+    "intervalMs": 15000,
+    "activeWindowMs": 7200000,
+    "lookbackMs": 30000
+  },
+  "promptFeedback": {
+    "enabled": true,
+    "accepted": true,
+    "queued": true,
+    "errors": true
+  },
   "attachments": {
     "enabled": true,
     "mediaGroupIdleMs": 2000,

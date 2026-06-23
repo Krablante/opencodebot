@@ -8,6 +8,8 @@ const defaultConfigPath = path.join(projectRoot, "config.local.json")
 const exampleConfigPath = path.join(projectRoot, "config.example.json")
 const defaultHiddenTools = ["todo", "todowrite", "todo_write"]
 const defaultMultipartPrompts = { enabled: true, minChars: 3600, idleMs: 2000, maxParts: 20, maxChars: 120000 }
+const defaultReconcile = { enabled: true, intervalMs: 15000, activeWindowMs: 2 * 60 * 60 * 1000, lookbackMs: 30000 }
+const defaultPromptFeedback = { enabled: true, accepted: true, queued: true, errors: true }
 const defaultAttachments = {
   enabled: true,
   mediaGroupIdleMs: 2000,
@@ -85,6 +87,8 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
       hiddenTools: normalizeStringList(config.mirror?.hiddenTools, defaultHiddenTools),
     },
     multipartPrompts: normalizeMultipartPrompts(config.multipartPrompts),
+    reconcile: normalizeReconcile(config.reconcile),
+    promptFeedback: normalizePromptFeedback(config.promptFeedback),
     attachments: normalizeAttachments(config.attachments),
     chatTemplates: normalizeChatTemplates(config.chatTemplates),
     wireguard: {
@@ -204,6 +208,24 @@ function normalizeMultipartPrompts(value = {}) {
     idleMs: numberAtLeast(value.idleMs, defaultMultipartPrompts.idleMs, 100),
     maxParts: numberAtLeast(value.maxParts, defaultMultipartPrompts.maxParts, 2),
     maxChars: numberAtLeast(value.maxChars, defaultMultipartPrompts.maxChars, 4096),
+  }
+}
+
+function normalizeReconcile(value = {}) {
+  return {
+    enabled: value.enabled !== false,
+    intervalMs: numberAtLeast(value.intervalMs, defaultReconcile.intervalMs, 1000),
+    activeWindowMs: numberAtLeast(value.activeWindowMs, defaultReconcile.activeWindowMs, 60_000),
+    lookbackMs: numberAtLeast(value.lookbackMs, defaultReconcile.lookbackMs, 0),
+  }
+}
+
+function normalizePromptFeedback(value = {}) {
+  return {
+    enabled: value.enabled !== false,
+    accepted: value.accepted !== false,
+    queued: value.queued !== false,
+    errors: value.errors !== false,
   }
 }
 

@@ -17,6 +17,10 @@ export class StateStore {
       this.data.pendingPrompts ||= []
       this.data.mirroredAssistantMessages ||= []
       this.data.mirroredUserMessages ||= []
+      this.data.mirroredAssistantBySession ||= {}
+      this.data.mirroredUserBySession ||= {}
+      migrateMirroredMessages(this.data.mirroredAssistantMessages, this.data.mirroredAssistantBySession)
+      migrateMirroredMessages(this.data.mirroredUserMessages, this.data.mirroredUserBySession)
       this.data.seenSessions ||= []
       this.data.telegram ||= {}
       this.data.runtime ||= {}
@@ -128,6 +132,31 @@ export class StateStore {
     })
   }
 
+  async activateBinding(serverID, sessionID, { reconcileAfter, reconcileUntil, reason } = {}) {
+    return this.update((data) => {
+      const binding = data.bindings.find((item) => item.serverID === serverID && item.sessionID === sessionID)
+      if (!binding) return false
+      if (reconcileAfter) binding.reconcileAfter = toIso(reconcileAfter)
+      if (reconcileUntil) binding.reconcileUntil = toIso(reconcileUntil)
+      binding.lastActiveAt = new Date().toISOString()
+      if (reason) binding.lastActiveReason = reason
+      return true
+    })
+  }
+
+  async extendBindingActivity(serverID, sessionID, { reconcileUntil, reason } = {}) {
+    return this.update((data) => {
+      const binding = data.bindings.find((item) => item.serverID === serverID && item.sessionID === sessionID)
+      if (!binding) return false
+      const nextUntil = toMillis(reconcileUntil)
+      const currentUntil = toMillis(binding.reconcileUntil)
+      if (nextUntil && nextUntil > currentUntil) binding.reconcileUntil = toIso(nextUntil)
+      binding.lastActiveAt = new Date().toISOString()
+      if (reason) binding.lastActiveReason = reason
+      return true
+    })
+  }
+
   async addPendingTopic(topicId, pending) {
     return this.update((data) => {
       data.pendingTopics[String(topicId ?? 0)] = { createdAt: new Date().toISOString(), ...pending }
@@ -154,33 +183,34 @@ export class StateStore {
     })
   }
 
+  async removePendingPrompt(serverID, sessionID, text) {
+    const hash = promptHash(text)
+    return this.update((data) => {
+      data.pendingPrompts = data.pendingPrompts.filter(
+        (item) => !(item.serverID === serverID && item.sessionID === sessionID && item.hash === hash),
+      )
+    })
+  }
+
   isAssistantMirrored(serverID, sessionID, messageID) {
-    return this.data.mirroredAssistantMessages.includes(mirrorKey(serverID, sessionID, messageID))
+    return hasMirroredMessage(this.data.mirroredAssistantBySession, this.data.mirroredAssistantMessages, serverID, sessionID, messageID)
   }
 
   async markAssistantMirrored(serverID, sessionID, messageID) {
     return this.update((data) => {
-      data.mirroredAssistantMessages ||= []
-      const key = mirrorKey(serverID, sessionID, messageID)
-      if (!data.mirroredAssistantMessages.includes(key)) data.mirroredAssistantMessages.push(key)
-      if (data.mirroredAssistantMessages.length > 1000) {
-        data.mirroredAssistantMessages = data.mirroredAssistantMessages.slice(-1000)
-      }
+      data.mirroredAssistantBySession ||= {}
+      markMirroredMessage(data.mirroredAssistantBySession, serverID, sessionID, messageID)
     })
   }
 
   isUserMirrored(serverID, sessionID, messageID) {
-    return this.data.mirroredUserMessages.includes(mirrorKey(serverID, sessionID, messageID))
+    return hasMirroredMessage(this.data.mirroredUserBySession, this.data.mirroredUserMessages, serverID, sessionID, messageID)
   }
 
   async markUserMirrored(serverID, sessionID, messageID) {
     return this.update((data) => {
-      data.mirroredUserMessages ||= []
-      const key = mirrorKey(serverID, sessionID, messageID)
-      if (!data.mirroredUserMessages.includes(key)) data.mirroredUserMessages.push(key)
-      if (data.mirroredUserMessages.length > 1000) {
-        data.mirroredUserMessages = data.mirroredUserMessages.slice(-1000)
-      }
+      data.mirroredUserBySession ||= {}
+      markMirroredMessage(data.mirroredUserBySession, serverID, sessionID, messageID)
     })
   }
 
@@ -211,6 +241,8 @@ function defaultState() {
     pendingPrompts: [],
     mirroredAssistantMessages: [],
     mirroredUserMessages: [],
+    mirroredAssistantBySession: {},
+    mirroredUserBySession: {},
     seenSessions: [],
     runtime: {},
   }
@@ -222,4 +254,42 @@ function sessionKey(serverID, sessionID) {
 
 function mirrorKey(serverID, sessionID, messageID) {
   return `${serverID}:${sessionID}:${messageID}`
+}
+
+function sessionMirrorKey(serverID, sessionID) {
+  return `${serverID}:${sessionID}`
+}
+
+function migrateMirroredMessages(items, target) {
+  if (!Array.isArray(items)) return
+  for (const item of items) {
+    const [serverID, sessionID, ...rest] = String(item).split(":")
+    const messageID = rest.join(":")
+    if (!serverID || !sessionID || !messageID) continue
+    markMirroredMessage(target, serverID, sessionID, messageID)
+  }
+}
+
+function hasMirroredMessage(bySession, legacyItems, serverID, sessionID, messageID) {
+  const key = sessionMirrorKey(serverID, sessionID)
+  if (bySession?.[key]?.includes(messageID)) return true
+  return Array.isArray(legacyItems) && legacyItems.includes(mirrorKey(serverID, sessionID, messageID))
+}
+
+function markMirroredMessage(bySession, serverID, sessionID, messageID) {
+  const key = sessionMirrorKey(serverID, sessionID)
+  bySession[key] ||= []
+  if (!bySession[key].includes(messageID)) bySession[key].push(messageID)
+}
+
+function toIso(value) {
+  const ms = toMillis(value)
+  return ms ? new Date(ms).toISOString() : undefined
+}
+
+function toMillis(value) {
+  if (!value) return 0
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : 0
 }

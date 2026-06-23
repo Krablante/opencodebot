@@ -9,6 +9,7 @@ import { PromptQueue } from "./prompt-queue.mjs"
 import { formatToolLine, MirrorRenderer } from "./render.mjs"
 import { StateStore, promptHash } from "./state.mjs"
 import { escapeHtml, isAllowedMessage, TelegramClient, topicId } from "./telegram.mjs"
+import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
 
 const config = loadConfig()
 assertRuntimeConfig(config)
@@ -26,6 +27,7 @@ let shutdownRequested = false
 const backendRequester = createBackendRequester()
 const skippedBackendRequest = backendRequester.skipped
 const backendRequest = backendRequester.request
+const activityPersistedAt = new Map()
 const multipartPrompts = new MultipartPromptBuffer(config.multipartPrompts, flushTelegramPrompt, logError)
 const attachmentBuffer = new AttachmentBuffer({
   settings: config.attachments,
@@ -46,7 +48,7 @@ setInterval(() => cleanupUploads(config.paths.uploadsDir, config.attachments.cle
 console.log(`[opencodebot] starting ${config.opencode.servers.length} OpenCodez event streams`)
 
 for (const server of config.opencode.servers) {
-  opencode.subscribeEvents(server.id, (source, event) => handleOpenCodeEvent(source, event).catch(logError), abort.signal)
+  opencode.subscribeEvents(server.id, handleOpenCodeEvent, abort.signal)
 }
 
 reconcileLoop().catch(logError)
@@ -59,11 +61,11 @@ async function pollTelegram() {
     try {
       const updates = await telegram.getUpdates(offset, 25, { signal: abort.signal })
       for (const update of updates) {
+        if (update.message) await handleTelegramMessage(update.message)
         offset = update.update_id + 1
         await state.update((data) => {
           data.runtime.telegramUpdateOffset = offset
         })
-        if (update.message) await handleTelegramMessage(update.message)
       }
     } catch (error) {
       if (abort.signal.aborted) break
@@ -117,7 +119,9 @@ async function handleTelegramMessage(message) {
   const pending = state.pendingTopic(topicId(message))
   if (pending) {
     await queueTelegramPrompt(promptKey, text, { message, pending })
+    return
   }
+  await sendPromptFeedback({ chatId: message.chat.id, topicId: topicId(message), text: "This topic is not bound to an OpenCodez session. Use /new to create one, then send the prompt there.", kind: "error" })
 }
 
 async function queueTelegramPrompt(key, text, context) {
@@ -145,6 +149,7 @@ async function flushTelegramPrompt(context, text, files = []) {
   }
   await state.bindTopic(newBinding)
   await state.markSeenSession(newBinding.serverID, newBinding.sessionID)
+  await activateBindingForPrompt(newBinding, "telegram-new-topic")
   await sendTelegramPrompt(newBinding, text, files)
 }
 
@@ -218,6 +223,7 @@ async function createPendingTopic(message, args) {
 
 async function sendTelegramPrompt(binding, text, files = []) {
   promptQueue.markBusy(binding)
+  await activateBindingForPrompt(binding, "telegram-prompt")
   try {
     const profile = await currentProfile(binding)
     await state.addPendingPrompt({
@@ -226,11 +232,57 @@ async function sendTelegramPrompt(binding, text, files = []) {
       hash: promptHash(text),
     })
     await opencode.promptAsync(binding.serverID, binding.sessionID, promptPayload(text, profile, files))
-    setTimeout(() => reconcileBinding(binding).catch(logError), 8000).unref?.()
+    await sendPromptFeedback({ binding, text: "Prompt accepted by OpenCodez.", kind: "accepted" })
+    scheduleReconcile(binding, 8000)
   } catch (error) {
     promptQueue.markIdle(binding)
+    await state.removePendingPrompt(binding.serverID, binding.sessionID, text).catch(logError)
+    await sendPromptFeedback({ binding, text: `Prompt was not accepted. <code>${escapeHtml(error.message)}</code>`, kind: "error" }).catch(logError)
     throw error
   }
+}
+
+async function activateBindingForPrompt(binding, reason) {
+  if (config.reconcile.enabled === false) return
+  const now = Date.now()
+  await state.activateBinding(binding.serverID, binding.sessionID, {
+    reconcileAfter: now - config.reconcile.lookbackMs,
+    reconcileUntil: now + config.reconcile.activeWindowMs,
+    reason,
+  })
+}
+
+async function maybeExtendBindingActivity(binding, reason) {
+  if (config.reconcile.enabled === false) return
+  const key = `${binding.serverID}:${binding.sessionID}`
+  const now = Date.now()
+  const last = activityPersistedAt.get(key) || 0
+  if (now - last < 60_000) return
+  activityPersistedAt.set(key, now)
+  await state.extendBindingActivity(binding.serverID, binding.sessionID, {
+    reconcileUntil: now + config.reconcile.activeWindowMs,
+    reason,
+  })
+}
+
+function scheduleReconcile(binding, delayMs) {
+  if (config.reconcile.enabled === false) return
+  setTimeout(() => {
+    const current = state.findBinding(binding.serverID, binding.sessionID) || binding
+    reconcileBinding(current).catch(logError)
+  }, delayMs).unref?.()
+}
+
+async function sendPromptFeedback({ binding, chatId, topicId: targetTopicId, text, kind }) {
+  if (config.promptFeedback.enabled === false) return
+  if (kind === "accepted" && config.promptFeedback.accepted === false) return
+  if (kind === "queued" && config.promptFeedback.queued === false) return
+  if (kind === "error" && config.promptFeedback.errors === false) return
+  await telegram.sendMessage({
+    chatId: binding?.chatId ?? chatId,
+    topicId: binding?.topicId ?? targetTopicId,
+    text,
+  })
 }
 
 async function currentProfile(binding) {
@@ -252,6 +304,7 @@ async function currentProfile(binding) {
 }
 
 async function handleOpenCodeEvent(server, event) {
+  const startedAt = Date.now()
   const properties = event.properties || {}
   const sessionID = properties.sessionID
   if (!sessionID || !state.mirrorEnabled(config)) return
@@ -261,6 +314,17 @@ async function handleOpenCodeEvent(server, event) {
     binding = await createTopicForWebSession(server.id, sessionID, textFromPrompt(properties.prompt))
   }
   if (!binding || binding.disabled) return
+  if (event.type === "session.next.prompted") await activateBindingForPrompt(binding, "web-prompt")
+  else await maybeExtendBindingActivity(binding, "opencode-event")
+  const fields = () => ({
+    source: server.id,
+    sessionID,
+    topicId: binding.topicId,
+    type: event.type,
+    assistantMessageID: properties.assistantMessageID,
+    messageID: properties.messageID,
+    partID: properties.partID,
+  })
 
   try {
     switch (event.type) {
@@ -290,6 +354,9 @@ async function handleOpenCodeEvent(server, event) {
         await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
         await notifyRunFailed(binding, properties, promptQueue.clear(binding))
         break
+      case "session.error":
+        await notifySessionError(binding, properties)
+        break
       case "session.next.tool.called":
         await renderer.toolCalled(binding, properties)
         break
@@ -301,18 +368,23 @@ async function handleOpenCodeEvent(server, event) {
         break
     }
   } catch (error) {
+    logErrorEvent("mirror.event.failed", error, fields())
     await handleMirrorError(binding, error)
   }
+  const elapsedMs = durationMs(startedAt)
+  if (isMirrorMilestone(event.type) || shouldLogSlow(elapsedMs)) logInfo("mirror.event.handled", { ...fields(), durationMs: elapsedMs })
 }
 
 async function reconcileLoop() {
+  if (config.reconcile.enabled === false) return
   await seedExistingSessions()
   while (!abort.signal.aborted) {
-    await delay(15_000, abort.signal).catch(() => {})
+    await delay(config.reconcile.intervalMs, abort.signal).catch(() => {})
     if (abort.signal.aborted) break
     if (!state.mirrorEnabled(config)) continue
     await reconcileSessions().catch(logError)
     for (const binding of [...state.data.bindings].filter((item) => !item.disabled)) {
+      if (!reconcileWindow(binding)) continue
       try {
         await reconcileBinding(binding)
       } catch (error) {
@@ -370,16 +442,23 @@ async function maybeSyncTopicTitle(binding, title) {
 }
 
 async function reconcileBinding(binding) {
+  const window = reconcileWindow(binding)
+  if (!window) return
+  const startedAt = Date.now()
+  let mirroredUsers = 0
+  let mirroredAssistants = 0
   const messages = await backendRequest(binding.serverID, "session messages", () => opencode.messages(binding.serverID, binding.sessionID))
   if (messages === skippedBackendRequest) return
   for (const message of messages) {
     const info = message.info || message
+    if (!messageInReconcileWindow(info, window)) continue
     if (info.role === "user") {
       const text = textFromStoredMessage(message)
       if (text && info.id && !state.isUserMirrored(binding.serverID, binding.sessionID, info.id)) {
         const consumed = await state.consumePendingPrompt(binding.serverID, binding.sessionID, text)
         if (!consumed) await renderer.userPrompt(binding, text, "web")
         await state.markUserMirrored(binding.serverID, binding.sessionID, info.id)
+        mirroredUsers += 1
       }
       continue
     }
@@ -388,7 +467,21 @@ async function reconcileBinding(binding) {
     if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) continue
     await renderStoredAssistantMessage(binding, message)
     await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
+    mirroredAssistants += 1
     if (info.finish === "stop") await promptQueue.complete(binding)
+  }
+  const elapsedMs = durationMs(startedAt)
+  if (mirroredUsers || mirroredAssistants || shouldLogSlow(elapsedMs)) {
+    logInfo("reconcile.binding.done", {
+      serverID: binding.serverID,
+      sessionID: binding.sessionID,
+      topicId: binding.topicId,
+      messages: messages.length,
+      mirroredUsers,
+      mirroredAssistants,
+      reconcileAfter: new Date(window.afterMs).toISOString(),
+      durationMs: elapsedMs,
+    })
   }
 }
 
@@ -416,11 +509,28 @@ async function notifyRunFailed(binding, properties, clearedQueue) {
   })
 }
 
+async function notifySessionError(binding, properties) {
+  const text = sessionErrorText(properties)
+  await telegram.sendMessage({
+    chatId: binding.chatId,
+    topicId: binding.topicId,
+    text: `<b>OpenCodez session error.</b>${text ? `\n${escapeHtml(text)}` : ""}`,
+  })
+}
+
 function stepFailureText(properties) {
   const error = properties.error || properties.exception || properties.reason
   if (typeof error === "string") return error
   if (error?.message) return error.message
   if (properties.message) return properties.message
+  return ""
+}
+
+function sessionErrorText(properties) {
+  const error = properties.error || properties.exception || properties.reason
+  if (typeof error === "string") return error
+  if (error?.message) return error.message
+  if (properties.message) return String(properties.message)
   return ""
 }
 
@@ -454,6 +564,34 @@ function compactStoredToolLine(part) {
   const ok = !failed && (status === "completed" || status === "success")
   if (!failed && !ok) return ""
   return formatToolLine(tool, part.state?.input || part.input || {}, ok, failed ? part.state?.error?.message || "failed" : "")
+}
+
+function isMirrorMilestone(type) {
+  return type === "session.next.step.ended" || type === "session.next.step.failed" || type === "session.idle"
+}
+
+function reconcileWindow(binding) {
+  if (config.reconcile.enabled === false) return null
+  const afterMs = Date.parse(binding.reconcileAfter || "")
+  const untilMs = Date.parse(binding.reconcileUntil || "")
+  if (!Number.isFinite(afterMs) || !Number.isFinite(untilMs)) return null
+  if (untilMs < Date.now()) return null
+  return { afterMs, untilMs }
+}
+
+function messageInReconcileWindow(info, window) {
+  const timeMs = messageTimeMs(info)
+  return timeMs > 0 && timeMs >= window.afterMs
+}
+
+function messageTimeMs(info) {
+  const direct = info?.time?.created || info?.time?.completed
+  if (Number.isFinite(direct)) return direct
+  for (const value of [info?.createdAt, info?.created, info?.updatedAt]) {
+    const parsed = Date.parse(value || "")
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return 0
 }
 
 function isCompleted(info) {
@@ -506,6 +644,7 @@ async function createTopicForWebSession(serverID, sessionID, promptText) {
   const topic = await telegram.createForumTopic({ chatId, name: title, iconCustomEmojiId: await randomTopicIcon() })
   const binding = { chatId, topicId: topic.message_thread_id, serverID, sessionID, title, titleSource: "auto" }
   await state.bindTopic(binding)
+  await activateBindingForPrompt(binding, "web-topic-created")
   await state.markSeenSession(serverID, sessionID)
   return binding
 }
@@ -528,6 +667,7 @@ async function createTopicForSession(serverID, session, fallbackText = "") {
     titleSource: session.title ? "opencode" : "auto",
   }
   await state.bindTopic(binding)
+  await activateBindingForPrompt(binding, "web-topic-created")
   await state.markSeenSession(serverID, session.id)
   return binding
 }

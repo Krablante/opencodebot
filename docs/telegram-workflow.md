@@ -43,6 +43,8 @@ For an existing topic, the bot sends prompts with the session's current `agent`,
 
 Long Telegram-origin prompts can arrive as multiple Telegram messages. Near-limit prompt parts are held briefly in memory and joined with a blank line before being sent to OpenCodez. Ordinary short messages are sent immediately.
 
+After a Telegram prompt is handed to OpenCodez, the bot sends a short acknowledgement in the same topic. If the topic is not bound, the backend rejects the prompt, or OpenCodez later emits a session error, the bot reports that in Telegram instead of dropping the message silently.
+
 Telegram-origin prompts can include attachments. The bot downloads supported files into the configured uploads directory under Politia state and sends them as `file://` parts next to the prompt text. Files with captions flush as one prompt after media groups settle. Files without captions wait for the next plain text message from the same user/topic.
 
 Supported attachment inputs include documents, photos, videos, animations, audio, voice messages, video notes, and media groups. Limits live in `attachments.maxFiles`, `attachments.maxFileBytes`, and `attachments.maxTotalBytes`.
@@ -65,6 +67,8 @@ Hidden tool names in `mirror.hiddenTools` are suppressed from live mirror and re
 
 ## Reconcile
 
-Live `/event` SSE is the primary path. Reconcile is the fallback path after restart, missed events, or short connection gaps. It reads OpenCodez session history for bound sessions and backfills completed assistant messages once instead of silently losing them.
+Live `/event` SSE is the primary path. Reconcile is a narrow fallback for the current or very recent run, not a historical backfill of every bound session. A Telegram prompt, a freshly autocreated web topic, or a live web prompt opens a bounded reconcile window for that binding. Within that window, reconcile may recover missed user/assistant messages and especially the final answer; outside it, old topics stay quiet.
+
+The lower bound is stored on the binding as `reconcileAfter`, and the expiry as `reconcileUntil`. Defaults live in `reconcile.lookbackMs`, `reconcile.activeWindowMs`, and `reconcile.intervalMs`. Mirrored message markers are tracked per session so a busy session cannot evict markers for another one and cause phantom replays.
 
 Backend hosts may be off. Event streams and reconcile API calls use exponential backoff up to two minutes with rate-limited offline logs and recovery logs, so a powered-off server does not spam the service journal.

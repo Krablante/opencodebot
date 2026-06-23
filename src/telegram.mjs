@@ -3,6 +3,7 @@ import fsp from "node:fs/promises"
 import path from "node:path"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
+import { durationMs, logErrorEvent, logInfo, logWarn, shouldLogSlow } from "./logger.mjs"
 
 export class TelegramClient {
   constructor(token) {
@@ -12,21 +13,34 @@ export class TelegramClient {
   }
 
   async request(method, payload = {}, attempt = 0, options = {}) {
-    const response = await fetch(`${this.baseURL}/${method}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: options.signal,
-    })
-    const data = await response.json().catch(() => ({}))
+    const startedAt = Date.now()
+    let response
+    let data = {}
+    try {
+      response = await fetch(`${this.baseURL}/${method}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: options.signal,
+      })
+      data = await response.json().catch(() => ({}))
+    } catch (error) {
+      logErrorEvent("telegram.request.error", error, { method, attempt, durationMs: durationMs(startedAt), ...telegramPayloadSummary(payload) })
+      throw error
+    }
+    const elapsedMs = durationMs(startedAt)
     const retryAfter = data?.parameters?.retry_after
     if (response.status === 429 && Number.isFinite(retryAfter) && attempt < 3) {
+      logWarn("telegram.request.retry", { method, attempt, status: response.status, retryAfterSec: retryAfter, durationMs: elapsedMs, ...telegramPayloadSummary(payload) })
       await delay((retryAfter + 1) * 1000, options.signal)
       return this.request(method, payload, attempt + 1, options)
     }
     if (!response.ok || data.ok === false) {
-      throw new Error(`Telegram ${method} failed: ${data.description || response.status}`)
+      const error = new Error(`Telegram ${method} failed: ${data.description || response.status}`)
+      logErrorEvent("telegram.request.failed", error, { method, attempt, status: response.status, durationMs: elapsedMs, ...telegramPayloadSummary(payload) })
+      throw error
     }
+    if (shouldLogTelegramSlow(method, elapsedMs)) logInfo("telegram.request.slow", { method, attempt, durationMs: elapsedMs, ...telegramPayloadSummary(payload) })
     return data.result
   }
 
@@ -184,6 +198,23 @@ function safeTopicName(name) {
     .replace(/\s+/g, " ")
     .trim()
   return cleaned.slice(0, 128) || "OpenCodez"
+}
+
+function telegramPayloadSummary(payload = {}) {
+  const rich = payload.rich_message || {}
+  return {
+    chatId: payload.chat_id,
+    topicId: payload.message_thread_id,
+    messageId: payload.message_id,
+    textChars: typeof payload.text === "string" ? payload.text.length : undefined,
+    htmlChars: typeof rich.html === "string" ? rich.html.length : undefined,
+    markdownChars: typeof rich.markdown === "string" ? rich.markdown.length : undefined,
+  }
+}
+
+function shouldLogTelegramSlow(method, elapsedMs) {
+  if (method === "getUpdates") return false
+  return shouldLogSlow(elapsedMs)
 }
 
 function delay(ms, signal) {

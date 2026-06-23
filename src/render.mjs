@@ -15,6 +15,7 @@ import {
   toolQuoteMarkdownV2,
   withFinalAnswerMarker,
 } from "./rich-markdown.mjs"
+import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
 
 export { formatToolLine } from "./tool-formatting.mjs"
 
@@ -121,12 +122,19 @@ export class MirrorRenderer {
   }
 
   async flushText(binding, block, force) {
+    const startedAt = Date.now()
     const rawText = block.finalMarked ? withFinalAnswerMarker(block.text || "...") : block.text || "..."
     const payload = block.richFallback ? preparePlainAssistantText(rawText, this.config) : prepareRichMarkdown(rawText)
     if (!block.messageId) {
       const sent = await this.sendAssistantMarkdown(binding, payload, rawText, block)
       block.messageId = sent.message_id
       this.rememberAssistantMessage(binding, block.assistantMessageID, block.messageId)
+      logMirrorFlush("mirror.text.sent", binding, {
+        assistantMessageID: block.assistantMessageID,
+        messageId: block.messageId,
+        chars: block.text?.length || 0,
+        durationMs: durationMs(startedAt),
+      })
       return block.messageId
     }
     const now = Date.now()
@@ -157,6 +165,16 @@ export class MirrorRenderer {
       }
     }
     this.rememberAssistantMessage(binding, block.assistantMessageID, block.messageId)
+    const elapsedMs = durationMs(startedAt)
+    if (force || shouldLogSlow(elapsedMs)) {
+      logMirrorFlush("mirror.text.edited", binding, {
+        assistantMessageID: block.assistantMessageID,
+        messageId: block.messageId,
+        chars: block.text?.length || 0,
+        force,
+        durationMs: elapsedMs,
+      })
+    }
     return block.messageId
   }
 
@@ -180,30 +198,41 @@ export class MirrorRenderer {
   }
 
   async flushTools(binding, tools) {
+    const startedAt = Date.now()
+    const wasNew = !tools.messageId
     const text = clampTelegram((tools.truncated ? "...\n" : "") + tools.lines.join("\n"), this.config.mirror.maxTelegramChars)
     const markdown = toolQuoteMarkdownV2(text)
     if (!tools.messageId) {
       const sent = await this.sendToolQuote(binding, markdown, text, tools)
       tools.messageId = sent.message_id
-      return
-    }
-    if (tools.formatFallback) {
+    } else if (tools.formatFallback) {
       await ignoreEditRace(() => this.telegram.editMessageText({ chatId: binding.chatId, messageId: tools.messageId, text, format: "plain" }))
-      return
+    } else {
+      try {
+        await ignoreEditRace(() =>
+          this.telegram.editMessageText({
+            chatId: binding.chatId,
+            messageId: tools.messageId,
+            text: markdown,
+            format: "markdownv2",
+          }),
+        )
+      } catch (error) {
+        if (!isTelegramFormattingError(error)) throw error
+        tools.formatFallback = true
+        await ignoreEditRace(() => this.telegram.editMessageText({ chatId: binding.chatId, messageId: tools.messageId, text, format: "plain" }))
+      }
     }
-    try {
-      await ignoreEditRace(() =>
-        this.telegram.editMessageText({
-          chatId: binding.chatId,
-          messageId: tools.messageId,
-          text: markdown,
-          format: "markdownv2",
-        }),
-      )
-    } catch (error) {
-      if (!isTelegramFormattingError(error)) throw error
-      tools.formatFallback = true
-      await ignoreEditRace(() => this.telegram.editMessageText({ chatId: binding.chatId, messageId: tools.messageId, text, format: "plain" }))
+    const elapsedMs = durationMs(startedAt)
+    if (wasNew || shouldLogSlow(elapsedMs)) {
+      logMirrorFlush("mirror.tools.flushed", binding, {
+        messageId: tools.messageId,
+        lines: tools.lines.length,
+        truncated: tools.truncated,
+        fallback: tools.formatFallback,
+        newMessage: wasNew,
+        durationMs: elapsedMs,
+      })
     }
   }
 
@@ -230,7 +259,15 @@ export class MirrorRenderer {
       session.tools.lines = session.tools.lines.slice(-this.config.mirror.toolBatchMaxLines)
       session.tools.truncated = true
     }
+    const startedAt = Date.now()
     await this.flushTools(binding, session.tools)
+    const elapsedMs = durationMs(startedAt)
+    if (shouldLogSlow(elapsedMs)) {
+      logMirrorFlush("mirror.tool_line.slow", binding, {
+        lines: session.tools.lines.length,
+        durationMs: elapsedMs,
+      })
+    }
   }
 
   closeToolBatch(binding) {
@@ -240,10 +277,13 @@ export class MirrorRenderer {
 
   async pinMessage(binding, messageId) {
     if (!messageId) return
+    const startedAt = Date.now()
     try {
       await this.telegram.pinChatMessage({ chatId: binding.chatId, messageId, disableNotification: false })
+      const elapsedMs = durationMs(startedAt)
+      if (shouldLogSlow(elapsedMs)) logMirrorFlush("mirror.pin.slow", binding, { messageId, durationMs: elapsedMs })
     } catch (error) {
-      console.warn(`[opencodebot] failed to pin assistant message: ${error.message}`)
+      logErrorEvent("mirror.pin.failed", error, { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId, messageId })
     }
   }
 
@@ -260,6 +300,7 @@ export class MirrorRenderer {
   }
 
   async markFinalAssistantMessage(binding, session, assistantMessageID, messageId) {
+    const startedAt = Date.now()
     const block = findAssistantBlock(session, assistantMessageID)
     if (!block || block.finalMarked) return
     const rawText = withFinalAnswerMarker(block.text || "...")
@@ -295,6 +336,11 @@ export class MirrorRenderer {
     }
     block.finalMarked = true
     block.lastEdit = Date.now()
+    logMirrorFlush("mirror.final_marked", binding, {
+      assistantMessageID,
+      messageId,
+      durationMs: durationMs(startedAt),
+    })
   }
 
   rememberAssistantMessage(binding, assistantMessageID, messageId) {
@@ -343,6 +389,20 @@ async function ignoreEditRace(fn) {
   try {
     await fn()
   } catch (error) {
-    if (!/message is not modified|Too Many Requests/i.test(error.message)) throw error
+    if (/message is not modified/i.test(error.message)) return
+    if (/Too Many Requests/i.test(error.message)) {
+      logErrorEvent("telegram.edit.rate_limited_after_retry", error)
+      return
+    }
+    throw error
   }
+}
+
+function logMirrorFlush(event, binding, fields = {}) {
+  logInfo(event, {
+    serverID: binding.serverID,
+    sessionID: binding.sessionID,
+    topicId: binding.topicId,
+    ...fields,
+  })
 }

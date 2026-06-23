@@ -1,3 +1,5 @@
+import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
+
 export class OpenCodeClient {
   constructor(config) {
     this.config = config
@@ -213,7 +215,17 @@ async function readSse(body, onEvent, signal) {
         .join("\n")
       if (!data) continue
       try {
-        onEvent(JSON.parse(data))
+        const event = JSON.parse(data)
+        const result = onEvent(event)
+        if (result && typeof result.then === "function") {
+          const startedAt = Date.now()
+          result
+            .then(() => {
+              const elapsedMs = durationMs(startedAt)
+              if (shouldLogSlow(elapsedMs)) logInfo("opencode.event.handler.slow", { type: event.type, durationMs: elapsedMs })
+            })
+            .catch((error) => logErrorEvent("opencode.event.handler.error", error, { type: event.type }))
+        }
       } catch {
         // Ignore malformed keepalive or partial data.
       }
