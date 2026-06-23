@@ -351,7 +351,6 @@ function finalNotificationText({ title, link, serverID }) {
     "🏁 Final answer is ready",
     `🧵 ${topic}`,
     `🖥️ Server: <code>${escapeHtml(serverID)}</code>`,
-    "🔗 Tap the topic link to jump to the final message",
   ].join("\n")
 }
 
