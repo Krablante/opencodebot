@@ -58,12 +58,22 @@ reconcileLoop().catch(logError)
 await pollTelegram()
 
 async function syncTelegramCommandMenu() {
+  const scopes = telegramCommandScopes()
   try {
-    await telegram.setMyCommands(telegramBotCommands)
-    logInfo("telegram.commands.synced", { count: telegramBotCommands.length })
+    for (const scope of scopes) {
+      await telegram.setMyCommands(telegramBotCommands, scope ? { scope } : {})
+    }
+    logInfo("telegram.commands.synced", { count: telegramBotCommands.length, scopes: scopes.map((scope) => scope?.type || "default") })
   } catch (error) {
     logErrorEvent("telegram.commands.sync.failed", error)
   }
+}
+
+function telegramCommandScopes() {
+  const scopes = [null, { type: "all_private_chats" }, { type: "all_group_chats" }]
+  const chatId = state.chatId || config.telegram.chatId
+  if (chatId) scopes.push({ type: "chat", chat_id: chatId })
+  return scopes
 }
 
 async function pollTelegram() {
