@@ -70,9 +70,14 @@ async function syncTelegramCommandMenu() {
 }
 
 function telegramCommandScopes() {
-  const scopes = [null, { type: "all_private_chats" }, { type: "all_group_chats" }]
+  const scopes = [null, { type: "all_private_chats" }, { type: "all_group_chats" }, { type: "all_chat_administrators" }]
   const chatId = state.chatId || config.telegram.chatId
-  if (chatId) scopes.push({ type: "chat", chat_id: chatId })
+  if (chatId) {
+    scopes.push({ type: "chat", chat_id: chatId }, { type: "chat_administrators", chat_id: chatId })
+    for (const userID of config.telegram.allowedUserIds || []) {
+      scopes.push({ type: "chat_member", chat_id: chatId, user_id: userID })
+    }
+  }
   return scopes
 }
 
