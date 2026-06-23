@@ -118,7 +118,7 @@ Each feedback class can be disabled separately with `accepted`, `queued`, and `e
 
 ## Final Notifications
 
-`finalNotifications` controls optional private DM notifications for final mirrored answers. Users opt in with `/notify_on` and opt out with `/notify_off`. The bot first verifies that it can DM the user, then stores the Telegram user id in state.
+`finalNotifications` controls optional private DM notifications for final mirrored answers. `finalNotifications.userIds` is the configured recipient allowlist. `/notify_on` enables notifications for those configured ids after verifying that the bot can DM them; `/notify_off` disables those configured recipients again.
 
 The final DM is intentionally short: it names the topic, links to the final message in the Telegram topic, and does not include the final answer text. `maxSentMarkers` caps durable dedupe markers so live events plus reconcile do not send the same final notification twice.
 

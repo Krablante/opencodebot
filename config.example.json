@@ -46,6 +46,7 @@
   },
   "finalNotifications": {
     "enabled": true,
+    "userIds": [],
     "maxSentMarkers": 1000
   },
   "attachments": {

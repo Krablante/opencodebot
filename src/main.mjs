@@ -354,7 +354,8 @@ async function notifyFinalAnswerReady(binding, { assistantMessageID, messageId }
   if (config.finalNotifications?.enabled === false) return
   if (!messageId) return
   if (state.finalNotificationSent(binding.serverID, binding.sessionID, assistantMessageID, messageId)) return
-  const userIds = state.finalNotificationUserIds()
+  const configuredUserIds = new Set((config.finalNotifications?.userIds || []).map(String))
+  const userIds = state.finalNotificationUserIds().filter((userId) => configuredUserIds.has(String(userId)))
   if (!userIds.length) return
   const link = telegramMessageLink(binding.chatId, messageId)
   const title = binding.title || `Topic ${binding.topicId}`

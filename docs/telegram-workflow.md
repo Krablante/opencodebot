@@ -21,9 +21,9 @@ When OpenCodez later updates a session title, the linked Telegram topic is renam
 /q <prompt>                       queue or send a prompt in this topic/session
 /q status                         show queued prompts
 /q delete <number>                remove a queued prompt by status number
-/notify_on                       enable final-answer DMs for you
-/notify_off                      disable final-answer DMs for you
-/notify_status                   show your final-answer DM status
+/notify_on                       enable final-answer DMs for configured recipients
+/notify_off                      disable final-answer DMs for configured recipients
+/notify_status                   show configured final-answer DM status
 /mirror_on                        enable web-to-Telegram mirroring
 /mirror_off                       disable web-to-Telegram mirroring
 /help                             show commands and configured templates
@@ -64,7 +64,7 @@ The queue advances only after the same final-answer path used for `🏁` and pin
 
 ## Final Notifications
 
-`/notify_on`, `/notify_off`, and `/notify_status` control per-user private DM notifications for final answers. When enabled, the bot sends a short private message to that Telegram user when a final mirrored answer is ready. The DM links to the final topic message and does not include the final answer text.
+`/notify_on`, `/notify_off`, and `/notify_status` control private DM notifications for `finalNotifications.userIds`. When enabled, the bot sends a short private message to each configured recipient when a final mirrored answer is ready. The DM links to the final topic message and does not include the final answer text.
 
 ## Mirror
 
