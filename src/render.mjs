@@ -20,20 +20,22 @@ import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
 export { formatToolLine } from "./tool-formatting.mjs"
 
 export class MirrorRenderer {
-  constructor({ telegram, state, config }) {
+  constructor({ telegram, state, config, onMirrorMessage }) {
     this.telegram = telegram
     this.state = state
     this.config = config
+    this.onMirrorMessage = onMirrorMessage
     this.sessions = new Map()
     this.hiddenTools = toolNameSet(config.mirror?.hiddenTools || [])
   }
 
   async userPrompt(binding, text, origin = "web") {
-    await this.telegram.sendMessage({
+    const message = await this.telegram.sendMessage({
       chatId: binding.chatId,
       topicId: binding.topicId,
       text: clampTelegram(`💬 ${escapeHtml(text)}`, this.config.mirror.maxTelegramChars),
     })
+    await this.notifyMirrorMessage(binding, message)
   }
 
   async assistantMessage(binding, text, { pin = true } = {}) {
@@ -43,6 +45,7 @@ export class MirrorRenderer {
     const output = pin ? withFinalAnswerMarker(value) : value
     const markdown = prepareRichMarkdown(output)
     const sent = await this.sendAssistantMarkdown(binding, markdown, output)
+    await this.notifyMirrorMessage(binding, sent)
     if (pin && this.config.mirror.pinFinalAnswers !== false) await this.pinMessage(binding, sent.message_id)
     return sent
   }
@@ -128,6 +131,7 @@ export class MirrorRenderer {
     if (!block.messageId) {
       const sent = await this.sendAssistantMarkdown(binding, payload, rawText, block)
       block.messageId = sent.message_id
+      await this.notifyMirrorMessage(binding, sent)
       this.rememberAssistantMessage(binding, block.assistantMessageID, block.messageId)
       logMirrorFlush("mirror.text.sent", binding, {
         assistantMessageID: block.assistantMessageID,
@@ -205,6 +209,7 @@ export class MirrorRenderer {
     if (!tools.messageId) {
       const sent = await this.sendToolQuote(binding, markdown, text, tools)
       tools.messageId = sent.message_id
+      await this.notifyMirrorMessage(binding, sent)
     } else if (tools.formatFallback) {
       await ignoreEditRace(() => this.telegram.editMessageText({ chatId: binding.chatId, messageId: tools.messageId, text, format: "plain" }))
     } else {
@@ -362,6 +367,20 @@ export class MirrorRenderer {
       this.sessions.set(key, session)
     }
     return session
+  }
+
+  async notifyMirrorMessage(binding, message) {
+    if (!this.onMirrorMessage || !message?.message_id) return
+    try {
+      await this.onMirrorMessage(binding, message)
+    } catch (error) {
+      logErrorEvent("mirror.message.callback.failed", error, {
+        serverID: binding.serverID,
+        sessionID: binding.sessionID,
+        topicId: binding.topicId,
+        messageId: message.message_id,
+      })
+    }
   }
 
   shouldMirrorTool(tool) {

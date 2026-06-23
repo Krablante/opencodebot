@@ -21,7 +21,8 @@ if (config.telegram.chatId && !state.chatId) await state.setChatId(config.telegr
 const telegram = new TelegramClient(config.telegram.token)
 const botInfo = await telegram.getMe()
 const opencode = new OpenCodeClient(config)
-const renderer = new MirrorRenderer({ telegram, state, config })
+const promptFeedbackMessages = new Map()
+const renderer = new MirrorRenderer({ telegram, state, config, onMirrorMessage: clearPromptFeedback })
 const abort = new AbortController()
 let shutdownRequested = false
 const backendRequester = createBackendRequester()
@@ -121,7 +122,12 @@ async function handleTelegramMessage(message) {
     await queueTelegramPrompt(promptKey, text, { message, pending })
     return
   }
-  await sendPromptFeedback({ chatId: message.chat.id, topicId: topicId(message), text: "This topic is not bound to an OpenCodez session. Use /new to create one, then send the prompt there.", kind: "error" })
+  await sendPromptFeedback({
+    chatId: message.chat.id,
+    topicId: topicId(message),
+    text: "🔴 Топик не привязан\n🧭 Используй /new, затем отправь промпт в созданный топик",
+    kind: "error",
+  })
 }
 
 async function queueTelegramPrompt(key, text, context) {
@@ -224,6 +230,7 @@ async function createPendingTopic(message, args) {
 async function sendTelegramPrompt(binding, text, files = []) {
   promptQueue.markBusy(binding)
   await activateBindingForPrompt(binding, "telegram-prompt")
+  await sendPromptFeedback({ binding, text: promptFeedbackStartingText(), kind: "accepted" })
   try {
     const profile = await currentProfile(binding)
     await state.addPendingPrompt({
@@ -232,12 +239,12 @@ async function sendTelegramPrompt(binding, text, files = []) {
       hash: promptHash(text),
     })
     await opencode.promptAsync(binding.serverID, binding.sessionID, promptPayload(text, profile, files))
-    await sendPromptFeedback({ binding, text: "Prompt accepted by OpenCodez.", kind: "accepted" })
+    await updatePromptFeedback(binding, promptFeedbackAcceptedText()).catch(logError)
     scheduleReconcile(binding, 8000)
   } catch (error) {
     promptQueue.markIdle(binding)
     await state.removePendingPrompt(binding.serverID, binding.sessionID, text).catch(logError)
-    await sendPromptFeedback({ binding, text: `Prompt was not accepted. <code>${escapeHtml(error.message)}</code>`, kind: "error" }).catch(logError)
+    await reportPromptFeedbackError(binding, error).catch(logError)
     throw error
   }
 }
@@ -278,11 +285,56 @@ async function sendPromptFeedback({ binding, chatId, topicId: targetTopicId, tex
   if (kind === "accepted" && config.promptFeedback.accepted === false) return
   if (kind === "queued" && config.promptFeedback.queued === false) return
   if (kind === "error" && config.promptFeedback.errors === false) return
-  await telegram.sendMessage({
+  if (kind === "accepted" && binding) await clearPromptFeedback(binding)
+  const message = await telegram.sendMessage({
     chatId: binding?.chatId ?? chatId,
     topicId: binding?.topicId ?? targetTopicId,
     text,
   })
+  if (kind === "accepted" && binding && message?.message_id) {
+    promptFeedbackMessages.set(promptFeedbackKey(binding), { chatId: binding.chatId, messageId: message.message_id })
+  }
+  return message
+}
+
+async function updatePromptFeedback(binding, text) {
+  const item = promptFeedbackMessages.get(promptFeedbackKey(binding))
+  if (!item) return false
+  await telegram.editMessageText({ chatId: item.chatId, messageId: item.messageId, text })
+  return true
+}
+
+async function reportPromptFeedbackError(binding, error) {
+  const text = `🔴 Не принялось\n🧯 ${escapeHtml(error.message)}`
+  const updated = await updatePromptFeedback(binding, text).catch(() => false)
+  if (!updated) await sendPromptFeedback({ binding, text, kind: "error" })
+}
+
+async function clearPromptFeedback(binding) {
+  const key = promptFeedbackKey(binding)
+  const item = promptFeedbackMessages.get(key)
+  if (!item) return
+  promptFeedbackMessages.delete(key)
+  try {
+    await telegram.deleteMessage({ chatId: item.chatId, messageId: item.messageId })
+    logInfo("prompt_feedback.deleted", { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId, messageId: item.messageId })
+  } catch (error) {
+    if (!/message to delete not found|message can't be deleted|message not found/i.test(error.message)) {
+      logErrorEvent("prompt_feedback.delete.failed", error, { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId, messageId: item.messageId })
+    }
+  }
+}
+
+function promptFeedbackKey(binding) {
+  return `${binding.serverID}:${binding.sessionID}`
+}
+
+function promptFeedbackStartingText() {
+  return "🟡 Принял промпт\n🚀 Передаю в OpenCodez\n🪞 Уберу это сообщение, когда начнется зеркало"
+}
+
+function promptFeedbackAcceptedText() {
+  return "🟢 OpenCodez принял\n🧠 Жду первые события\n🪞 Исчезну, когда начнется зеркало"
 }
 
 async function currentProfile(binding) {
