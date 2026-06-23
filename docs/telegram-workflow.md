@@ -29,6 +29,8 @@ When OpenCodez later updates a session title, the linked Telegram topic is renam
 /help                             show commands and configured templates
 ```
 
+The bot syncs this slash-command menu on startup through Bot API `setMyCommands`, so the same commands should appear in Telegram's command suggestions.
+
 `/new` parses arguments from left to right. If the first argument matches a configured server id, that server is used. If the next argument, or the first argument when no server was given, matches `chatTemplates`, that template is used. Everything left becomes the user-owned topic title.
 
 Examples:

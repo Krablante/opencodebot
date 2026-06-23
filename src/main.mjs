@@ -2,7 +2,7 @@ import { assertRuntimeConfig, loadConfig } from "./config.mjs"
 import { AttachmentBuffer, cleanupUploads, downloadTelegramFiles, extractTelegramFiles } from "./attachments.mjs"
 import { createBackendRequester, formatDuration } from "./backend-backoff.mjs"
 import { applyChatTemplate, parseNewTopicArgs } from "./chat-templates.mjs"
-import { createTelegramCommandHandlers } from "./commands.mjs"
+import { createTelegramCommandHandlers, telegramBotCommands } from "./commands.mjs"
 import { OpenCodeClient, profileFromMessages, profileFromSession, promptPayload, textFromPrompt, titleFromText } from "./opencode.mjs"
 import { MultipartPromptBuffer } from "./multipart-prompts.mjs"
 import { PromptQueue } from "./prompt-queue.mjs"
@@ -44,6 +44,7 @@ process.once("SIGINT", () => requestShutdown("SIGINT"))
 process.once("SIGTERM", () => requestShutdown("SIGTERM"))
 
 await telegram.deleteWebhook()
+await syncTelegramCommandMenu()
 await cleanupUploads(config.paths.uploadsDir, config.attachments.cleanupAfterMs).catch(logError)
 setInterval(() => cleanupUploads(config.paths.uploadsDir, config.attachments.cleanupAfterMs).catch(logError), 60 * 60 * 1000).unref?.()
 console.log(`[opencodebot] starting ${config.opencode.servers.length} OpenCodez event streams`)
@@ -55,6 +56,15 @@ for (const server of config.opencode.servers) {
 reconcileLoop().catch(logError)
 
 await pollTelegram()
+
+async function syncTelegramCommandMenu() {
+  try {
+    await telegram.setMyCommands(telegramBotCommands)
+    logInfo("telegram.commands.synced", { count: telegramBotCommands.length })
+  } catch (error) {
+    logErrorEvent("telegram.commands.sync.failed", error)
+  }
+}
 
 async function pollTelegram() {
   let offset = state.data.runtime.telegramUpdateOffset || undefined

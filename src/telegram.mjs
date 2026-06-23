@@ -52,6 +52,10 @@ export class TelegramClient {
     return this.request("getMe")
   }
 
+  async setMyCommands(commands) {
+    return this.request("setMyCommands", { commands })
+  }
+
   async getFile(fileId) {
     return this.request("getFile", { file_id: fileId })
   }

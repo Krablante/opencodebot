@@ -1,6 +1,18 @@
 import { summarizeWords } from "./prompt-queue.mjs"
 import { escapeHtml, topicId } from "./telegram.mjs"
 
+export const telegramBotCommands = [
+  { command: "new", description: "Create a new OpenCodez session topic" },
+  { command: "q", description: "Queue prompts for the current session" },
+  { command: "notify_on", description: "Enable final-answer DMs" },
+  { command: "notify_off", description: "Disable final-answer DMs" },
+  { command: "notify_status", description: "Show final-answer DM status" },
+  { command: "mirror_on", description: "Enable web-to-Telegram mirroring" },
+  { command: "mirror_off", description: "Disable web-to-Telegram mirroring" },
+  { command: "help", description: "Show commands and templates" },
+  { command: "start", description: "Show help" },
+]
+
 export function createTelegramCommandHandlers({ config, state, telegram, promptQueue, multipartPrompts, createPendingTopic }) {
   const handlers = {
     mirror_on: async (message) => {
