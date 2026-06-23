@@ -125,7 +125,7 @@ async function handleTelegramMessage(message) {
   await sendPromptFeedback({
     chatId: message.chat.id,
     topicId: topicId(message),
-    text: "🔴 Топик не привязан\n🧭 Используй /new, затем отправь промпт в созданный топик",
+    text: "🔴 Topic is not bound\n🧭 Use /new, then send the prompt in the new topic",
     kind: "error",
   })
 }
@@ -305,7 +305,7 @@ async function updatePromptFeedback(binding, text) {
 }
 
 async function reportPromptFeedbackError(binding, error) {
-  const text = `🔴 Не принялось\n🧯 ${escapeHtml(error.message)}`
+  const text = `🔴 Prompt was not accepted\n🧯 ${escapeHtml(error.message)}`
   const updated = await updatePromptFeedback(binding, text).catch(() => false)
   if (!updated) await sendPromptFeedback({ binding, text, kind: "error" })
 }
@@ -330,11 +330,11 @@ function promptFeedbackKey(binding) {
 }
 
 function promptFeedbackStartingText() {
-  return "🟡 Принял промпт\n🚀 Передаю в OpenCodez\n🪞 Уберу это сообщение, когда начнется зеркало"
+  return "🟡 Prompt received\n🚀 Sending it to OpenCodez\n🪞 This message will disappear when mirroring starts"
 }
 
 function promptFeedbackAcceptedText() {
-  return "🟢 OpenCodez принял\n🧠 Жду первые события\n🪞 Исчезну, когда начнется зеркало"
+  return "🟢 Accepted by OpenCodez\n🧠 Waiting for the first events\n🪞 This message will disappear when mirroring starts"
 }
 
 async function currentProfile(binding) {
