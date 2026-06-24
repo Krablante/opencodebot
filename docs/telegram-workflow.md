@@ -60,7 +60,7 @@ Supported attachment inputs include documents, photos, videos, animations, audio
 
 `/q <prompt>` sends immediately when the bound OpenCodez session is idle. If the session is busy, the prompt is kept in memory for that session.
 
-The queue advances only after the same final-answer path used for `🏁` and pinning, where OpenCodez reports `finish === stop`. Progress notes, reconnects, and tool-only steps do not release the next queued prompt. If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. A service restart drops queued prompts instead of writing full user prompts into `state.json`.
+The queue advances only after the same final-answer path used for `🏁`, where OpenCodez reports `finish === stop`. Progress notes, reconnects, and tool-only steps do not release the next queued prompt. If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. A service restart drops queued prompts instead of writing full user prompts into `state.json`.
 
 ## Final Notifications
 
@@ -70,7 +70,7 @@ The queue advances only after the same final-answer path used for `🏁` and pin
 
 Web-origin text prompts are mirrored into Telegram with a small `💬` marker. Telegram-origin prompts are suppressed when the bot can match them to its own pending send.
 
-Assistant text is accumulated until OpenCodez completes the text block. The bot does not edit Telegram token-by-token. Completed assistant text is sent as Telegram Rich Message markdown when the Bot API accepts it, with fallback for local Markdown links and formatting errors. Real final answers are marked with `🏁 ` and pinned when configured.
+Assistant text is accumulated until OpenCodez completes the text block. The bot does not edit Telegram token-by-token. Completed assistant text is sent as Telegram Rich Message markdown when the Bot API accepts it, with fallback for local Markdown links and formatting errors. Real final answers are marked with `🏁 `. When configured, the bot pins the user prompt that started the run: the original Telegram message for Telegram-origin prompts, or the mirrored user message for web-origin prompts.
 
 Tool calls are compact and expandable. Adjacent tool results update one Telegram message until assistant text starts a new block. Tool batches use Telegram MarkdownV2 expandable blockquotes, so details are one tap away without filling the topic with raw output.
 

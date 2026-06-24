@@ -186,9 +186,10 @@ export class StateStore {
       const index = data.pendingPrompts.findIndex(
         (item) => item.serverID === serverID && item.sessionID === sessionID && item.hash === hash,
       )
-      if (index === -1) return false
+      if (index === -1) return null
+      const [matched] = data.pendingPrompts.slice(index, index + 1)
       data.pendingPrompts.splice(index, 1)
-      return true
+      return matched
     })
   }
 

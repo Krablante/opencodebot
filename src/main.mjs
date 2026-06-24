@@ -161,8 +161,9 @@ async function queueTelegramPrompt(key, text, context) {
 }
 
 async function flushTelegramPrompt(context, text, files = []) {
+  const sourceMessageId = context.message?.message_id
   if (context.binding) {
-    await sendTelegramPrompt(context.binding, text, files)
+    await sendTelegramPrompt(context.binding, text, files, { sourceMessageId })
     return
   }
   if (!context.pending) return
@@ -182,7 +183,7 @@ async function flushTelegramPrompt(context, text, files = []) {
   await state.bindTopic(newBinding)
   await state.markSeenSession(newBinding.serverID, newBinding.sessionID)
   await activateBindingForPrompt(newBinding, "telegram-new-topic")
-  await sendTelegramPrompt(newBinding, text, files)
+  await sendTelegramPrompt(newBinding, text, files, { sourceMessageId })
 }
 
 async function handleAttachmentMessage(message, promptKey, files, caption) {
@@ -253,7 +254,7 @@ async function createPendingTopic(message, args) {
   })
 }
 
-async function sendTelegramPrompt(binding, text, files = []) {
+async function sendTelegramPrompt(binding, text, files = [], { sourceMessageId } = {}) {
   promptQueue.markBusy(binding)
   await activateBindingForPrompt(binding, "telegram-prompt")
   await sendPromptFeedback({ binding, text: promptFeedbackStartingText(), kind: "accepted" })
@@ -263,6 +264,7 @@ async function sendTelegramPrompt(binding, text, files = []) {
       serverID: binding.serverID,
       sessionID: binding.sessionID,
       hash: promptHash(text),
+      messageId: sourceMessageId,
     })
     await opencode.promptAsync(binding.serverID, binding.sessionID, promptPayload(text, profile, files))
     await updatePromptFeedback(binding, promptFeedbackAcceptedText()).catch(logError)
@@ -532,7 +534,8 @@ async function handleOpenCodeEvent(server, event) {
         const text = textFromPrompt(properties.prompt)
         if (!text) return
         const consumed = await state.consumePendingPrompt(server.id, sessionID, text)
-        if (!consumed) await renderer.userPrompt(binding, text, "web")
+        if (consumed) await pinConsumedTelegramPrompt(binding, consumed)
+        else await renderer.userPrompt(binding, text, "web")
         if (properties.messageID) await state.markUserMirrored(server.id, sessionID, properties.messageID)
         break
       }
@@ -544,7 +547,7 @@ async function handleOpenCodeEvent(server, event) {
         break
       case "session.next.step.ended":
         if (properties.finish === "stop") {
-          await renderer.pinFinalAssistantMessage(binding, properties.assistantMessageID)
+          await renderer.finalAssistantMessageReady(binding, properties.assistantMessageID)
           await promptQueue.complete(binding)
         }
         await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
@@ -572,6 +575,12 @@ async function handleOpenCodeEvent(server, event) {
   }
   const elapsedMs = durationMs(startedAt)
   if (isMirrorMilestone(event.type) || shouldLogSlow(elapsedMs)) logInfo("mirror.event.handled", { ...fields(), durationMs: elapsedMs })
+}
+
+async function pinConsumedTelegramPrompt(binding, marker) {
+  const messageId = Number(marker?.messageId)
+  if (!renderer.shouldPinUserPrompts() || !Number.isSafeInteger(messageId) || messageId <= 0) return
+  await renderer.pinMessage(binding, messageId)
 }
 
 async function reconcileLoop() {
@@ -750,7 +759,7 @@ async function renderStoredAssistantMessage(binding, message) {
     if (toolLine) toolLines.push(toolLine)
   }
   await renderer.compactTools(binding, toolLines)
-  await renderer.assistantMessage(binding, textParts.join("\n\n"), { pin: info.finish === "stop", assistantMessageID: info.id })
+  await renderer.assistantMessage(binding, textParts.join("\n\n"), { final: info.finish === "stop", assistantMessageID: info.id })
 }
 
 function textFromStoredMessage(message) {

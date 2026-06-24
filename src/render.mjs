@@ -37,18 +37,19 @@ export class MirrorRenderer {
       text: clampTelegram(`💬 ${escapeHtml(text)}`, this.config.mirror.maxTelegramChars),
     })
     await this.notifyMirrorMessage(binding, message)
+    if (this.shouldPinUserPrompts()) await this.pinMessage(binding, message.message_id)
+    return message
   }
 
-  async assistantMessage(binding, text, { pin = true, assistantMessageID } = {}) {
+  async assistantMessage(binding, text, { final = true, assistantMessageID } = {}) {
     const value = String(text || "").trim()
     if (!value) return
     this.closeToolBatch(binding)
-    const output = pin ? withFinalAnswerMarker(value) : value
+    const output = final ? withFinalAnswerMarker(value) : value
     const markdown = prepareRichMarkdown(output)
     const sent = await this.sendAssistantMarkdown(binding, markdown, output)
     await this.notifyMirrorMessage(binding, sent)
-    if (pin && this.config.mirror.pinFinalAnswers !== false) await this.pinMessage(binding, sent.message_id)
-    if (pin) await this.notifyFinalMessage(binding, { assistantMessageID, messageId: sent.message_id })
+    if (final) await this.notifyFinalMessage(binding, { assistantMessageID, messageId: sent.message_id })
     return sent
   }
 
@@ -90,7 +91,7 @@ export class MirrorRenderer {
     await this.flushText(binding, block, true)
     if (session.pendingFinalAssistantIds.has(block.assistantMessageID)) {
       session.pendingFinalAssistantIds.delete(block.assistantMessageID)
-      await this.pinFinalAssistantMessage(binding, block.assistantMessageID)
+      await this.finalAssistantMessageReady(binding, block.assistantMessageID)
     }
   }
 
@@ -294,7 +295,7 @@ export class MirrorRenderer {
     }
   }
 
-  async pinFinalAssistantMessage(binding, assistantMessageID) {
+  async finalAssistantMessageReady(binding, assistantMessageID) {
     if (!assistantMessageID) return
     const session = this.ensureSession(this.key(binding))
     const messageId = session?.assistantLastMessageIds.get(assistantMessageID)
@@ -303,8 +304,12 @@ export class MirrorRenderer {
       return
     }
     await this.markFinalAssistantMessage(binding, session, assistantMessageID, messageId)
-    if (this.config.mirror.pinFinalAnswers !== false) await this.pinMessage(binding, messageId)
     await this.notifyFinalMessage(binding, { assistantMessageID, messageId })
+  }
+
+  shouldPinUserPrompts() {
+    const mirror = this.config.mirror || {}
+    return mirror.pinUserPrompts ?? mirror.pinFinalAnswers ?? true
   }
 
   async markFinalAssistantMessage(binding, session, assistantMessageID, messageId) {

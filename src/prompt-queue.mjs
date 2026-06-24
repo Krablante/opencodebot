@@ -12,15 +12,15 @@ export class PromptQueue {
     this.state(binding).busy = false
   }
 
-  async enqueue(binding, text) {
+  async enqueue(binding, text, metadata = {}) {
     const value = String(text || "").trim()
     if (!value) return { status: "empty" }
     const state = this.state(binding)
     if (!state.busy) {
-      await this.sendNow(binding, value)
+      await this.sendNow(binding, value, metadata)
       return { status: "sent" }
     }
-    state.items.push({ text: value, createdAt: Date.now() })
+    state.items.push({ text: value, createdAt: Date.now(), sourceMessageId: metadata?.sourceMessageId })
     return { status: "queued", position: state.items.length }
   }
 
@@ -64,15 +64,15 @@ export class PromptQueue {
     const state = this.state(binding)
     if (state.busy || !state.items.length) return { status: "idle" }
     const item = state.items.shift()
-    await this.sendNow(binding, item.text)
+    await this.sendNow(binding, item.text, item)
     return { status: "sent", text: item.text }
   }
 
-  async sendNow(binding, text) {
+  async sendNow(binding, text, metadata = {}) {
     const state = this.state(binding)
     state.busy = true
     try {
-      await this.sendPrompt(binding, text)
+      await this.sendPrompt(binding, text, [], metadata)
     } catch (error) {
       state.busy = false
       throw error

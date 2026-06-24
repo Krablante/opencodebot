@@ -77,7 +77,7 @@
   },
   "mirror": {
     "showReasoningSummaries": false,
-    "pinFinalAnswers": true,
+    "pinUserPrompts": true,
     "deletePinServiceMessages": true,
     "hiddenTools": ["todo", "todowrite", "todo_write"],
     "toolBatchMaxLines": 12,

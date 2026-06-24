@@ -70,7 +70,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, promptQ
       return
     }
 
-    const result = await promptQueue.enqueue(binding, input)
+    const result = await promptQueue.enqueue(binding, input, { sourceMessageId: message.message_id })
     if (result.status === "queued") {
       await telegram.sendMessage({
         chatId: message.chat.id,

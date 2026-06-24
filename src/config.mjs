@@ -85,6 +85,7 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
     },
     mirror: {
       ...config.mirror,
+      pinUserPrompts: config.mirror?.pinUserPrompts ?? config.mirror?.pinFinalAnswers,
       hiddenTools: normalizeStringList(config.mirror?.hiddenTools, defaultHiddenTools),
     },
     multipartPrompts: normalizeMultipartPrompts(config.multipartPrompts),

@@ -90,7 +90,7 @@ Then start a topic with:
 
 `mirror.enabled` is the main kill switch for OpenCodez-to-Telegram mirroring. Telegram commands can still exist around it, but assistant/tool events are ignored when mirroring is disabled.
 
-`mirror.pinFinalAnswers` pins final assistant answers in the topic. `mirror.deletePinServiceMessages` removes Telegram's automatic pin service messages when possible, keeping topics quieter.
+`mirror.pinUserPrompts` pins the user prompt that started the run in the topic. For Telegram-origin prompts this pins the original Telegram message; for web-origin prompts this pins the mirrored user prompt message. `mirror.pinFinalAnswers` is still accepted as a legacy fallback. `mirror.deletePinServiceMessages` removes Telegram's automatic pin service messages when possible, keeping topics quieter.
 
 `mirror.finalMarker` is appended when the assistant step finishes normally. Keep it short; it is there to make final answers easy to spot in a busy topic.
 
