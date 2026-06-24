@@ -7,6 +7,7 @@ import { OpenCodeClient, profileFromMessages, profileFromSession, promptPayload,
 import { MultipartPromptBuffer } from "./multipart-prompts.mjs"
 import { PromptQueue } from "./prompt-queue.mjs"
 import { formatToolLine, MirrorRenderer } from "./render.mjs"
+import { escapeMarkdownV2, toolQuoteMarkdownV2 } from "./rich-markdown.mjs"
 import { StateStore, promptHash } from "./state.mjs"
 import { escapeHtml, isAllowedMessage, TelegramClient, telegramMessageLink, topicId } from "./telegram.mjs"
 import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
@@ -359,10 +360,13 @@ async function notifyFinalAnswerReady(binding, { assistantMessageID, messageId }
   if (!userIds.length) return
   const link = telegramMessageLink(binding.chatId, messageId)
   const title = binding.title || `Topic ${binding.topicId}`
-  const text = finalNotificationText({ title, link, serverID: binding.serverID })
+  const promptText = await finalPromptText(binding, assistantMessageID)
+  const replyMarkup = finalNotificationReplyMarkup(link)
+  const text = finalNotificationMarkdown({ title, serverID: binding.serverID, promptText })
+  const fallbackText = finalNotificationFallbackHtml({ title, serverID: binding.serverID })
   for (const userId of userIds) {
     try {
-      await telegram.sendMessage({ chatId: userId, text, disablePreview: true })
+      await sendFinalNotificationMessage({ userId, text, fallbackText, replyMarkup })
       logInfo("final_notification.sent", { userId, serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId, messageId })
     } catch (error) {
       logErrorEvent("final_notification.failed", error, { userId, serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId, messageId })
@@ -371,13 +375,75 @@ async function notifyFinalAnswerReady(binding, { assistantMessageID, messageId }
   await state.markFinalNotificationSent(binding.serverID, binding.sessionID, assistantMessageID, messageId, config.finalNotifications.maxSentMarkers)
 }
 
-function finalNotificationText({ title, link, serverID }) {
-  const topic = link ? `<a href="${escapeHtml(link)}">${escapeHtml(title)}</a>` : `<b>${escapeHtml(title)}</b>`
+async function sendFinalNotificationMessage({ userId, text, fallbackText, replyMarkup }) {
+  try {
+    await telegram.sendMessage({ chatId: userId, text, format: "markdownv2", disablePreview: true, replyMarkup })
+  } catch (error) {
+    if (!/can't parse entities|entity/i.test(error.message)) throw error
+    logErrorEvent("final_notification.markdown_failed", error, { userId })
+    await telegram.sendMessage({ chatId: userId, text: fallbackText, disablePreview: true, replyMarkup })
+  }
+}
+
+function finalNotificationMarkdown({ title, serverID, promptText }) {
+  const lines = [
+    "🏁 *Final answer is ready*",
+    `🧵 *${escapeMarkdownV2(title)}*`,
+    `🖥️ Server: ${escapeMarkdownV2(serverID)}`,
+  ]
+  if (promptText) lines.push("", toolQuoteMarkdownV2(promptText))
+  return lines.join("\n")
+}
+
+function finalNotificationFallbackHtml({ title, serverID }) {
   return [
     "🏁 Final answer is ready",
-    `🧵 ${topic}`,
+    `🧵 <b>${escapeHtml(title)}</b>`,
     `🖥️ Server: <code>${escapeHtml(serverID)}</code>`,
   ].join("\n")
+}
+
+function finalNotificationReplyMarkup(link) {
+  if (!link) return undefined
+  return { inline_keyboard: [[{ text: "Open topic", url: link }]] }
+}
+
+async function finalPromptText(binding, assistantMessageID) {
+  try {
+    const messages = await opencode.messages(binding.serverID, binding.sessionID)
+    return promptTextBeforeAssistant(messages, assistantMessageID)
+  } catch (error) {
+    logErrorEvent("final_notification.prompt_lookup_failed", error, {
+      serverID: binding.serverID,
+      sessionID: binding.sessionID,
+      assistantMessageID,
+    })
+    return ""
+  }
+}
+
+function promptTextBeforeAssistant(messages, assistantMessageID) {
+  if (!Array.isArray(messages) || !messages.length) return ""
+  let stopIndex = messages.length
+  if (assistantMessageID) {
+    const index = messages.findIndex((message) => message?.info?.id === assistantMessageID || message?.id === assistantMessageID)
+    if (index >= 0) stopIndex = index
+  }
+  for (let index = stopIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message?.info?.role !== "user" && message?.role !== "user") continue
+    const text = textFromMessagePrompt(message)
+    if (text) return text
+  }
+  return ""
+}
+
+function textFromMessagePrompt(message) {
+  const fromPrompt = textFromPrompt(message?.prompt)
+  if (fromPrompt) return fromPrompt
+  const fromMessage = textFromPrompt(message)
+  if (fromMessage) return fromMessage
+  return textFromPrompt(message?.content)
 }
 
 function promptFeedbackKey(binding) {

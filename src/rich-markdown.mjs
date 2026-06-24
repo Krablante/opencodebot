@@ -38,7 +38,7 @@ export function isTelegramFormattingError(error) {
   return isRichMessageError(error) || message.includes("can't parse entities") || message.includes("Unsupported start tag")
 }
 
-function escapeMarkdownV2(text) {
+export function escapeMarkdownV2(text) {
   return String(text ?? "").replace(/[\\_*[\]()~`>#+\-=|{}.!]/g, "\\$&")
 }
 

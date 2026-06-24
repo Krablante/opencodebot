@@ -88,13 +88,14 @@ export class TelegramClient {
     }, 0, options)
   }
 
-  async sendMessage({ chatId, topicId, text, disablePreview = true, format = "html" }) {
+  async sendMessage({ chatId, topicId, text, disablePreview = true, format = "html", replyMarkup }) {
     const payload = {
       chat_id: chatId,
       disable_web_page_preview: disablePreview,
     }
     applyTextFormat(payload, text, format)
     if (topicId) payload.message_thread_id = topicId
+    if (replyMarkup) payload.reply_markup = replyMarkup
     return this.request("sendMessage", payload)
   }
 
