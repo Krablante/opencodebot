@@ -52,7 +52,7 @@ Long Telegram-origin prompts can arrive as multiple Telegram messages. Near-limi
 
 After a Telegram prompt is handed to OpenCodez, the bot sends a short acknowledgement in the same topic. If the topic is not bound, the backend rejects the prompt, or OpenCodez later emits a session error, the bot reports that in Telegram instead of dropping the message silently.
 
-Telegram-origin prompts can include attachments. The bot downloads supported files into the configured uploads directory under Politia state and sends them as `file://` parts next to the prompt text. Files with captions flush as one prompt after media groups settle. Files without captions wait for the next plain text message from the same user/topic.
+Telegram-origin prompts can include attachments. The bot downloads supported files into the configured uploads directory under Politia state, then sends them to OpenCodez as data URL file parts next to the prompt text so the backend can read media independently of the bot container filesystem. Files with captions flush as one prompt after media groups settle. Files without captions wait for the next plain text message from the same user/topic.
 
 Supported attachment inputs include documents, photos, videos, animations, audio, voice messages, video notes, and media groups. Limits live in `attachments.maxFiles`, `attachments.maxFileBytes`, and `attachments.maxTotalBytes`.
 

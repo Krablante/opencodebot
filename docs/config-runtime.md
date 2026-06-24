@@ -130,7 +130,7 @@ The final DM is intentionally short: it names the topic, links to the final mess
 
 ## Attachments
 
-`attachments.enabled` controls Telegram file download support. Files are downloaded to `paths.uploadsDir`, attached to the next prompt, and later cleaned by age.
+`attachments.enabled` controls Telegram file download support. Files are downloaded to `paths.uploadsDir`, attached to the next prompt as data URLs for OpenCodez, and later cleaned by age.
 
 `mediaGroupIdleMs` lets Telegram albums settle before processing. `promptIdleMs` is how long files can wait for the user to send the text prompt that should go with them.
 

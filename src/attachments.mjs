@@ -1,7 +1,6 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { randomUUID } from "node:crypto"
-import { pathToFileURL } from "node:url"
 
 export class AttachmentBuffer {
   constructor({ settings, uploadDir, flushPrompt, onExpire, onError = (error) => console.error(error) }) {
@@ -146,11 +145,12 @@ export async function downloadTelegramFiles(telegram, descriptors, uploadDir, se
       createdPaths.push(localPath)
       const downloaded = await telegram.downloadFile({ fileId: descriptor.fileID, destination: localPath, maxBytes: normalized.maxFileBytes })
       const stat = await fs.stat(localPath)
+      const mime = descriptor.mime || "application/octet-stream"
       downloads.push({
         type: "file",
-        mime: descriptor.mime || "application/octet-stream",
+        mime,
         filename: descriptor.filename,
-        url: pathToFileURL(localPath).href,
+        url: await dataURL(localPath, mime),
         source: { type: "telegram", kind: descriptor.kind, fileUniqueId: descriptor.fileUniqueID },
         localPath,
         size: stat.size || downloaded.file?.file_size || descriptor.size || 0,
@@ -162,6 +162,11 @@ export async function downloadTelegramFiles(telegram, descriptors, uploadDir, se
     await Promise.all(createdPaths.map((filePath) => fs.rm(filePath, { force: true })))
     throw error
   }
+}
+
+async function dataURL(filePath, mime) {
+  const encoded = await fs.readFile(filePath, "base64")
+  return `data:${mime};base64,${encoded}`
 }
 
 export async function cleanupUploads(uploadDir, maxAgeMs) {
