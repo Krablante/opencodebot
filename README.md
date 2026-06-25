@@ -1,6 +1,6 @@
 # opencodebot
 
-opencodebot is a small Telegram mirror and companion for [OpenCodez](https://github.com/Krablante/opencodez). OpenCodez stays the main interface and source of truth; the bot adds Telegram forum topics, prompts, progress, compact tool status, attachments, final-answer pins, and a memory-only prompt queue.
+opencodebot is a small Telegram mirror and companion for [OpenCodez](https://github.com/Krablante/opencodez). OpenCodez stays the main interface and source of truth; the bot adds Telegram forum topics, prompts, progress, compact tool status, attachments, user-prompt pins, final notifications, artifact delivery, and a memory-only prompt queue.
 
 It is built as a practical single-operator tool that is still clean enough to share. The code favors readable modules, plain JSON config, and boring runtime state over a large framework.
 
@@ -19,6 +19,7 @@ The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/eve
 - Rich assistant messages sent as completed blocks instead of noisy token streaming.
 - Expandable tool quotes with configurable hidden tools.
 - Attachments and Telegram media groups attached to the next prompt.
+- Optional Telegram artifact gateway for sending agent-created files, screenshots, logs, and text into one dedicated artifacts topic.
 - Multipart prompt buffering for Telegram clients that split long messages.
 - Optional WireGuard helper for private off-LAN access to the existing OpenCodez web UI.
 
@@ -99,6 +100,7 @@ For direct npm usage, run `npm start`. The systemd unit in `deploy/` is a Linux 
 /q <prompt>
 /q status
 /q delete <number>
+/artifacts_here
 /mirror_on
 /mirror_off
 /help
@@ -108,8 +110,9 @@ Default chat templates are `d4flash`, `d4pro`, and `gpt55p`. Public defaults use
 
 ## Docs
 
-- [Telegram Workflow](docs/telegram-workflow.md) covers topics, `/new`, `/q`, attachments, multipart prompts, rich messages, tools, final pins, and reconcile.
+- [Telegram Workflow](docs/telegram-workflow.md) covers topics, `/new`, `/q`, attachments, multipart prompts, rich messages, tools, user-prompt pins, final notifications, and reconcile.
 - [Config And Runtime](docs/config-runtime.md) covers config loading, token handling, templates, mirror settings, attachments, and state.
+- [Artifact Gateway](docs/artifact-gateway.md) covers `/artifacts_here`, the LAN gateway, the OpenCodez plugin, and the bundled skill.
 - [Docker](docs/docker.md) covers the recommended Compose deployment path.
 - [Development](docs/development.md) covers source layout, checks, smoke tests, service restart, and change style.
 - [WireGuard](docs/wireguard.md) covers the optional private access helper and what it does not own.

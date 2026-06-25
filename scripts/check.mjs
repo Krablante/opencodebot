@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, "..")
-const roots = [path.join(projectRoot, "src"), path.join(projectRoot, "scripts")]
+const roots = [path.join(projectRoot, "src"), path.join(projectRoot, "scripts"), path.join(projectRoot, "plugins")]
 const files = []
 
 for (const root of roots) {
@@ -25,6 +25,6 @@ async function collectMjs(dir, out) {
   for (const entry of entries) {
     const entryPath = path.join(dir, entry.name)
     if (entry.isDirectory()) await collectMjs(entryPath, out)
-    else if (entry.isFile() && entry.name.endsWith(".mjs")) out.push(entryPath)
+    else if (entry.isFile() && [".mjs", ".js"].includes(path.extname(entry.name))) out.push(entryPath)
   }
 }

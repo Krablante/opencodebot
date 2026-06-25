@@ -3,6 +3,7 @@ import { escapeHtml, topicId } from "./telegram.mjs"
 
 export const telegramBotCommands = [
   { command: "new", description: "Create a new OpenCodez session topic" },
+  { command: "artifacts_here", description: "Use this topic for agent artifact uploads" },
   { command: "q", description: "Queue prompts for the current session" },
   { command: "notify_on", description: "Enable final-answer DMs" },
   { command: "notify_off", description: "Disable final-answer DMs" },
@@ -23,6 +24,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, promptQ
       await state.setMirrorEnabled(false)
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Mirror disabled." })
     },
+    artifacts_here: handleArtifactsHere,
     new: createPendingTopic,
     help: sendHelp,
     start: sendHelp,
@@ -96,7 +98,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, promptQ
       try {
         await telegram.sendMessage({
           chatId: userID,
-          text: "🔔 Final answer notifications enabled\n🏁 I will DM you when a mirrored topic gets its final answer\n🔗 The DM will link to the final message",
+          text: "🔔 Final answer notifications enabled\n🏁 I will DM you when a mirrored topic gets its final answer\n🔗 The DM includes an Open topic button and the original prompt quote",
         })
         await state.enableFinalNotificationsFor(userID)
         enabled.push(userID)
@@ -144,6 +146,31 @@ export function createTelegramCommandHandlers({ config, state, telegram, promptQ
     return [...new Set((config.finalNotifications?.userIds || []).map(String))]
   }
 
+  async function handleArtifactsHere(message) {
+    const currentTopicId = topicId(message)
+    if (!currentTopicId) {
+      await telegram.sendMessage({ chatId: message.chat.id, text: "Run /artifacts_here inside a Telegram forum topic." })
+      return
+    }
+    const existing = state.findBindingByTopic(message.chat.id, currentTopicId)
+    const target = await state.setArtifactsTopic({
+      chatId: message.chat.id,
+      topicId: currentTopicId,
+      title: existing?.title || `Topic ${currentTopicId}`,
+      setBy: message.from?.id,
+    })
+    await telegram.sendMessage({
+      chatId: message.chat.id,
+      topicId: currentTopicId,
+      text: [
+        "Artifacts topic configured.",
+        "This is now the only agent artifact target; any previous artifacts topic was forgotten.",
+        "Web/session mirroring is disabled for this topic.",
+        `Target: <code>${escapeHtml(String(target.chatId))}</code> / <code>${escapeHtml(String(target.topicId))}</code>`,
+      ].join("\n"),
+    })
+  }
+
   async function sendHelp(message) {
     await telegram.sendMessage({
       chatId: message.chat.id,
@@ -161,6 +188,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, promptQ
       "<code>/q &lt;prompt&gt;</code> - queue a prompt for this topic/session.",
       "<code>/q status</code> - show queued prompts.",
       "<code>/q delete &lt;number&gt;</code> - remove a queued prompt.",
+      "<code>/artifacts_here</code> - make this topic the single agent artifact target.",
       "<code>/notify_on</code> / <code>/notify_off</code> - toggle final-answer DMs for configured recipients.",
       "<code>/notify_status</code> - show configured final-answer DM status.",
       "<code>/mirror_on</code> / <code>/mirror_off</code> - toggle web-to-Telegram mirroring.",

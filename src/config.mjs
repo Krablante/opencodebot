@@ -11,6 +11,16 @@ const defaultMultipartPrompts = { enabled: true, minChars: 3600, idleMs: 2000, m
 const defaultReconcile = { enabled: true, intervalMs: 15000, activeWindowMs: 2 * 60 * 60 * 1000, lookbackMs: 30000 }
 const defaultPromptFeedback = { enabled: true, accepted: true, queued: true, errors: true }
 const defaultFinalNotifications = { enabled: true, userIds: [], maxSentMarkers: 1000 }
+const defaultArtifacts = {
+  enabled: false,
+  listenHost: "0.0.0.0",
+  port: 8788,
+  tokenEnvNames: ["OPENCODEBOT_ARTIFACT_TOKEN"],
+  maxPayloadBytes: 75 * 1024 * 1024,
+  maxFileBytes: 50 * 1024 * 1024,
+  maxTextChars: 3400,
+  maxCaptionChars: 900,
+}
 const defaultAttachments = {
   enabled: true,
   mediaGroupIdleMs: 2000,
@@ -56,6 +66,7 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
     ...readNumberList(mergedEnv, config.telegram?.allowedUserEnvNames || []),
   ])
   const openCodePassword = pickValue(mergedEnv, config.opencode?.passwordEnvNames || [])
+  const artifactToken = pickValue(mergedEnv, config.artifacts?.tokenEnvNames || defaultArtifacts.tokenEnvNames) || config.artifacts?.token
   const chatId = config.telegram?.chatId ?? readFirstNumber(mergedEnv, ["OPENCODEBOT_CHAT_ID", "TELEGRAM_CHAT_ID"])
   const mainTopicId = config.telegram?.mainTopicId ?? readFirstNumber(mergedEnv, ["OPENCODEBOT_MAIN_TOPIC_ID", "TELEGRAM_MAIN_TOPIC_ID"])
   const servers = readServers(serversJsonPath)
@@ -92,6 +103,7 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
     reconcile: normalizeReconcile(config.reconcile),
     promptFeedback: normalizePromptFeedback(config.promptFeedback),
     finalNotifications: normalizeFinalNotifications(config.finalNotifications),
+    artifacts: normalizeArtifacts(config.artifacts, artifactToken),
     attachments: normalizeAttachments(config.attachments),
     chatTemplates: normalizeChatTemplates(config.chatTemplates),
     wireguard: {
@@ -110,6 +122,7 @@ export function assertRuntimeConfig(config) {
   if (!config.telegram.token) errors.push("Telegram bot token is missing")
   if (!config.telegram.allowedUserIds.length) errors.push("Allowed Telegram user id is missing")
   if (!config.opencode.servers.length) errors.push("OpenCodez servers list is empty")
+  if (config.artifacts.enabled && !config.artifacts.token) errors.push("Artifact gateway token is missing")
   if (errors.length) throw new Error(errors.join("; "))
 }
 
@@ -237,6 +250,20 @@ function normalizeFinalNotifications(value = {}) {
     enabled: value.enabled !== false,
     userIds: uniqueNumbers(value.userIds || []),
     maxSentMarkers: numberAtLeast(value.maxSentMarkers, defaultFinalNotifications.maxSentMarkers, 100),
+  }
+}
+
+function normalizeArtifacts(value = {}, token) {
+  return {
+    enabled: value.enabled === true,
+    listenHost: value.listenHost ? String(value.listenHost) : defaultArtifacts.listenHost,
+    port: numberAtLeast(value.port, defaultArtifacts.port, 1),
+    token,
+    tokenEnvNames: normalizeStringList(value.tokenEnvNames, defaultArtifacts.tokenEnvNames),
+    maxPayloadBytes: numberAtLeast(value.maxPayloadBytes, defaultArtifacts.maxPayloadBytes, 1024),
+    maxFileBytes: numberAtLeast(value.maxFileBytes, defaultArtifacts.maxFileBytes, 1024),
+    maxTextChars: numberAtLeast(value.maxTextChars, defaultArtifacts.maxTextChars, 512),
+    maxCaptionChars: numberAtLeast(value.maxCaptionChars, defaultArtifacts.maxCaptionChars, 64),
   }
 }
 

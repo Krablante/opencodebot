@@ -1,4 +1,5 @@
 import { assertRuntimeConfig, loadConfig } from "./config.mjs"
+import { startArtifactGateway } from "./artifacts-gateway.mjs"
 import { AttachmentBuffer, cleanupUploads, downloadTelegramFiles, extractTelegramFiles } from "./attachments.mjs"
 import { createBackendRequester, formatDuration } from "./backend-backoff.mjs"
 import { applyChatTemplate, parseNewTopicArgs } from "./chat-templates.mjs"
@@ -48,6 +49,7 @@ await telegram.deleteWebhook()
 await syncTelegramCommandMenu()
 await cleanupUploads(config.paths.uploadsDir, config.attachments.cleanupAfterMs).catch(logError)
 setInterval(() => cleanupUploads(config.paths.uploadsDir, config.attachments.cleanupAfterMs).catch(logError), 60 * 60 * 1000).unref?.()
+startArtifactGateway({ config, state, telegram, signal: abort.signal })
 console.log(`[opencodebot] starting ${config.opencode.servers.length} OpenCodez event streams`)
 
 for (const server of config.opencode.servers) {
@@ -118,6 +120,22 @@ async function handleTelegramMessage(message) {
   }
 
   const promptKey = multipartPromptKey(message)
+  if (state.isArtifactsTopic(message.chat.id, topicId(message))) {
+    if (text) {
+      const command = parseCommand(text)
+      if (artifactTopicCommandAllowed(command.name) && await commandHandlers.handle(message, command, promptKey)) return
+      if (text.startsWith("/")) {
+        await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "This topic is reserved for agent artifact uploads. Use another topic for OpenCodez sessions." })
+        return
+      }
+    }
+    await telegram.sendMessage({
+      chatId: message.chat.id,
+      topicId: topicId(message),
+      text: "This topic is reserved for agent artifact uploads. It does not mirror prompts or attachments to OpenCodez.",
+    })
+    return
+  }
   if (files.length) {
     await handleAttachmentMessage(message, promptKey, files, caption)
     return
@@ -829,6 +847,10 @@ function parseCommand(text) {
   const match = text.match(/^\/(\w+)(?:@\w+)?(?:\s+([\s\S]*))?$/)
   if (!match) return { name: "", args: "" }
   return { name: match[1], args: match[2] || "" }
+}
+
+function artifactTopicCommandAllowed(commandName) {
+  return ["artifacts_here", "help", "start", "notify_on", "notify_off", "notify_status"].includes(commandName)
 }
 
 async function cleanupOwnPinServiceMessage(message) {

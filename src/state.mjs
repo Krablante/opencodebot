@@ -26,6 +26,7 @@ export class StateStore {
       migrateMirroredMessages(this.data.mirroredUserMessages, this.data.mirroredUserBySession)
       this.data.seenSessions ||= []
       this.data.telegram ||= {}
+      this.data.telegram.artifactsTopic ||= null
       this.data.runtime ||= {}
     } catch (error) {
       if (error.code !== "ENOENT") throw error
@@ -53,6 +54,35 @@ export class StateStore {
 
   get chatId() {
     return this.data.telegram.chatId ?? null
+  }
+
+  artifactsTopic() {
+    return this.data.telegram.artifactsTopic || null
+  }
+
+  isArtifactsTopic(chatId, topicId) {
+    const topic = this.artifactsTopic()
+    return Boolean(topic && String(topic.chatId) === String(chatId) && Number(topic.topicId || 0) === Number(topicId || 0))
+  }
+
+  async setArtifactsTopic({ chatId, topicId, title, setBy }) {
+    return this.update((data) => {
+      const now = new Date().toISOString()
+      data.telegram.artifactsTopic = {
+        chatId,
+        topicId,
+        title: title || `Topic ${topicId}`,
+        setBy,
+        setAt: now,
+      }
+      for (const binding of data.bindings.filter((item) => String(item.chatId) === String(chatId) && Number(item.topicId || 0) === Number(topicId || 0))) {
+        binding.disabled = true
+        binding.disabledReason = "artifacts-topic"
+        binding.disabledAt = now
+      }
+      delete data.pendingTopics[String(topicId ?? 0)]
+      return data.telegram.artifactsTopic
+    })
   }
 
   findBinding(serverID, sessionID) {
@@ -285,7 +315,7 @@ export function promptHash(text) {
 function defaultState() {
   return {
     version: 1,
-    telegram: {},
+    telegram: { artifactsTopic: null },
     bindings: [],
     pendingTopics: {},
     pendingPrompts: [],

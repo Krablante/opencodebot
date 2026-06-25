@@ -49,6 +49,16 @@
     "userIds": [],
     "maxSentMarkers": 1000
   },
+  "artifacts": {
+    "enabled": false,
+    "listenHost": "0.0.0.0",
+    "port": 8788,
+    "tokenEnvNames": ["OPENCODEBOT_ARTIFACT_TOKEN"],
+    "maxPayloadBytes": 78643200,
+    "maxFileBytes": 52428800,
+    "maxTextChars": 3400,
+    "maxCaptionChars": 900
+  },
   "attachments": {
     "enabled": true,
     "mediaGroupIdleMs": 2000,

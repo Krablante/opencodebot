@@ -99,6 +99,58 @@ export class TelegramClient {
     return this.request("sendMessage", payload)
   }
 
+  async sendPhoto({ chatId, topicId, file, caption }) {
+    return this.sendMultipartFile("sendPhoto", "photo", { chatId, topicId, file, caption })
+  }
+
+  async sendDocument({ chatId, topicId, file, caption }) {
+    return this.sendMultipartFile("sendDocument", "document", { chatId, topicId, file, caption })
+  }
+
+  async sendMultipartFile(method, fileField, { chatId, topicId, file, caption }) {
+    return this.requestMultipart(method, () => {
+      const form = new FormData()
+      form.append("chat_id", String(chatId))
+      if (topicId) form.append("message_thread_id", String(topicId))
+      if (caption) form.append("caption", String(caption))
+      form.append(fileField, new Blob([file.bytes], { type: file.contentType || "application/octet-stream" }), file.filename || "artifact")
+      return form
+    }, {
+      chatId,
+      topicId,
+      captionChars: typeof caption === "string" ? caption.length : undefined,
+      filename: file.filename,
+      bytes: file.bytes?.length,
+    })
+  }
+
+  async requestMultipart(method, buildForm, summary = {}, attempt = 0) {
+    const startedAt = Date.now()
+    let response
+    let data = {}
+    try {
+      response = await fetch(`${this.baseURL}/${method}`, { method: "POST", body: buildForm() })
+      data = await response.json().catch(() => ({}))
+    } catch (error) {
+      logErrorEvent("telegram.request.error", error, { method, attempt, durationMs: durationMs(startedAt), ...summary })
+      throw error
+    }
+    const elapsedMs = durationMs(startedAt)
+    const retryAfter = data?.parameters?.retry_after
+    if (response.status === 429 && Number.isFinite(retryAfter) && attempt < 3) {
+      logWarn("telegram.request.retry", { method, attempt, status: response.status, retryAfterSec: retryAfter, durationMs: elapsedMs, ...summary })
+      await delay((retryAfter + 1) * 1000)
+      return this.requestMultipart(method, buildForm, summary, attempt + 1)
+    }
+    if (!response.ok || data.ok === false) {
+      const error = new Error(`Telegram ${method} failed: ${data.description || response.status}`)
+      logErrorEvent("telegram.request.failed", error, { method, attempt, status: response.status, durationMs: elapsedMs, ...summary })
+      throw error
+    }
+    if (shouldLogTelegramSlow(method, elapsedMs)) logInfo("telegram.request.slow", { method, attempt, durationMs: elapsedMs, ...summary })
+    return data.result
+  }
+
   async sendRichMessage({ chatId, topicId, markdown, html, skipEntityDetection = false }) {
     const payload = {
       chat_id: chatId,

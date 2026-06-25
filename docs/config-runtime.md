@@ -30,7 +30,7 @@ OpenCodez servers come from `paths.serversJson`, not from the main config body. 
 
 ## Secrets
 
-`token.env` is read by local scripts and can also be read by the Linux systemd unit. It holds values such as the Telegram bot token, allowed user ids, and the OpenCodez password. Do not print it, paste it into docs, or commit it.
+`token.env` is read by local scripts and can also be read by the Linux systemd unit. It holds values such as the Telegram bot token, allowed user ids, the OpenCodez password, and the optional artifact gateway token. Do not print it, paste it into docs, or commit it.
 
 The config names the environment variables to try. `telegram.tokenEnvNames` is checked first, but the loader can also recognize a Telegram-looking token from the env file. `telegram.allowedUserEnvNames` is checked first for user ids; if none are found, the loader falls back to env names that look like owner/user/allowed id variables. `opencode.passwordEnvNames` works the same simple way for the OpenCodez password.
 
@@ -122,6 +122,18 @@ Each feedback class can be disabled separately with `accepted`, `queued`, and `e
 
 The final DM is intentionally short: it names the topic, provides an `Open topic` button for the final message in the Telegram topic, and quotes the original user prompt in an expandable block for orientation. It does not include the final answer text. `maxSentMarkers` caps durable dedupe markers so live events plus reconcile do not send the same final notification twice.
 
+## Artifacts
+
+`artifacts.enabled` starts the optional LAN artifact gateway. The gateway is for agent-created screenshots, logs, text snippets, and files that should be delivered to one Telegram artifacts topic. It is not a mirror-session router and it does not try to infer the current OpenCodez topic.
+
+`artifacts.listenHost` and `artifacts.port` control the local HTTP listener. Docker Compose publishes the same port with `OPENCODEBOT_ARTIFACT_PORT`, defaulting to `8788`. Expose it only on trusted networks and keep bearer-token auth enabled.
+
+`artifacts.tokenEnvNames` lists environment variable names that may contain the artifact token. The default is `OPENCODEBOT_ARTIFACT_TOKEN`. This token is shared with the OpenCodez plugin. It is not the Telegram bot token, and the plugin should never receive the Telegram bot token.
+
+`artifacts.maxPayloadBytes`, `maxFileBytes`, `maxTextChars`, and `maxCaptionChars` are safety limits for the LAN API and Telegram formatting. Text artifacts are sent as expandable quotes. Suitable JPEG, PNG, and WebP files are sent with `sendPhoto` in `auto` mode; other files are sent with `sendDocument`.
+
+The active target is chosen from Telegram with `/artifacts_here`. Running that command in another topic replaces the previous target. The target is stored in `state.json`, not config.
+
 ## Reconcile
 
 `reconcile` is a bounded recovery path for the current or recent run. It is not a full historical backfill. When a Telegram prompt is sent, a web topic is autocreated, or a web-origin prompt arrives through events, the binding gets a `reconcileAfter` lower bound and a `reconcileUntil` expiry.
@@ -144,7 +156,7 @@ The final DM is intentionally short: it names the topic, provides an `Open topic
 
 ## Paths And State
 
-`paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, mirror enabled state, pending Telegram-origin prompt ids, known sessions, per-session mirror markers, bounded reconcile windows, and final-notification opt-ins/dedupe markers. It should not contain full prompt queue text. The `/q` queue is memory-only and disappears on service restart by design.
+`paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, the current artifacts topic, mirror enabled state, pending Telegram-origin prompt ids, known sessions, per-session mirror markers, bounded reconcile windows, and final-notification opt-ins/dedupe markers. It should not contain full prompt queue text. The `/q` queue is memory-only and disappears on service restart by design.
 
 If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. Reconnects, progress events, and tool-only events do not release or clear the queue.
 

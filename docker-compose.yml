@@ -9,5 +9,7 @@ services:
       - ${OPENCODEBOT_SERVERS_FILE:-./servers.json}:/app/servers.json:ro
       - ${OPENCODEBOT_TOKEN_ENV_FILE:-./token.env}:/app/token.env:ro
       - ${OPENCODEBOT_STATE_DIR:-./state}:/app/state
+    ports:
+      - "${OPENCODEBOT_ARTIFACT_PORT:-8788}:8788"
     extra_hosts:
       - "host.docker.internal:host-gateway"
