@@ -15,15 +15,11 @@ export class StateStore {
       this.data.bindings ||= []
       this.data.pendingTopics ||= {}
       this.data.pendingPrompts ||= []
-      this.data.mirroredAssistantMessages ||= []
-      this.data.mirroredUserMessages ||= []
       this.data.mirroredAssistantBySession ||= {}
       this.data.mirroredUserBySession ||= {}
       this.data.finalNotifications ||= { enabledUserIds: [], sentMessages: [] }
       this.data.finalNotifications.enabledUserIds ||= []
       this.data.finalNotifications.sentMessages ||= []
-      migrateMirroredMessages(this.data.mirroredAssistantMessages, this.data.mirroredAssistantBySession)
-      migrateMirroredMessages(this.data.mirroredUserMessages, this.data.mirroredUserBySession)
       this.data.seenSessions ||= []
       this.data.telegram ||= {}
       this.data.telegram.artifactsTopic ||= null
@@ -299,7 +295,7 @@ export class StateStore {
   }
 
   isAssistantMirrored(serverID, sessionID, messageID) {
-    return hasMirroredMessage(this.data.mirroredAssistantBySession, this.data.mirroredAssistantMessages, serverID, sessionID, messageID)
+    return hasMirroredMessage(this.data.mirroredAssistantBySession, serverID, sessionID, messageID)
   }
 
   async markAssistantMirrored(serverID, sessionID, messageID) {
@@ -310,7 +306,7 @@ export class StateStore {
   }
 
   isUserMirrored(serverID, sessionID, messageID) {
-    return hasMirroredMessage(this.data.mirroredUserBySession, this.data.mirroredUserMessages, serverID, sessionID, messageID)
+    return hasMirroredMessage(this.data.mirroredUserBySession, serverID, sessionID, messageID)
   }
 
   async markUserMirrored(serverID, sessionID, messageID) {
@@ -345,8 +341,6 @@ function defaultState() {
     bindings: [],
     pendingTopics: {},
     pendingPrompts: [],
-    mirroredAssistantMessages: [],
-    mirroredUserMessages: [],
     mirroredAssistantBySession: {},
     mirroredUserBySession: {},
     finalNotifications: { enabledUserIds: [], sentMessages: [] },
@@ -359,10 +353,6 @@ function sessionKey(serverID, sessionID) {
   return `${serverID}:${sessionID}`
 }
 
-function mirrorKey(serverID, sessionID, messageID) {
-  return `${serverID}:${sessionID}:${messageID}`
-}
-
 function finalNotificationKey(serverID, sessionID, assistantMessageID, messageID) {
   return `${serverID}:${sessionID}:${assistantMessageID || "unknown"}:${messageID || "unknown"}`
 }
@@ -371,20 +361,9 @@ function sessionMirrorKey(serverID, sessionID) {
   return `${serverID}:${sessionID}`
 }
 
-function migrateMirroredMessages(items, target) {
-  if (!Array.isArray(items)) return
-  for (const item of items) {
-    const [serverID, sessionID, ...rest] = String(item).split(":")
-    const messageID = rest.join(":")
-    if (!serverID || !sessionID || !messageID) continue
-    markMirroredMessage(target, serverID, sessionID, messageID)
-  }
-}
-
-function hasMirroredMessage(bySession, legacyItems, serverID, sessionID, messageID) {
+function hasMirroredMessage(bySession, serverID, sessionID, messageID) {
   const key = sessionMirrorKey(serverID, sessionID)
-  if (bySession?.[key]?.includes(messageID)) return true
-  return Array.isArray(legacyItems) && legacyItems.includes(mirrorKey(serverID, sessionID, messageID))
+  return Boolean(bySession?.[key]?.includes(messageID))
 }
 
 function markMirroredMessage(bySession, serverID, sessionID, messageID) {
