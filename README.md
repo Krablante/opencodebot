@@ -117,17 +117,19 @@ The artifact gateway and OpenCodez plugin are optional. Start without them first
 
 ## Commands
 
-```text
-/new [server] [template] [title]
-/session
-/q <prompt>
-/q status
-/q delete <number>
-/artifacts_here
-/mirror_on
-/mirror_off
-/help
-```
+Use `/start` or `/help` when you want the bot to show its command summary. These commands are safe to run in a normal topic, and they do not create or change an OpenCodez session.
+
+Use `/new` when you want a fresh Telegram topic and a new OpenCodez session. You can give it a server id, an optional chat template, and a title, for example `/new ser codex-full fix the deploy script`. After the topic is created, send the first prompt in that topic.
+
+Use `/q` inside an existing OpenCodez topic when you want to queue another prompt for the same session. `/q status` shows the queue, and `/q delete 2` removes a queued item by number.
+
+Use `/session` inside a topic when you want to see what Telegram topic is bound to which OpenCodez server/session. It also shows the web session URL and whether the current topic is the artifacts target.
+
+Use `/artifacts_here` inside a forum topic when you want that topic to become the single Telegram target for agent-sent artifacts. After that, `opencodebot_send_artifact` sends files, screenshots, logs, or text to that topic.
+
+Use `/notify_on`, `/notify_off`, and `/notify_status` to manage private final-answer notifications for the configured recipients. Those DMs include the source topic, an `Open topic` button, context quotes, and a completed task list when the agent closed one.
+
+Use `/mirror_on` and `/mirror_off` when you need to pause or resume web-to-Telegram mirroring without stopping the bot.
 
 Default chat templates are `d4flash`, `d4pro`, and `gpt55p`. Public defaults use the ordinary OpenCodez `gpt55` template; local deployments can override templates in runtime config.
 

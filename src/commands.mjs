@@ -100,7 +100,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
       try {
         await telegram.sendMessage({
           chatId: userID,
-          text: "🔔 Final answer notifications enabled\n🏁 I will DM you when a mirrored topic gets its final answer\n🔗 The DM includes an Open topic button and the original prompt quote",
+          text: "🔔 Final answer notifications enabled\n🏁 I will DM you when a mirrored topic gets its final answer\n🔗 The DM includes the source topic, an Open topic button, and context quotes",
         })
         await state.enableFinalNotificationsFor(userID)
         enabled.push(userID)
@@ -193,7 +193,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
     const lines = [
       "🧭 <b>Session</b>",
       "",
-      "🧵 <b>Telegram</b>",
+      "💬 <b>Telegram</b>",
       `chat_id: <code>${escapeHtml(String(message.chat.id))}</code>`,
       `topic_id: <code>${escapeHtml(String(currentTopicId || 0))}</code>`,
       `message_id: <code>${escapeHtml(String(message.message_id))}</code>`,

@@ -13,11 +13,11 @@ export function createFinalNotifier({ config, state, telegram, opencode }) {
       const userIds = state.finalNotificationUserIds().filter((userId) => configuredUserIds.has(String(userId)))
       if (!userIds.length) return
       const link = telegramMessageLink(binding.chatId, messageId)
-      const title = binding.title || `Topic ${binding.topicId}`
+      const topicSource = finalNotificationTopicSource(binding)
       const summary = await finalSessionSummary({ opencode, binding, assistantMessageID })
       const replyMarkup = finalNotificationReplyMarkup(link)
-      const text = finalNotificationMarkdown({ title, serverID: binding.serverID, promptText: summary.promptText, completedTodos: summary.completedTodos })
-      const fallbackText = finalNotificationFallbackHtml({ title, serverID: binding.serverID, completedTodos: summary.completedTodos })
+      const text = finalNotificationMarkdown({ topicSource, serverID: binding.serverID, promptText: summary.promptText, completedTodos: summary.completedTodos })
+      const fallbackText = finalNotificationFallbackHtml({ topicSource, serverID: binding.serverID, completedTodos: summary.completedTodos })
       for (const userId of userIds) {
         try {
           await sendFinalNotificationMessage({ telegram, userId, text, fallbackText, replyMarkup })
@@ -41,10 +41,10 @@ async function sendFinalNotificationMessage({ telegram, userId, text, fallbackTe
   }
 }
 
-function finalNotificationMarkdown({ title, serverID, promptText, completedTodos = [] }) {
+export function finalNotificationMarkdown({ topicSource, serverID, promptText, completedTodos = [] }) {
   const lines = [
     "🏁 *Final answer is ready*",
-    `🧵 *${escapeMarkdownV2(title)}*`,
+    finalNotificationTopicMarkdown(topicSource),
     `🖥️ Server: ${escapeMarkdownV2(serverID)}`,
   ]
   if (promptText) lines.push("", toolQuoteMarkdownV2(promptText))
@@ -53,10 +53,10 @@ function finalNotificationMarkdown({ title, serverID, promptText, completedTodos
   return lines.join("\n")
 }
 
-function finalNotificationFallbackHtml({ title, serverID, completedTodos = [] }) {
+function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos = [] }) {
   const lines = [
     "🏁 Final answer is ready",
-    `🧵 <b>${escapeHtml(title)}</b>`,
+    finalNotificationTopicHtml(topicSource),
     `🖥️ Server: <code>${escapeHtml(serverID)}</code>`,
   ]
   const todoLines = formatCompletedTodoHtml(completedTodos)
@@ -67,6 +67,28 @@ function finalNotificationFallbackHtml({ title, serverID, completedTodos = [] })
 function finalNotificationReplyMarkup(link) {
   if (!link) return undefined
   return { inline_keyboard: [[{ text: "Open topic", url: link }]] }
+}
+
+function finalNotificationTopicSource(binding) {
+  return {
+    title: String(binding?.title || `Topic ${binding?.topicId || ""}`).trim(),
+    iconCustomEmojiId: normalizeCustomEmojiId(binding?.topicIconCustomEmojiId),
+  }
+}
+
+function finalNotificationTopicMarkdown(topicSource) {
+  const icon = topicSource?.iconCustomEmojiId ? `![](tg://emoji?id=${topicSource.iconCustomEmojiId}) ` : ""
+  return `💬 *Topic:* ${icon}${escapeMarkdownV2(topicSource?.title || "Topic")}`
+}
+
+function finalNotificationTopicHtml(topicSource) {
+  const icon = topicSource?.iconCustomEmojiId ? `<tg-emoji emoji-id="${escapeHtml(topicSource.iconCustomEmojiId)}">💬</tg-emoji> ` : ""
+  return `💬 Topic: ${icon}<b>${escapeHtml(topicSource?.title || "Topic")}</b>`
+}
+
+function normalizeCustomEmojiId(value) {
+  const id = String(value || "").trim()
+  return /^[A-Za-z0-9_-]+$/.test(id) ? id : ""
 }
 
 async function finalSessionSummary({ opencode, binding, assistantMessageID }) {

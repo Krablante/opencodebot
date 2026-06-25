@@ -171,6 +171,32 @@ export class StateStore {
     })
   }
 
+  async updateBindingTopicMetadata(chatId, targetTopicId, metadata = {}) {
+    return this.update((data) => {
+      const binding = data.bindings.find((item) => String(item.chatId) === String(chatId) && String(item.topicId) === String(targetTopicId))
+      if (!binding) return false
+      let changed = false
+
+      const title = String(metadata.title || "").trim()
+      if (title && binding.title !== title) {
+        binding.title = title
+        binding.titleSource = "telegram"
+        binding.titleUpdatedAt = new Date().toISOString()
+        changed = true
+      }
+
+      if (Object.hasOwn(metadata, "topicIconCustomEmojiId")) {
+        const icon = String(metadata.topicIconCustomEmojiId || "").trim()
+        if (icon && binding.topicIconCustomEmojiId !== icon) {
+          binding.topicIconCustomEmojiId = icon
+          changed = true
+        }
+      }
+
+      return changed
+    })
+  }
+
   async activateBinding(serverID, sessionID, { reconcileAfter, reconcileUntil, reason } = {}) {
     return this.update((data) => {
       const binding = data.bindings.find((item) => item.serverID === serverID && item.sessionID === sessionID)

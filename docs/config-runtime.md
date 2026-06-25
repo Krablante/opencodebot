@@ -98,7 +98,7 @@ Long Telegram prompts, Telegram attachments, and bounded missed-event recovery a
 
 `finalNotifications` controls optional private DM notifications for final mirrored answers. `finalNotifications.userIds` is the configured recipient allowlist. `/notify_on` enables notifications for those configured ids after verifying that the bot can DM them; `/notify_off` disables those configured recipients again.
 
-The final DM is intentionally short: it names the topic, provides an `Open topic` button for the final message in the Telegram topic, quotes the original user prompt in an expandable block for orientation, and includes a compact quoted `📋 Tasks [n/n]:` checklist when the agent closed a todo list for that run. It does not include the final answer text. Durable dedupe markers are capped internally so live events plus reconcile do not send the same final notification twice.
+The final DM is intentionally short: it includes a source `Topic:` line with the topic name and topic custom emoji when Telegram provides it, provides an `Open topic` button for the final message in the Telegram topic, quotes the original user prompt in an expandable block for orientation, and includes a compact quoted `📋 Tasks [n/n]:` checklist when the agent closed a todo list for that run. It does not include the final answer text. Durable dedupe markers are capped internally so live events plus reconcile do not send the same final notification twice.
 
 ## Artifacts
 
