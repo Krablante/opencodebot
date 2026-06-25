@@ -148,20 +148,21 @@ function normalizeToolInput(input) {
 }
 
 export function formatCompletedTodoMarkdown(todos, { maxItems = 16, maxItemChars = 160 } = {}) {
-  const items = clampTodoItems(todos, { maxItems, maxItemChars })
-  if (!items.visible.length) return []
-  const lines = [`📋 *${escapeMarkdownV2(`Tasks [${items.visible.length}/${items.total}]:`)}*`]
-  items.visible.forEach((item, index) => lines.push(`✅ ${index + 1}\\. ${escapeMarkdownV2(item)}`))
-  if (items.hidden > 0) lines.push(`✅ ${items.visible.length + 1}\\. ${escapeMarkdownV2(`and ${items.hidden} more`)}`)
-  return lines
+  const lines = formatCompletedTodoLines(todos, { maxItems, maxItemChars })
+  return lines.length ? toolQuoteMarkdownV2(lines.join("\n")).split("\n") : []
 }
 
 function formatCompletedTodoHtml(todos, { maxItems = 16, maxItemChars = 160 } = {}) {
+  const lines = formatCompletedTodoLines(todos, { maxItems, maxItemChars })
+  return lines.length ? [`<blockquote>${lines.map((line) => escapeHtml(line)).join("\n")}</blockquote>`] : []
+}
+
+function formatCompletedTodoLines(todos, { maxItems, maxItemChars }) {
   const items = clampTodoItems(todos, { maxItems, maxItemChars })
   if (!items.visible.length) return []
-  const lines = [`📋 <b>${escapeHtml(`Tasks [${items.visible.length}/${items.total}]:`)}</b>`]
-  items.visible.forEach((item, index) => lines.push(`✅ ${index + 1}. ${escapeHtml(item)}`))
-  if (items.hidden > 0) lines.push(`✅ ${items.visible.length + 1}. ${escapeHtml(`and ${items.hidden} more`)}`)
+  const lines = [`📋 Tasks [${items.visible.length}/${items.total}]:`]
+  items.visible.forEach((item, index) => lines.push(`✅ ${index + 1}. ${item}`))
+  if (items.hidden > 0) lines.push(`✅ ${items.visible.length + 1}. and ${items.hidden} more`)
   return lines
 }
 
