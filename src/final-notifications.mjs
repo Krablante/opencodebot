@@ -150,23 +150,23 @@ function normalizeToolInput(input) {
 export function formatCompletedTodoMarkdown(todos, { maxItems = 16, maxItemChars = 160 } = {}) {
   const items = clampTodoItems(todos, { maxItems, maxItemChars })
   if (!items.visible.length) return []
-  const lines = ["✅ *Completed todo*"]
-  for (const item of items.visible) lines.push(`• ${escapeMarkdownV2(item)}`)
-  if (items.hidden > 0) lines.push(`• ${escapeMarkdownV2(`and ${items.hidden} more`)}`)
+  const lines = [`📋 *${escapeMarkdownV2(`Tasks [${items.visible.length}/${items.total}]:`)}*`]
+  items.visible.forEach((item, index) => lines.push(`✅ ${index + 1}\\. ${escapeMarkdownV2(item)}`))
+  if (items.hidden > 0) lines.push(`✅ ${items.visible.length + 1}\\. ${escapeMarkdownV2(`and ${items.hidden} more`)}`)
   return lines
 }
 
 function formatCompletedTodoHtml(todos, { maxItems = 16, maxItemChars = 160 } = {}) {
   const items = clampTodoItems(todos, { maxItems, maxItemChars })
   if (!items.visible.length) return []
-  const lines = ["✅ <b>Completed todo</b>"]
-  for (const item of items.visible) lines.push(`• ${escapeHtml(item)}`)
-  if (items.hidden > 0) lines.push(`• ${escapeHtml(`and ${items.hidden} more`)}`)
+  const lines = [`📋 <b>${escapeHtml(`Tasks [${items.visible.length}/${items.total}]:`)}</b>`]
+  items.visible.forEach((item, index) => lines.push(`✅ ${index + 1}. ${escapeHtml(item)}`))
+  if (items.hidden > 0) lines.push(`✅ ${items.visible.length + 1}. ${escapeHtml(`and ${items.hidden} more`)}`)
   return lines
 }
 
 function clampTodoItems(todos, { maxItems, maxItemChars }) {
   const all = Array.isArray(todos) ? todos.map((item) => String(item || "").trim()).filter(Boolean) : []
   const visible = all.slice(0, maxItems).map((item) => (item.length > maxItemChars ? `${item.slice(0, maxItemChars - 3)}...` : item))
-  return { visible, hidden: Math.max(0, all.length - visible.length) }
+  return { visible, hidden: Math.max(0, all.length - visible.length), total: all.length }
 }

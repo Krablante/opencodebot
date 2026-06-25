@@ -70,7 +70,7 @@ The queue advances only after the same final-answer path used for `🏁`, where 
 
 ## Final Notifications
 
-`/notify_on`, `/notify_off`, and `/notify_status` control private DM notifications for `finalNotifications.userIds`. When enabled, the bot sends a short private message to each configured recipient when a final mirrored answer is ready. The DM names the topic, includes an `Open topic` button for the final mirrored message, quotes the original user prompt in an expandable block for orientation, and includes a compact completed todo section when the agent closed a todo list for that run. It does not include the final answer text.
+`/notify_on`, `/notify_off`, and `/notify_status` control private DM notifications for `finalNotifications.userIds`. When enabled, the bot sends a short private message to each configured recipient when a final mirrored answer is ready. The DM names the topic, includes an `Open topic` button for the final mirrored message, quotes the original user prompt in an expandable block for orientation, and includes a compact `📋 Tasks [n/n]:` checklist when the agent closed a todo list for that run. It does not include the final answer text.
 
 ## Mirror
 
@@ -80,7 +80,7 @@ Assistant text is accumulated until OpenCodez completes the text block. The bot 
 
 Tool calls are compact and expandable. Adjacent tool results update one Telegram message until assistant text starts a new block. Tool batches use Telegram MarkdownV2 expandable blockquotes, so details are one tap away without filling the topic with raw output.
 
-Internal helper tools such as todo-style task-list tools are suppressed from live mirror and reconcile so bookkeeping does not crowd Telegram. Completed todo lists may still appear in private final-answer DMs as a compact completion summary. Subagent sessions are also treated as implementation details: Telegram shows the parent-visible task tool line, not a separate child session log.
+Internal helper tools such as todo-style task-list tools are suppressed from live mirror and reconcile so bookkeeping does not crowd Telegram. Completed todo lists may still appear in private final-answer DMs as a compact checked task list. Subagent sessions are also treated as implementation details: Telegram shows the parent-visible task tool line, not a separate child session log.
 
 ## Reconcile
 

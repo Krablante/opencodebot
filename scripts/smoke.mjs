@@ -102,7 +102,7 @@ function smokeFinalNotificationTodos() {
   ]
 
   assert.deepEqual(completedTodosBeforeAssistant(messages, "assistant-final"), ["Inspect final DM", "Add todo section"])
-  assert.deepEqual(formatCompletedTodoMarkdown(["Inspect final DM"]), ["✅ *Completed todo*", "• Inspect final DM"])
+  assert.deepEqual(formatCompletedTodoMarkdown(["Inspect final DM"]), ["📋 *Tasks \\[1/1\\]:*", "✅ 1\\. Inspect final DM"])
 
   const activeMessages = [
     ...messages,
@@ -124,7 +124,7 @@ function smokeFinalNotificationTodos() {
 
   const many = Array.from({ length: 18 }, (_, index) => `Task ${index + 1}`)
   const formatted = formatCompletedTodoMarkdown(many, { maxItems: 2, maxItemChars: 20 })
-  assert.deepEqual(formatted, ["✅ *Completed todo*", "• Task 1", "• Task 2", "• and 16 more"])
+  assert.deepEqual(formatted, ["📋 *Tasks \\[2/18\\]:*", "✅ 1\\. Task 1", "✅ 2\\. Task 2", "✅ 3\\. and 16 more"])
 }
 
 async function smokePromptQueue() {
