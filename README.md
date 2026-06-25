@@ -41,7 +41,9 @@ OpenCodez remains the main workspace. Telegram is the mirror/control surface for
 
 Docker Compose is the recommended deployment path on Linux, Windows, and macOS. The bot also runs directly through Node.js and npm. Windows is fully fine as a Telegram, browser, Docker, and WireGuard client.
 
-## Setup
+## Quick Start
+
+You need Node.js 18 or newer, Docker Compose, a running OpenCodez server, and a Telegram bot token from BotFather. The bot can run on the same machine as OpenCodez or on another machine that can reach OpenCodez over HTTP.
 
 Clone the repo and create local config:
 
@@ -49,29 +51,37 @@ Clone the repo and create local config:
 git clone https://github.com/Krablante/opencodebot.git
 cd opencodebot
 npm run init-config
+cp token.env.example token.env
 ```
 
-This creates `config.local.json` and `servers.json`. Edit both before starting the bot:
+This creates `config.local.json` and `servers.json`, then gives you a local `token.env` to fill in. Edit these before starting the bot:
 
 ```bash
 $EDITOR config.local.json
 $EDITOR servers.json
+$EDITOR token.env
 ```
 
 PowerShell works the same way:
 
 ```powershell
+Copy-Item .\token.env.example .\token.env
 notepad .\config.local.json
 notepad .\servers.json
+notepad .\token.env
 ```
 
-Secrets belong in `token.env`, not in git:
+Secrets belong in `token.env`, not in git. Use your BotFather token, your numeric Telegram user id, and the password for the OpenCodez server API:
 
 ```env
 TELEGRAM_BOT_TOKEN=123456:telegram-token
 TELEGRAM_ALLOWED_USER_IDS=123456789
-OPENCODE_PASSWORD=your-opencodez-password
+OPENCODEZ_SERVER_PASSWORD=your-opencodez-password
 ```
+
+Edit `servers.json` so the bot can reach OpenCodez. If OpenCodez is on your LAN, use its LAN URL. If Docker and OpenCodez are on the same host, `http://host.docker.internal:4096` is usually the right URL.
+
+The first allowed user who talks to the bot can bootstrap the Telegram chat when `allowChatBootstrap` is still enabled in `config.local.json`. After the bot learns the chat id, keep the generated local config and state files; they are the runtime state.
 
 Run with Docker Compose:
 
@@ -89,9 +99,21 @@ docker compose up -d --build
 docker compose logs -f opencodebot
 ```
 
-OpenCodez does not need to run in Docker. Put its normal LAN URL in `servers.json`; if OpenCodez runs on the same machine as Docker Desktop, `http://host.docker.internal:4096` is usually the right URL.
-
 For direct local usage, run `npm start`. Production/live operation should use Docker Compose.
+
+## Update
+
+Update is intentionally boring:
+
+```bash
+git pull
+docker compose up -d --build
+npm run smoke:live
+```
+
+Your `config.local.json`, `servers.json`, `token.env`, and `state/` directory stay local and are not overwritten by updates.
+
+The artifact gateway and OpenCodez plugin are optional. Start without them first unless you specifically want agents to send files, screenshots, logs, or text to a Telegram artifacts topic. Enable that later with [Artifact Gateway](docs/artifact-gateway.md).
 
 ## Commands
 

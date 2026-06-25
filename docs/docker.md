@@ -2,6 +2,8 @@
 
 Docker Compose is the recommended deployment path for most people. It keeps the bot as one long-running process with local config and state mounted from the project directory. OpenCodez does not need to be in Docker.
 
+You need Node.js 18 or newer for helper scripts such as `npm run init-config`, plus Docker Compose for the runtime container.
+
 ## Files
 
 Create local files once:
@@ -19,10 +21,14 @@ servers.json
 
 Create `token.env` next to them:
 
+```bash
+cp token.env.example token.env
+```
+
 ```env
 TELEGRAM_BOT_TOKEN=123456:telegram-token
 TELEGRAM_ALLOWED_USER_IDS=123456789
-OPENCODE_PASSWORD=your-opencodez-password
+OPENCODEZ_SERVER_PASSWORD=your-opencodez-password
 ```
 
 These files stay local and are ignored by git. The Compose file mounts them into the container read-only and mounts `state/` for durable bot state and uploads.
@@ -98,13 +104,15 @@ docker compose down
 Update after pulling new code:
 
 ```bash
+git pull
 docker compose up -d --build
+npm run smoke:live
 ```
 
 ## What Docker Owns
 
 Docker runs only opencodebot. It does not run OpenCodez, Telegram, or WireGuard.
 
-The bot has no inbound HTTP port. It makes outgoing requests to Telegram and OpenCodez, and writes state/uploads to the mounted `state/` directory. This keeps the container simple and avoids special privileges.
+Without the artifact gateway, the bot only makes outgoing requests to Telegram and OpenCodez, and writes state/uploads to the mounted `state/` directory. When the artifact gateway is enabled, Compose publishes the token-protected gateway on `OPENCODEBOT_ARTIFACT_PORT` or `8788` by default so OpenCodez plugins can upload files to Telegram. Keep that port private to hosts that should be allowed to send artifacts.
 
 WireGuard remains a host-level optional helper. If you want remote private access to the OpenCodez web UI, set up WireGuard on the host and keep using the same OpenCodez URL pattern in `servers.json`.
