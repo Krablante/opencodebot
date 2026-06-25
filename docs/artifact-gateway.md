@@ -131,10 +131,12 @@ OPENCODEBOT_ARTIFACT_TOKEN=replace-with-the-same-artifact-token
 The plugin exposes this tool:
 
 ```text
-opencodebot_send_artifact({ path?, text?, caption, mode? })
+opencodebot_send_artifact({ path?, paths?, text?, caption, mode? })
 ```
 
 If `path` is provided, the plugin reads that file on the local host where the agent is running and uploads its bytes to opencodebot. opencodebot on `nuc` does not read remote paths from `ser`, `toma`, `dima`, or `rtx`.
+
+If `path` or `paths` is provided, the plugin resolves each value to an absolute path and the gateway appends a quoted path block to the Telegram caption. One file is shown as its full absolute path. Several files in one directory are shown as the absolute directory followed by comma-separated file names. Files from different directories are listed as absolute file paths.
 
 ## Skill Setup
 

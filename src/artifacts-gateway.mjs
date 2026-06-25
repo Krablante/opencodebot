@@ -4,7 +4,7 @@ import path from "node:path"
 
 import { durationMs, logErrorEvent, logInfo, logWarn } from "./logger.mjs"
 import { escapeMarkdownV2, toolQuoteMarkdownV2 } from "./rich-markdown.mjs"
-import { telegramMessageLink } from "./telegram.mjs"
+import { escapeHtml, telegramMessageLink } from "./telegram.mjs"
 
 const PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"])
 const TELEGRAM_PHOTO_MAX_BYTES = 10 * 1024 * 1024
@@ -57,17 +57,18 @@ export function startArtifactGateway({ config, state, telegram, signal }) {
 async function sendArtifact({ config, telegram, target, payload }) {
   const mode = normalizeMode(payload?.mode)
   const caption = clampText(String(payload?.caption || "Agent artifact").trim(), config.artifacts.maxCaptionChars)
+  const captionPaths = payload?.captionPaths
   const messages = []
   if (payload?.file) {
     if (mode === "text") throw publicError("invalid_text_file_mode", "Send file content as text instead of file when mode is text.", 400)
     const file = fileFromPayload(payload.file, config.artifacts.maxFileBytes)
     const method = fileSendMethod(mode, file)
-    const sent = await sendFileWithAutoFallback({ telegram, target, file, caption, method, mode })
+    const sent = await sendFileWithAutoFallback({ telegram, target, file, caption: artifactFileCaptionHtml(caption, captionPaths), method, mode })
     messages.push(messageResult(sent.method, target, sent.message))
   }
   const text = String(payload?.text || "").trim()
   if (text) {
-    const message = await sendTextArtifact({ telegram, target, caption, text: clampText(text, config.artifacts.maxTextChars) })
+    const message = await sendTextArtifact({ telegram, target, caption, captionPaths, text: clampText(text, config.artifacts.maxTextChars) })
     messages.push(messageResult("sendMessage", target, message))
   }
   if (!messages.length) throw publicError("empty_artifact", "Provide file or text.", 400)
@@ -77,26 +78,52 @@ async function sendArtifact({ config, telegram, target, payload }) {
 async function sendFileWithAutoFallback({ telegram, target, file, caption, method, mode }) {
   try {
     const message = method === "sendPhoto"
-      ? await telegram.sendPhoto({ chatId: target.chatId, topicId: target.topicId, file, caption })
-      : await telegram.sendDocument({ chatId: target.chatId, topicId: target.topicId, file, caption })
+      ? await telegram.sendPhoto({ chatId: target.chatId, topicId: target.topicId, file, caption, captionFormat: "html" })
+      : await telegram.sendDocument({ chatId: target.chatId, topicId: target.topicId, file, caption, captionFormat: "html" })
     return { method, message }
   } catch (error) {
     if (mode !== "auto" || method !== "sendPhoto") throw error
     logWarn("artifacts.photo_fallback", { filename: file.filename, bytes: file.bytes.length, contentType: file.contentType })
-    const message = await telegram.sendDocument({ chatId: target.chatId, topicId: target.topicId, file, caption })
+    const message = await telegram.sendDocument({ chatId: target.chatId, topicId: target.topicId, file, caption, captionFormat: "html" })
     return { method: "sendDocument", message }
   }
 }
 
-async function sendTextArtifact({ telegram, target, caption, text }) {
-  const markdown = [`*${escapeMarkdownV2(caption)}*`, "", toolQuoteMarkdownV2(text)].join("\n")
+async function sendTextArtifact({ telegram, target, caption, captionPaths, text }) {
+  const lines = [`*${escapeMarkdownV2(caption)}*`, "", toolQuoteMarkdownV2(text)]
+  const pathLines = artifactPathLines(captionPaths)
+  if (pathLines.length) lines.push("", toolQuoteMarkdownV2(pathLines.join("\n")))
+  const markdown = lines.join("\n")
   try {
     return await telegram.sendMessage({ chatId: target.chatId, topicId: target.topicId, text: markdown, format: "markdownv2", disablePreview: true })
   } catch (error) {
     if (!/can't parse entities|entity/i.test(error.message)) throw error
     logWarn("artifacts.text_markdown_fallback", { captionChars: caption.length, textChars: text.length })
-    return telegram.sendMessage({ chatId: target.chatId, topicId: target.topicId, text: `${caption}\n\n${text}`, format: "plain", disablePreview: true })
+    const plainPaths = artifactPathLines(captionPaths).join("\n")
+    return telegram.sendMessage({ chatId: target.chatId, topicId: target.topicId, text: [caption, text, plainPaths].filter(Boolean).join("\n\n"), format: "plain", disablePreview: true })
   }
+}
+
+export function artifactFileCaptionHtml(caption, captionPaths) {
+  const lines = [escapeHtml(caption)]
+  const pathLines = artifactPathLines(captionPaths)
+  if (pathLines.length) lines.push("", `<blockquote>${pathLines.map((line) => escapeHtml(line)).join("\n")}</blockquote>`)
+  return clampTelegramCaptionHtml(lines.join("\n"))
+}
+
+export function artifactPathLines(captionPaths) {
+  const paths = Array.isArray(captionPaths) ? captionPaths.map((value) => String(value || "").trim()).filter(Boolean) : []
+  if (!paths.length) return []
+  if (paths.length === 1) return [paths[0]]
+  const directories = new Set(paths.map((filePath) => path.dirname(filePath)))
+  if (directories.size === 1) return [path.dirname(paths[0]), paths.map((filePath) => path.basename(filePath)).join(", ")]
+  return paths
+}
+
+function clampTelegramCaptionHtml(value, maxChars = 950) {
+  const text = String(value || "")
+  if (text.length <= maxChars) return text
+  return `${text.slice(0, Math.max(0, maxChars - 34)).trimEnd()}\n...truncated artifact caption...`
 }
 
 function fileFromPayload(file, maxFileBytes) {

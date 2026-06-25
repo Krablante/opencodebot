@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 
+import { artifactFileCaptionHtml, artifactPathLines } from "../src/artifacts-gateway.mjs"
 import { AttachmentBuffer } from "../src/attachments.mjs"
 import { parseNewTopicArgs } from "../src/chat-templates.mjs"
 import { loadConfig } from "../src/config.mjs"
@@ -47,6 +48,7 @@ async function smokeLocalLogic() {
   smokeNewParser()
   smokeToolFormatting()
   smokeFinalNotificationTodos()
+  smokeArtifactCaptionPaths()
   await smokePromptQueue()
   await smokeMultipartPrompts()
   await smokeAttachmentBuffer()
@@ -75,6 +77,16 @@ function smokeNewParser() {
 function smokeToolFormatting() {
   assert.equal(formatToolLine("tool", { filePath: "/tmp/project/main.mjs", offset: 3 }, true), "✅ Read main.mjs offset=3")
   assert.match(formatToolLine("tool", { patchText: "*** Begin Patch\n*** Update File: src/main.mjs\n*** End Patch" }, false), /^❌ Patch files/)
+}
+
+function smokeArtifactCaptionPaths() {
+  assert.deepEqual(artifactPathLines(["/tmp/report.txt"]), ["/tmp/report.txt"])
+  assert.deepEqual(artifactPathLines(["/tmp/a/report.txt", "/tmp/a/screenshot.png"]), ["/tmp/a", "report.txt, screenshot.png"])
+  assert.deepEqual(artifactPathLines(["/tmp/a/report.txt", "/var/log/app.log"]), ["/tmp/a/report.txt", "/var/log/app.log"])
+  assert.equal(
+    artifactFileCaptionHtml("nuc/app/report/final", ["/tmp/a/report.txt", "/tmp/a/screenshot.png"]),
+    "nuc/app/report/final\n\n<blockquote>/tmp/a\nreport.txt, screenshot.png</blockquote>",
+  )
 }
 
 function smokeFinalNotificationTodos() {

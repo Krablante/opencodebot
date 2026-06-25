@@ -99,20 +99,22 @@ export class TelegramClient {
     return this.request("sendMessage", payload)
   }
 
-  async sendPhoto({ chatId, topicId, file, caption }) {
-    return this.sendMultipartFile("sendPhoto", "photo", { chatId, topicId, file, caption })
+  async sendPhoto({ chatId, topicId, file, caption, captionFormat }) {
+    return this.sendMultipartFile("sendPhoto", "photo", { chatId, topicId, file, caption, captionFormat })
   }
 
-  async sendDocument({ chatId, topicId, file, caption }) {
-    return this.sendMultipartFile("sendDocument", "document", { chatId, topicId, file, caption })
+  async sendDocument({ chatId, topicId, file, caption, captionFormat }) {
+    return this.sendMultipartFile("sendDocument", "document", { chatId, topicId, file, caption, captionFormat })
   }
 
-  async sendMultipartFile(method, fileField, { chatId, topicId, file, caption }) {
+  async sendMultipartFile(method, fileField, { chatId, topicId, file, caption, captionFormat }) {
     return this.requestMultipart(method, () => {
       const form = new FormData()
       form.append("chat_id", String(chatId))
       if (topicId) form.append("message_thread_id", String(topicId))
       if (caption) form.append("caption", String(caption))
+      if (captionFormat === "html") form.append("parse_mode", "HTML")
+      if (captionFormat === "markdownv2") form.append("parse_mode", "MarkdownV2")
       form.append(fileField, new Blob([file.bytes], { type: file.contentType || "application/octet-stream" }), file.filename || "artifact")
       return form
     }, {

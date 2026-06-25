@@ -14,6 +14,7 @@ export const OpencodebotArtifactsPlugin = async (_input, options = {}) => ({
 Use this only when the user explicitly asks to send, upload, share, or forward something to Telegram/TG/opencodebot artifacts. The tool reads file paths locally on the host where this OpenCodez process is running, then uploads bytes to the central opencodebot gateway. It does not need or receive the Telegram bot token.`,
       args: {
         path: { type: "string", description: "Local file path to send. Relative paths resolve from the current project directory." },
+        paths: { type: "array", items: { type: "string" }, description: "Multiple local file paths to send as one batch. Relative paths resolve from the current project directory." },
         text: { type: "string", description: "Text to send as an expandable quote." },
         caption: { type: "string", minLength: 1, description: "Short context shown with the artifact. Include host/project/action/reason." },
         mode: { type: "string", enum: ["auto", "photo", "document", "text"], description: "How to send the artifact. auto chooses photo for suitable images and document otherwise." },
@@ -29,35 +30,32 @@ Use this only when the user explicitly asks to send, upload, share, or forward s
         const caption = String(args.caption || "").trim()
         if (!caption) throw new Error("caption is required; include short host/project/action context")
         const mode = args.mode || DEFAULT_MODE
-        const payload = {
+        const filePaths = inputPaths(args, context)
+        if (filePaths.length > 1 && mode === "text") throw new Error("mode=text supports only one file path; use mode=document for multiple files")
+        if (filePaths.length > 1 && (args.filename || args.contentType)) throw new Error("filename/contentType overrides are only supported for a single file")
+        const commonPayload = {
           mode,
           caption,
+          captionPaths: filePaths,
           source: sourceMetadata(context),
         }
-        if (args.text) payload.text = String(args.text)
-        if (args.path) {
-          const filePath = resolveLocalPath(args.path, context)
+        const responses = []
+        if (args.text && (!filePaths.length || mode !== "text")) {
+          responses.push(await sendPayload({ gatewayUrl, token, payload: { ...commonPayload, text: String(args.text) } }))
+        }
+        if (filePaths.length) {
           if (mode === "text") {
-            payload.text = [payload.text, await readFile(filePath, "utf8")].filter(Boolean).join("\n\n")
+            const payload = { ...commonPayload, text: [args.text ? String(args.text) : "", await readFile(filePaths[0], "utf8")].filter(Boolean).join("\n\n") }
+            responses.push(await sendPayload({ gatewayUrl, token, payload }))
           } else {
-            payload.file = await filePayload(filePath, args, Number(args.maxBytes || DEFAULT_MAX_BYTES))
+            for (const filePath of filePaths) {
+              const payload = { ...commonPayload, file: await filePayload(filePath, args, Number(args.maxBytes || DEFAULT_MAX_BYTES)) }
+              responses.push(await sendPayload({ gatewayUrl, token, payload }))
+            }
           }
         }
-        if (!payload.text && !payload.file) throw new Error("Provide path or text")
-
-        const response = await fetch(`${gatewayUrl}/artifacts/send`, {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${token}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(payload),
-        })
-        const body = await response.json().catch(() => ({}))
-        if (!response.ok || body.ok === false) {
-          throw new Error(`opencodebot artifact send failed: ${body.message || body.error || response.status}`)
-        }
-        const messages = (body.messages || []).map((message) => {
+        if (!responses.length) throw new Error("Provide path, paths, or text")
+        const messages = responses.flatMap((body) => body.messages || []).map((message) => {
           const link = message.link ? ` ${message.link}` : ""
           return `${message.method} message_id=${message.messageId}${link}`
         }).join("\n")
@@ -74,6 +72,29 @@ function resolveLocalPath(value, context) {
   if (path.isAbsolute(input)) return input
   const base = context?.directory || context?.worktree || process.cwd()
   return path.resolve(base, input)
+}
+
+function inputPaths(args, context) {
+  const values = []
+  if (args.path) values.push(args.path)
+  if (Array.isArray(args.paths)) values.push(...args.paths)
+  return [...new Set(values.map((value) => resolveLocalPath(value, context)))]
+}
+
+async function sendPayload({ gatewayUrl, token, payload }) {
+  const response = await fetch(`${gatewayUrl}/artifacts/send`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok || body.ok === false) {
+    throw new Error(`opencodebot artifact send failed: ${body.message || body.error || response.status}`)
+  }
+  return body
 }
 
 async function filePayload(filePath, args, maxBytes) {
