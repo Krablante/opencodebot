@@ -121,7 +121,7 @@ async function createPendingTopic(message, args) {
   const chatId = state.chatId || message.chat.id
   const iconCustomEmojiId = await randomTopicIcon()
   const topic = await telegram.createForumTopic({ chatId, name: title, iconCustomEmojiId })
-  await state.addPendingTopic(topic.message_thread_id, { serverID, topicIconCustomEmojiId: topic.icon_custom_emoji_id || iconCustomEmojiId, title, titleSource, chatTemplateName, chatTemplate })
+  await state.addPendingTopic(topic.message_thread_id, { serverID, topicTitle: title, topicIconCustomEmojiId: topic.icon_custom_emoji_id || iconCustomEmojiId, title, titleSource, chatTemplateName, chatTemplate })
   const suffix = chatTemplateName ? ` using <code>${escapeHtml(chatTemplateName)}</code>` : ""
   await telegram.sendMessage({
     chatId,

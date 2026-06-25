@@ -178,10 +178,9 @@ export class StateStore {
       let changed = false
 
       const title = String(metadata.title || "").trim()
-      if (title && binding.title !== title) {
-        binding.title = title
-        binding.titleSource = "telegram"
-        binding.titleUpdatedAt = new Date().toISOString()
+      if (title && binding.topicTitle !== title) {
+        binding.topicTitle = title
+        binding.topicTitleUpdatedAt = new Date().toISOString()
         changed = true
       }
 
@@ -189,6 +188,9 @@ export class StateStore {
         const icon = String(metadata.topicIconCustomEmojiId || "").trim()
         if (icon && binding.topicIconCustomEmojiId !== icon) {
           binding.topicIconCustomEmojiId = icon
+          changed = true
+        } else if (!icon && binding.topicIconCustomEmojiId) {
+          delete binding.topicIconCustomEmojiId
           changed = true
         }
       }

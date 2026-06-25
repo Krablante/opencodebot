@@ -71,10 +71,12 @@ function finalNotificationReplyMarkup(link) {
 
 function finalNotificationTopicSource(binding) {
   return {
-    title: String(binding?.title || `Topic ${binding?.topicId || ""}`).trim(),
+    title: String(binding?.topicTitle || `Topic ${binding?.topicId || ""}`).trim(),
     iconCustomEmojiId: normalizeCustomEmojiId(binding?.topicIconCustomEmojiId),
   }
 }
+
+export { finalNotificationTopicSource }
 
 function finalNotificationTopicMarkdown(topicSource) {
   const icon = topicSource?.iconCustomEmojiId ? `![](tg://emoji?id=${topicSource.iconCustomEmojiId}) ` : ""

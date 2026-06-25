@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { AttachmentBuffer } from "../src/attachments.mjs"
 import { parseNewTopicArgs } from "../src/chat-templates.mjs"
 import { loadConfig } from "../src/config.mjs"
-import { completedTodosBeforeAssistant, finalNotificationMarkdown, formatCompletedTodoMarkdown } from "../src/final-notifications.mjs"
+import { completedTodosBeforeAssistant, finalNotificationMarkdown, finalNotificationTopicSource, formatCompletedTodoMarkdown } from "../src/final-notifications.mjs"
 import { MultipartPromptBuffer } from "../src/multipart-prompts.mjs"
 import { OpenCodeClient } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
@@ -111,6 +111,14 @@ function smokeFinalNotificationTodos() {
   })
   assert.doesNotMatch(notification, /🧵/)
   assert.match(notification, /💬 \*Topic:\* !\[\]\(tg:\/\/emoji\?id=5368324170671202286\) Actual Topic/)
+  assert.deepEqual(finalNotificationTopicSource({ title: "Session Title", topicTitle: "Telegram Topic", topicId: 4690 }), {
+    title: "Telegram Topic",
+    iconCustomEmojiId: "",
+  })
+  assert.deepEqual(finalNotificationTopicSource({ title: "Session Title", topicId: 4690 }), {
+    title: "Topic 4690",
+    iconCustomEmojiId: "",
+  })
 
   const activeMessages = [
     ...messages,

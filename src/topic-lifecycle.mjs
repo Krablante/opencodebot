@@ -5,10 +5,9 @@ import { topicId } from "./telegram.mjs"
 export function createTopicLifecycle({ config, state, telegram, opencode, activateBindingForPrompt, clearPromptFeedback }) {
   async function handleTopicLifecycleMessage(message) {
     if (message.forum_topic_edited) {
-      await state.updateBindingTopicMetadata(message.chat.id, topicId(message), {
-        title: message.forum_topic_edited.name,
-        topicIconCustomEmojiId: message.forum_topic_edited.icon_custom_emoji_id,
-      })
+      const metadata = { title: message.forum_topic_edited.name }
+      if (Object.hasOwn(message.forum_topic_edited, "icon_custom_emoji_id")) metadata.topicIconCustomEmojiId = message.forum_topic_edited.icon_custom_emoji_id
+      await state.updateBindingTopicMetadata(message.chat.id, topicId(message), metadata)
       return true
     }
     if (message.forum_topic_deleted) {
@@ -50,7 +49,7 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
     const title = titleFromText(promptText, `${serverID} ${sessionID}`)
     const iconCustomEmojiId = await randomTopicIcon()
     const topic = await telegram.createForumTopic({ chatId, name: title, iconCustomEmojiId })
-    const binding = { chatId, topicId: topic.message_thread_id, topicIconCustomEmojiId: topic.icon_custom_emoji_id || iconCustomEmojiId, serverID, sessionID, title, titleSource: "auto" }
+    const binding = { chatId, topicId: topic.message_thread_id, topicTitle: title, topicIconCustomEmojiId: topic.icon_custom_emoji_id || iconCustomEmojiId, serverID, sessionID, title, titleSource: "auto" }
     await state.bindTopic(binding)
     await activateBindingForPrompt(binding, "web-topic-created")
     await state.markSeenSession(serverID, sessionID)
@@ -70,6 +69,7 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
     const binding = {
       chatId,
       topicId: topic.message_thread_id,
+      topicTitle: title,
       topicIconCustomEmojiId: topic.icon_custom_emoji_id || iconCustomEmojiId,
       serverID,
       sessionID: session.id,

@@ -70,7 +70,7 @@ The queue advances only after the same final-answer path used for `🏁`, where 
 
 ## Final Notifications
 
-`/notify_on`, `/notify_off`, and `/notify_status` control private DM notifications for `finalNotifications.userIds`. When enabled, the bot sends a short private message to each configured recipient when a final mirrored answer is ready. The DM includes a source `Topic:` line with the topic name and topic custom emoji when Telegram provides it, includes an `Open topic` button for the final mirrored message, quotes the original user prompt in an expandable block for orientation, and includes a compact quoted `📋 Tasks [n/n]:` checklist when the agent closed a todo list for that run. It does not include the final answer text.
+`/notify_on`, `/notify_off`, and `/notify_status` control private DM notifications for `finalNotifications.userIds`. When enabled, the bot sends a short private message to each configured recipient when a final mirrored answer is ready. The DM includes a source `Topic:` line from Telegram topic metadata, with the Telegram topic name and topic custom emoji when Telegram provides it. It also includes an `Open topic` button for the final mirrored message, quotes the original user prompt in an expandable block for orientation, and includes a compact quoted `📋 Tasks [n/n]:` checklist when the agent closed a todo list for that run. It does not include the final answer text.
 
 ## Mirror
 
