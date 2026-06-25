@@ -3,6 +3,7 @@ import { escapeHtml, topicId } from "./telegram.mjs"
 
 export const telegramBotCommands = [
   { command: "new", description: "Create a new OpenCodez session topic" },
+  { command: "session", description: "Show current topic and OpenCodez session info" },
   { command: "artifacts_here", description: "Use this topic for agent artifact uploads" },
   { command: "q", description: "Queue prompts for the current session" },
   { command: "notify_on", description: "Enable final-answer DMs" },
@@ -14,7 +15,7 @@ export const telegramBotCommands = [
   { command: "start", description: "Show help" },
 ]
 
-export function createTelegramCommandHandlers({ config, state, telegram, promptQueue, multipartPrompts, createPendingTopic }) {
+export function createTelegramCommandHandlers({ config, state, telegram, opencode, promptQueue, multipartPrompts, createPendingTopic }) {
   const handlers = {
     mirror_on: async (message) => {
       await state.setMirrorEnabled(true)
@@ -25,6 +26,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, promptQ
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Mirror disabled." })
     },
     artifacts_here: handleArtifactsHere,
+    session: handleSessionInfo,
     new: createPendingTopic,
     help: sendHelp,
     start: sendHelp,
@@ -171,6 +173,71 @@ export function createTelegramCommandHandlers({ config, state, telegram, promptQ
     })
   }
 
+  async function handleSessionInfo(message) {
+    const currentTopicId = topicId(message)
+    const activeBinding = state.findBindingByTopic(message.chat.id, currentTopicId)
+    const storedBinding = activeBinding || state.findAnyBindingByTopic(message.chat.id, currentTopicId)
+    const server = storedBinding ? config.opencode.servers.find((item) => item.id === storedBinding.serverID) : null
+    const artifactsTopic = state.artifactsTopic()
+    const thisIsArtifactsTopic = state.isArtifactsTopic(message.chat.id, currentTopicId)
+    let session = null
+    let sessionError = ""
+    if (storedBinding?.serverID && storedBinding?.sessionID && opencode?.getSession) {
+      try {
+        session = await opencode.getSession(storedBinding.serverID, storedBinding.sessionID)
+      } catch (error) {
+        sessionError = error.message
+      }
+    }
+    const sessionUrl = sessionWebUrl(server, storedBinding?.sessionID, session)
+    const lines = [
+      "🧭 <b>Session</b>",
+      "",
+      "🧵 <b>Telegram</b>",
+      `chat_id: <code>${escapeHtml(String(message.chat.id))}</code>`,
+      `topic_id: <code>${escapeHtml(String(currentTopicId || 0))}</code>`,
+      `message_id: <code>${escapeHtml(String(message.message_id))}</code>`,
+      "",
+    ]
+    if (storedBinding) {
+      lines.push(
+        "🔗 <b>Binding</b>",
+        `status: ${activeBinding ? "🟢 active" : "⚪ disabled"}`,
+        `server: <code>${escapeHtml(storedBinding.serverID || "")}</code>`,
+        `session: <code>${escapeHtml(storedBinding.sessionID || "")}</code>`,
+        storedBinding.disabledReason ? `reason: <code>${escapeHtml(storedBinding.disabledReason)}</code>` : null,
+        storedBinding.title ? `title: <code>${escapeHtml(storedBinding.title)}</code>` : null,
+        "",
+      )
+    } else {
+      lines.push("🔗 <b>Binding</b>", "status: ⚪ no OpenCodez session bound", "")
+    }
+    if (storedBinding) {
+      lines.push(
+        "🖥 <b>OpenCodez</b>",
+        server?.url ? `server_url: <code>${escapeHtml(server.url)}</code>` : "server_url: unavailable",
+        session?.directory ? `directory: <code>${escapeHtml(session.directory)}</code>` : null,
+        session?.agent || storedBinding.agent ? `agent: <code>${escapeHtml(session?.agent || storedBinding.agent)}</code>` : null,
+        modelLine(session?.model || storedBinding.model),
+        sessionUrl ? `url: <code>${escapeHtml(sessionUrl)}</code>` : "url: unavailable",
+        sessionError ? `lookup_error: <code>${escapeHtml(sessionError)}</code>` : null,
+        "",
+      )
+    }
+    lines.push(
+      "📦 <b>Artifacts</b>",
+      `this_topic: ${thisIsArtifactsTopic ? "🟢 yes" : "⚪ no"}`,
+      artifactsTopic ? `current_topic_id: <code>${escapeHtml(String(artifactsTopic.topicId || 0))}</code>` : "current_topic_id: none",
+      artifactsTopic?.title ? `current_title: <code>${escapeHtml(artifactsTopic.title)}</code>` : null,
+    )
+    await telegram.sendMessage({
+      chatId: message.chat.id,
+      topicId: currentTopicId,
+      text: lines.filter(Boolean).join("\n"),
+      replyMarkup: sessionUrl ? { inline_keyboard: [[{ text: "Open session", url: sessionUrl }]] } : undefined,
+    })
+  }
+
   async function sendHelp(message) {
     await telegram.sendMessage({
       chatId: message.chat.id,
@@ -185,6 +252,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, promptQ
       "<b>OpenCodez Bot</b>",
       "",
       "<code>/new [server] [template] [title]</code> - create a topic and wait for the first prompt.",
+      "<code>/session</code> - show current topic, binding, session URL, and artifact target info.",
       "<code>/q &lt;prompt&gt;</code> - queue a prompt for this topic/session.",
       "<code>/q status</code> - show queued prompts.",
       "<code>/q delete &lt;number&gt;</code> - remove a queued prompt.",
@@ -207,4 +275,21 @@ export function createTelegramCommandHandlers({ config, state, telegram, promptQ
     const lines = items.map((item) => `${item.index}. <code>${escapeHtml(item.summary)}</code>`)
     await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: `Queued prompts:\n${lines.join("\n")}` })
   }
+}
+
+function sessionWebUrl(server, sessionID, session) {
+  const baseUrl = String(server?.url || "").replace(/\/+$/, "")
+  const directory = session?.directory
+  if (!baseUrl || !sessionID || !directory) return ""
+  const encodedDirectory = Buffer.from(String(directory)).toString("base64").replace(/=+$/, "")
+  return `${baseUrl}/${encodeURIComponent(encodedDirectory)}/session/${encodeURIComponent(sessionID)}`
+}
+
+function modelLine(model) {
+  if (!model) return null
+  const provider = model.providerID ? `${model.providerID}/` : ""
+  const id = model.modelID || model.id || ""
+  const variant = model.variant ? ` ${model.variant}` : ""
+  const value = `${provider}${id}${variant}`.trim()
+  return value ? `model: <code>${escapeHtml(value)}</code>` : null
 }

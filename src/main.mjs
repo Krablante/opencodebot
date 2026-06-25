@@ -40,7 +40,7 @@ const attachmentBuffer = new AttachmentBuffer({
   onError: logError,
 })
 const promptQueue = new PromptQueue(sendTelegramPrompt)
-const commandHandlers = createTelegramCommandHandlers({ config, state, telegram, promptQueue, multipartPrompts, createPendingTopic })
+const commandHandlers = createTelegramCommandHandlers({ config, state, telegram, opencode, promptQueue, multipartPrompts, createPendingTopic })
 
 process.once("SIGINT", () => requestShutdown("SIGINT"))
 process.once("SIGTERM", () => requestShutdown("SIGTERM"))
@@ -860,7 +860,7 @@ function parseCommand(text) {
 }
 
 function artifactTopicCommandAllowed(commandName) {
-  return ["artifacts_here", "help", "start", "notify_on", "notify_off", "notify_status"].includes(commandName)
+  return ["artifacts_here", "session", "help", "start", "notify_on", "notify_off", "notify_status"].includes(commandName)
 }
 
 async function cleanupOwnPinServiceMessage(message) {

@@ -95,6 +95,12 @@ export class StateStore {
     )
   }
 
+  findAnyBindingByTopic(chatId, topicId) {
+    return [...this.data.bindings].reverse().find(
+      (binding) => String(binding.chatId) === String(chatId) && String(binding.topicId ?? 0) === String(topicId ?? 0),
+    )
+  }
+
   pendingTopic(topicId) {
     return this.data.pendingTopics[String(topicId ?? 0)]
   }

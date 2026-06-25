@@ -97,6 +97,7 @@ For direct npm usage, run `npm start`. The systemd unit in `deploy/` is a Linux 
 
 ```text
 /new [server] [template] [title]
+/session
 /q <prompt>
 /q status
 /q delete <number>

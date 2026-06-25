@@ -18,6 +18,7 @@ When OpenCodez later updates a session title, the linked Telegram topic is renam
 
 ```text
 /new [server] [template] [title]  create a topic and wait for the first prompt
+/session                           show topic, binding, session URL, and artifact target info
 /q <prompt>                       queue or send a prompt in this topic/session
 /q status                         show queued prompts
 /q delete <number>                remove a queued prompt by status number
@@ -33,6 +34,8 @@ When OpenCodez later updates a session title, the linked Telegram topic is renam
 The bot syncs this slash-command menu on startup through Bot API `setMyCommands` for default, private-chat, group-chat, administrator, configured-chat, and configured-member scopes, so the same commands should appear in Telegram's command suggestions.
 
 `/artifacts_here` marks the current forum topic as the only artifact target for agent uploads. If another topic later runs `/artifacts_here`, the new topic replaces the old one. Artifact topics do not mirror OpenCodez sessions, and ordinary messages or attachments in them are not sent to OpenCodez. See [Artifact Gateway](artifact-gateway.md) for plugin and gateway setup.
+
+`/session` is a small operator command for the current topic. It shows Telegram chat/topic/message ids, the active or last stored binding, OpenCodez server/session details, a web session URL when the backend session can be read, and artifact target status. It works in normal mirror topics and artifact topics, and it does not print secrets or runtime tokens.
 
 `/new` parses arguments from left to right. If the first argument matches a configured server id, that server is used. If the next argument, or the first argument when no server was given, matches `chatTemplates`, that template is used. Everything left becomes the user-owned topic title.
 
