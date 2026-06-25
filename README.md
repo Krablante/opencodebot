@@ -39,7 +39,7 @@ OpenCodez remains the main workspace. Telegram is the mirror/control surface for
 
 ## Platforms
 
-Docker Compose is the easiest deployment path on Linux, Windows, and macOS. The bot also runs directly through Node.js and npm. Linux has the optional systemd service template and WireGuard server helper. Windows is fully fine as a Telegram, browser, Docker, and WireGuard client.
+Docker Compose is the recommended deployment path on Linux, Windows, and macOS. The bot also runs directly through Node.js and npm. Windows is fully fine as a Telegram, browser, Docker, and WireGuard client.
 
 ## Setup
 
@@ -91,7 +91,7 @@ docker compose logs -f opencodebot
 
 OpenCodez does not need to run in Docker. Put its normal LAN URL in `servers.json`; if OpenCodez runs on the same machine as Docker Desktop, `http://host.docker.internal:4096` is usually the right URL.
 
-For direct npm usage, run `npm start`. The systemd unit in `deploy/` is a Linux template for people who prefer systemd over Docker.
+For direct local usage, run `npm start`. Production/live operation should use Docker Compose.
 
 ## Commands
 
@@ -123,9 +123,10 @@ Default chat templates are `d4flash`, `d4pro`, and `gpt55p`. Public defaults use
 ```bash
 npm run check
 npm run smoke
+npm run smoke:live
 ```
 
-`npm run check` syntax-checks source and scripts. `npm run smoke` runs local logic checks, loads config, checks Telegram `getMe`, probes configured OpenCodez servers, and verifies chat-template selection with a temporary OpenCodez session. It should not print tokens or send prompts.
+`npm run check` syntax-checks source and scripts. `npm run smoke` is a local contract smoke: without arguments it uses `config.example.json`. `npm run smoke:live` runs smoke inside the live Compose service against `/app/config.local.json`. Neither smoke path should print tokens or send prompts.
 
 ## License
 

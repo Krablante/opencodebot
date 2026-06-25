@@ -24,13 +24,13 @@ Relative paths in config are resolved from the config file's directory. This kee
 
 The Docker Compose setup mounts `config.local.json`, `servers.json`, `token.env`, and `state/` into the container at the same `/app/...` paths. That means the config created by `npm run init-config` works for both direct npm usage and Docker. The only common Docker-specific edit is the OpenCodez URL in `servers.json`: use a LAN URL or `host.docker.internal`, not `127.0.0.1`, when OpenCodez runs on the host.
 
-The loader also reads `paths.tokenEnv` and then overlays process environment variables on top. That means systemd, PowerShell, shell sessions, and local scripts can override values from `token.env` without editing the runtime JSON.
+The loader also reads `paths.tokenEnv` and then overlays process environment variables on top. That means Compose, PowerShell, shell sessions, and local scripts can override values from `token.env` without editing the runtime JSON.
 
 OpenCodez servers come from `paths.serversJson`, not from the main config body. The public example points at `servers.example.json`; `npm run init-config` creates a local ignored `servers.json` for your real hosts.
 
 ## Secrets
 
-`token.env` is read by local scripts and can also be read by the Linux systemd unit. It holds values such as the Telegram bot token, allowed user ids, the OpenCodez password, and the optional artifact gateway token. Do not print it, paste it into docs, or commit it.
+`token.env` is read by local scripts and the Compose runtime. It holds values such as the Telegram bot token, allowed user ids, the OpenCodez password, and the optional artifact gateway token. Do not print it, paste it into docs, or commit it.
 
 The config names the environment variables to try. `telegram.tokenEnvNames` is checked first, but the loader can also recognize a Telegram-looking token from the env file. `telegram.allowedUserEnvNames` is checked first for user ids; if none are found, the loader falls back to env names that look like owner/user/allowed id variables. `opencode.passwordEnvNames` works the same simple way for the OpenCodez password.
 

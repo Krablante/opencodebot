@@ -10,10 +10,9 @@ import { createPromptRouter } from "./prompt-routing.mjs"
 import { MirrorRenderer } from "./render.mjs"
 import { createSessionReconciler } from "./session-reconcile.mjs"
 import { StateStore } from "./state.mjs"
-import { escapeHtml, TelegramClient, topicId } from "./telegram.mjs"
+import { escapeHtml, TelegramClient } from "./telegram.mjs"
 import { createTelegramPolling } from "./telegram-polling.mjs"
 import { createTopicLifecycle } from "./topic-lifecycle.mjs"
-import { logErrorEvent } from "./logger.mjs"
 
 const config = loadConfig()
 assertRuntimeConfig(config)
@@ -143,27 +142,4 @@ function requestShutdown(signalName) {
     console.info("[opencodebot] shutdown grace elapsed, exiting")
     process.exit(0)
   }, 2000).unref?.()
-}
-
-function delay(ms, signal) {
-  if (signal?.aborted) return Promise.reject(abortError())
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(done, ms)
-    timer.unref?.()
-    const onAbort = () => {
-      clearTimeout(timer)
-      reject(abortError())
-    }
-    function done() {
-      signal?.removeEventListener?.("abort", onAbort)
-      resolve()
-    }
-    signal?.addEventListener?.("abort", onAbort, { once: true })
-  })
-}
-
-function abortError() {
-  const error = new Error("aborted")
-  error.name = "AbortError"
-  return error
 }
