@@ -121,7 +121,7 @@ function smokeFinalNotificationTodos() {
     promptText: "ship it",
     completedTodos: ["Inspect final DM"],
   })
-  assert.doesNotMatch(notification, /🧵/)
+  assert.equal(notification.includes(String.fromCodePoint(0x1f9f5)), false)
   assert.match(notification, /💬 \*Topic:\* !\[💬\]\(tg:\/\/emoji\?id=5368324170671202286\) Actual Topic/)
   assert.deepEqual(finalNotificationTopicSource({ title: "Session Title", topicTitle: "Telegram Topic", topicId: 4690 }), {
     title: "Telegram Topic",

@@ -80,7 +80,7 @@ Assistant text is accumulated until OpenCodez completes the text block. The bot 
 
 Tool calls are compact and expandable. Adjacent tool results update one Telegram message until assistant text starts a new block. Tool batches use Telegram MarkdownV2 expandable blockquotes, so details are one tap away without filling the topic with raw output.
 
-Internal helper tools such as todo-style task-list tools are suppressed from live mirror and reconcile so bookkeeping does not crowd Telegram. Completed todo lists may still appear in private final-answer DMs as a compact quoted checked task list. Subagent sessions are also treated as implementation details: Telegram shows the parent-visible task tool line, not a separate child session log.
+Internal helper tools such as todo-style task-list tools are suppressed from live mirror and reconcile so bookkeeping does not crowd Telegram. Closed task lists may still appear in private final-answer DMs as a compact quoted checked task list. Subagent sessions are also treated as implementation details: Telegram shows the parent-visible task tool line, not a separate child session log.
 
 ## Reconcile
 
