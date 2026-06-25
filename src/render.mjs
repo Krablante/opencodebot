@@ -37,7 +37,7 @@ export class MirrorRenderer {
       text: clampTelegram(`💬 ${escapeHtml(text)}`, this.config.mirror.maxTelegramChars),
     })
     await this.notifyMirrorMessage(binding, message)
-    if (this.shouldPinUserPrompts()) await this.pinMessage(binding, message.message_id)
+    if (this.shouldPinUserPrompts()) await this.pinMessage(binding, message.message_id, { origin: "web-prompt" })
     return message
   }
 
@@ -283,15 +283,18 @@ export class MirrorRenderer {
     if (session?.tools) session.tools.closed = true
   }
 
-  async pinMessage(binding, messageId) {
-    if (!messageId) return
+  async pinMessage(binding, messageId, fields = {}) {
+    if (!messageId) return false
     const startedAt = Date.now()
     try {
       await this.telegram.pinChatMessage({ chatId: binding.chatId, messageId, disableNotification: false })
       const elapsedMs = durationMs(startedAt)
-      if (shouldLogSlow(elapsedMs)) logMirrorFlush("mirror.pin.slow", binding, { messageId, durationMs: elapsedMs })
+      logMirrorFlush("mirror.pin.sent", binding, { messageId, durationMs: elapsedMs, ...fields })
+      if (shouldLogSlow(elapsedMs)) logMirrorFlush("mirror.pin.slow", binding, { messageId, durationMs: elapsedMs, ...fields })
+      return true
     } catch (error) {
-      logErrorEvent("mirror.pin.failed", error, { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId, messageId })
+      logErrorEvent("mirror.pin.failed", error, { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId, messageId, ...fields })
+      return false
     }
   }
 

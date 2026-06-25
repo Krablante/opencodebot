@@ -285,6 +285,9 @@ async function sendTelegramPrompt(binding, text, files = [], { sourceMessageId }
       messageId: sourceMessageId,
     })
     await opencode.promptAsync(binding.serverID, binding.sessionID, promptPayload(text, profile, files))
+    if (await pinTelegramPromptMessage(binding, sourceMessageId, "telegram-prompt")) {
+      await state.markPendingPromptPinned(binding.serverID, binding.sessionID, text, sourceMessageId).catch(logError)
+    }
     await updatePromptFeedback(binding, promptFeedbackAcceptedText()).catch(logError)
     scheduleReconcile(binding, 8000)
   } catch (error) {
@@ -596,9 +599,16 @@ async function handleOpenCodeEvent(server, event) {
 }
 
 async function pinConsumedTelegramPrompt(binding, marker) {
+  if (marker?.pinnedAt) return
   const messageId = Number(marker?.messageId)
   if (!renderer.shouldPinUserPrompts() || !Number.isSafeInteger(messageId) || messageId <= 0) return
-  await renderer.pinMessage(binding, messageId)
+  await renderer.pinMessage(binding, messageId, { origin: "telegram-prompt-event" })
+}
+
+async function pinTelegramPromptMessage(binding, sourceMessageId, origin) {
+  const messageId = Number(sourceMessageId)
+  if (!renderer.shouldPinUserPrompts() || !Number.isSafeInteger(messageId) || messageId <= 0) return false
+  return renderer.pinMessage(binding, messageId, { origin })
 }
 
 async function reconcileLoop() {

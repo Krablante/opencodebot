@@ -223,6 +223,18 @@ export class StateStore {
     })
   }
 
+  async markPendingPromptPinned(serverID, sessionID, text, messageId) {
+    const hash = promptHash(text)
+    return this.update((data) => {
+      const marker = data.pendingPrompts.find(
+        (item) => item.serverID === serverID && item.sessionID === sessionID && item.hash === hash && Number(item.messageId || 0) === Number(messageId || 0),
+      )
+      if (!marker) return false
+      marker.pinnedAt = new Date().toISOString()
+      return true
+    })
+  }
+
   async removePendingPrompt(serverID, sessionID, text) {
     const hash = promptHash(text)
     return this.update((data) => {
