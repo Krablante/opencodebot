@@ -16,6 +16,7 @@ import {
   withFinalAnswerMarker,
 } from "./rich-markdown.mjs"
 import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
+import { createRenderSideEffects } from "./render-side-effects.mjs"
 
 export { formatToolLine } from "./tool-formatting.mjs"
 
@@ -24,8 +25,7 @@ export class MirrorRenderer {
     this.telegram = telegram
     this.state = state
     this.config = config
-    this.onMirrorMessage = onMirrorMessage
-    this.onFinalMessage = onFinalMessage
+    this.effects = createRenderSideEffects({ telegram, config, onMirrorMessage, onFinalMessage })
     this.sessions = new Map()
     this.hiddenTools = toolNameSet(config.mirror?.hiddenTools || [])
   }
@@ -284,37 +284,7 @@ export class MirrorRenderer {
   }
 
   async pinMessage(binding, messageId, fields = {}) {
-    if (!messageId) return false
-    const { serviceMessageAfterId, ...logFields } = fields
-    const startedAt = Date.now()
-    try {
-      await this.telegram.pinChatMessage({ chatId: binding.chatId, messageId, disableNotification: false })
-      const elapsedMs = durationMs(startedAt)
-      logMirrorFlush("mirror.pin.sent", binding, { messageId, durationMs: elapsedMs, ...logFields })
-      if (shouldLogSlow(elapsedMs)) logMirrorFlush("mirror.pin.slow", binding, { messageId, durationMs: elapsedMs, ...logFields })
-      this.cleanupPinServiceMessage(binding, serviceMessageAfterId, logFields)
-      return true
-    } catch (error) {
-      logErrorEvent("mirror.pin.failed", error, { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId, messageId, ...logFields })
-      return false
-    }
-  }
-
-  cleanupPinServiceMessage(binding, serviceMessageAfterId, fields = {}) {
-    if (this.config.mirror.deletePinServiceMessages === false) return
-    const afterMessageId = Number(serviceMessageAfterId)
-    if (!Number.isSafeInteger(afterMessageId) || afterMessageId <= 0) return
-    const serviceMessageId = afterMessageId + 1
-    setTimeout(async () => {
-      try {
-        await this.telegram.deleteMessage({ chatId: binding.chatId, messageId: serviceMessageId, suppressFailureLog: true })
-        logMirrorFlush("mirror.pin_service.deleted", binding, { messageId: serviceMessageId, afterMessageId, ...fields })
-      } catch (error) {
-        if (!/message to delete not found|message can't be deleted|message not found/i.test(error.message)) {
-          logErrorEvent("mirror.pin_service.delete.failed", error, { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId, messageId: serviceMessageId, afterMessageId, ...fields })
-        }
-      }
-    }, 1000).unref?.()
+    return this.effects.pinMessage(binding, messageId, fields)
   }
 
   async finalAssistantMessageReady(binding, assistantMessageID) {
@@ -330,8 +300,7 @@ export class MirrorRenderer {
   }
 
   shouldPinUserPrompts() {
-    const mirror = this.config.mirror || {}
-    return mirror.pinUserPrompts ?? mirror.pinFinalAnswers ?? true
+    return this.effects.shouldPinUserPrompts()
   }
 
   async markFinalAssistantMessage(binding, session, assistantMessageID, messageId) {
@@ -400,31 +369,11 @@ export class MirrorRenderer {
   }
 
   async notifyMirrorMessage(binding, message) {
-    if (!this.onMirrorMessage || !message?.message_id) return
-    try {
-      await this.onMirrorMessage(binding, message)
-    } catch (error) {
-      logErrorEvent("mirror.message.callback.failed", error, {
-        serverID: binding.serverID,
-        sessionID: binding.sessionID,
-        topicId: binding.topicId,
-        messageId: message.message_id,
-      })
-    }
+    await this.effects.notifyMirrorMessage(binding, message)
   }
 
   async notifyFinalMessage(binding, details) {
-    if (!this.onFinalMessage || !details?.messageId) return
-    try {
-      await this.onFinalMessage(binding, details)
-    } catch (error) {
-      logErrorEvent("mirror.final.callback.failed", error, {
-        serverID: binding.serverID,
-        sessionID: binding.sessionID,
-        topicId: binding.topicId,
-        messageId: details.messageId,
-      })
-    }
+    await this.effects.notifyFinalMessage(binding, details)
   }
 
   shouldMirrorTool(tool) {

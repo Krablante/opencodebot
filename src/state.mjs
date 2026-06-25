@@ -56,6 +56,8 @@ export class StateStore {
     return this.data.telegram.chatId ?? null
   }
 
+  // Telegram runtime and artifact target.
+
   artifactsTopic() {
     return this.data.telegram.artifactsTopic || null
   }
@@ -84,6 +86,8 @@ export class StateStore {
       return data.telegram.artifactsTopic
     })
   }
+
+  // Topic/session bindings and reconcile windows.
 
   findBinding(serverID, sessionID) {
     return this.data.bindings.find((binding) => !binding.disabled && binding.serverID === serverID && binding.sessionID === sessionID)
@@ -208,6 +212,8 @@ export class StateStore {
     })
   }
 
+  // Telegram-origin prompt markers.
+
   async addPendingPrompt(marker) {
     return this.update((data) => {
       const cutoff = Date.now() - 10 * 60 * 1000
@@ -249,6 +255,8 @@ export class StateStore {
       )
     })
   }
+
+  // Final-answer DM notification preferences and dedupe markers.
 
   finalNotificationUserIds() {
     return [...new Set((this.data.finalNotifications?.enabledUserIds || []).map(String))]
