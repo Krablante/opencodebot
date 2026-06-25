@@ -4,9 +4,6 @@
   "type": "module",
   "description": "OpenCodez plugin for sending local artifacts to an opencodebot Telegram artifact gateway.",
   "main": "src/index.js",
-  "dependencies": {
-    "@opencode-ai/plugin": "*"
-  },
   "engines": {
     "node": ">=20"
   }

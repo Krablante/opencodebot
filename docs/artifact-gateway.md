@@ -103,6 +103,8 @@ plugins/opencodebot-artifacts
 
 Install or reference it from the OpenCodez environment on each host that should be able to send artifacts. Configure the plugin with the LAN gateway URL and artifact token.
 
+In Politia, `/home/bloob/politia/services/harness/opencodez/deploy.sh` is the live install/update path for the five OpenCodez hosts. It deploys a managed copy of the whole plugin package to `~/.config/opencodez/plugins/opencodebot-artifacts`, writes `~/.config/opencodez/artifacts.env`, points OpenCodez at the package directory, and opens the gateway port from the LAN on the gateway host.
+
 OpenCodez plugin entries can be npm specs, `file://` URLs, relative paths, absolute paths, or `[spec, options]` tuples. Install or vendor the plugin package on each OpenCodez host, then reference the package directory. For a local checkout, a config entry can look like this:
 
 ```jsonc
