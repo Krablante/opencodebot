@@ -73,24 +73,30 @@ function finalNotificationTopicSource(binding) {
   return {
     title: String(binding?.topicTitle || `Topic ${binding?.topicId || ""}`).trim(),
     iconCustomEmojiId: normalizeCustomEmojiId(binding?.topicIconCustomEmojiId),
+    iconEmoji: normalizeTopicIconEmoji(binding?.topicIconEmoji),
   }
 }
 
 export { finalNotificationTopicSource }
 
 function finalNotificationTopicMarkdown(topicSource) {
-  const icon = topicSource?.iconCustomEmojiId ? `![](tg://emoji?id=${topicSource.iconCustomEmojiId}) ` : ""
+  const icon = topicSource?.iconCustomEmojiId ? `![${escapeMarkdownV2(topicSource.iconEmoji || "💬")}](tg://emoji?id=${topicSource.iconCustomEmojiId}) ` : ""
   return `💬 *Topic:* ${icon}${escapeMarkdownV2(topicSource?.title || "Topic")}`
 }
 
 function finalNotificationTopicHtml(topicSource) {
-  const icon = topicSource?.iconCustomEmojiId ? `<tg-emoji emoji-id="${escapeHtml(topicSource.iconCustomEmojiId)}">💬</tg-emoji> ` : ""
+  const icon = topicSource?.iconCustomEmojiId ? `<tg-emoji emoji-id="${escapeHtml(topicSource.iconCustomEmojiId)}">${escapeHtml(topicSource.iconEmoji || "💬")}</tg-emoji> ` : ""
   return `💬 Topic: ${icon}<b>${escapeHtml(topicSource?.title || "Topic")}</b>`
 }
 
 function normalizeCustomEmojiId(value) {
   const id = String(value || "").trim()
   return /^[A-Za-z0-9_-]+$/.test(id) ? id : ""
+}
+
+function normalizeTopicIconEmoji(value) {
+  const emoji = String(value || "").trim()
+  return emoji.length <= 8 ? emoji : ""
 }
 
 async function finalSessionSummary({ opencode, binding, assistantMessageID }) {

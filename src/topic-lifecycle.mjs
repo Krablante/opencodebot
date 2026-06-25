@@ -6,7 +6,11 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
   async function handleTopicLifecycleMessage(message) {
     if (message.forum_topic_edited) {
       const metadata = { title: message.forum_topic_edited.name }
-      if (Object.hasOwn(message.forum_topic_edited, "icon_custom_emoji_id")) metadata.topicIconCustomEmojiId = message.forum_topic_edited.icon_custom_emoji_id
+      if (Object.hasOwn(message.forum_topic_edited, "icon_custom_emoji_id")) {
+        const topicIcon = await topicIconForId(message.forum_topic_edited.icon_custom_emoji_id)
+        metadata.topicIconCustomEmojiId = topicIcon?.customEmojiId || message.forum_topic_edited.icon_custom_emoji_id
+        metadata.topicIconEmoji = topicIcon?.emoji
+      }
       await state.updateBindingTopicMetadata(message.chat.id, topicId(message), metadata)
       return true
     }
@@ -47,9 +51,9 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
     const chatId = state.chatId || config.telegram.chatId
     if (!chatId) return null
     const title = titleFromText(promptText, `${serverID} ${sessionID}`)
-    const iconCustomEmojiId = await randomTopicIcon()
-    const topic = await telegram.createForumTopic({ chatId, name: title, iconCustomEmojiId })
-    const binding = { chatId, topicId: topic.message_thread_id, topicTitle: title, topicIconCustomEmojiId: topic.icon_custom_emoji_id || iconCustomEmojiId, serverID, sessionID, title, titleSource: "auto" }
+    const topicIcon = await randomTopicIcon()
+    const topic = await telegram.createForumTopic({ chatId, name: title, iconCustomEmojiId: topicIcon?.customEmojiId })
+    const binding = { chatId, topicId: topic.message_thread_id, topicTitle: title, topicIconCustomEmojiId: topic.icon_custom_emoji_id || topicIcon?.customEmojiId, topicIconEmoji: topicIcon?.emoji, serverID, sessionID, title, titleSource: "auto" }
     await state.bindTopic(binding)
     await activateBindingForPrompt(binding, "web-topic-created")
     await state.markSeenSession(serverID, sessionID)
@@ -64,13 +68,14 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
     const chatId = state.chatId || config.telegram.chatId
     if (!chatId) return null
     const title = session.title || titleFromText(fallbackText, `${serverID} ${session.id}`)
-    const iconCustomEmojiId = await randomTopicIcon()
-    const topic = await telegram.createForumTopic({ chatId, name: title, iconCustomEmojiId })
+    const topicIcon = await randomTopicIcon()
+    const topic = await telegram.createForumTopic({ chatId, name: title, iconCustomEmojiId: topicIcon?.customEmojiId })
     const binding = {
       chatId,
       topicId: topic.message_thread_id,
       topicTitle: title,
-      topicIconCustomEmojiId: topic.icon_custom_emoji_id || iconCustomEmojiId,
+      topicIconCustomEmojiId: topic.icon_custom_emoji_id || topicIcon?.customEmojiId,
+      topicIconEmoji: topicIcon?.emoji,
       serverID,
       sessionID: session.id,
       title,
@@ -86,12 +91,25 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
     if (!config.telegram.randomTopicIcon) return undefined
     try {
       const stickers = await telegram.getForumTopicIconStickers()
-      const ids = stickers.map((sticker) => sticker.custom_emoji_id).filter(Boolean)
-      if (!ids.length) return undefined
-      return ids[Math.floor(Math.random() * ids.length)]
+      const icons = stickers.map((sticker) => ({ customEmojiId: sticker.custom_emoji_id, emoji: sticker.emoji })).filter((icon) => icon.customEmojiId)
+      if (!icons.length) return undefined
+      return icons[Math.floor(Math.random() * icons.length)]
     } catch (error) {
       console.warn(`[opencodebot] random topic icon unavailable: ${error.message}`)
       return undefined
+    }
+  }
+
+  async function topicIconForId(customEmojiId) {
+    const id = String(customEmojiId || "").trim()
+    if (!id) return undefined
+    try {
+      const stickers = await telegram.getForumTopicIconStickers()
+      const sticker = stickers.find((item) => String(item.custom_emoji_id) === id)
+      return { customEmojiId: id, emoji: sticker?.emoji }
+    } catch (error) {
+      console.warn(`[opencodebot] topic icon lookup unavailable: ${error.message}`)
+      return { customEmojiId: id }
     }
   }
 

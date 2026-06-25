@@ -39,6 +39,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       topicId: topicId(context.message),
       topicTitle: context.pending.topicTitle || context.pending.title,
       topicIconCustomEmojiId: context.pending.topicIconCustomEmojiId,
+      topicIconEmoji: context.pending.topicIconEmoji,
       serverID: context.pending.serverID,
       sessionID: session.id,
       title: context.pending.title || titleFromText(text || files[0]?.filename || "Attachments"),

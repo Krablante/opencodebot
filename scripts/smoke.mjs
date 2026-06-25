@@ -110,14 +110,21 @@ function smokeFinalNotificationTodos() {
     completedTodos: ["Inspect final DM"],
   })
   assert.doesNotMatch(notification, /🧵/)
-  assert.match(notification, /💬 \*Topic:\* !\[\]\(tg:\/\/emoji\?id=5368324170671202286\) Actual Topic/)
+  assert.match(notification, /💬 \*Topic:\* !\[💬\]\(tg:\/\/emoji\?id=5368324170671202286\) Actual Topic/)
   assert.deepEqual(finalNotificationTopicSource({ title: "Session Title", topicTitle: "Telegram Topic", topicId: 4690 }), {
     title: "Telegram Topic",
     iconCustomEmojiId: "",
+    iconEmoji: "",
   })
   assert.deepEqual(finalNotificationTopicSource({ title: "Session Title", topicId: 4690 }), {
     title: "Topic 4690",
     iconCustomEmojiId: "",
+    iconEmoji: "",
+  })
+  assert.deepEqual(finalNotificationTopicSource({ topicTitle: "Telegram Topic", topicIconCustomEmojiId: "5350713563512052787", topicIconEmoji: "📉" }), {
+    title: "Telegram Topic",
+    iconCustomEmojiId: "5350713563512052787",
+    iconEmoji: "📉",
   })
 
   const activeMessages = [

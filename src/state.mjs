@@ -195,6 +195,17 @@ export class StateStore {
         }
       }
 
+      if (Object.hasOwn(metadata, "topicIconEmoji")) {
+        const emoji = String(metadata.topicIconEmoji || "").trim()
+        if (emoji && binding.topicIconEmoji !== emoji) {
+          binding.topicIconEmoji = emoji
+          changed = true
+        } else if (!emoji && binding.topicIconEmoji) {
+          delete binding.topicIconEmoji
+          changed = true
+        }
+      }
+
       return changed
     })
   }
