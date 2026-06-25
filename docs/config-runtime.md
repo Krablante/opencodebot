@@ -34,15 +34,15 @@ OpenCodez servers come from `paths.serversJson`, not from the main config body. 
 
 The config names the environment variables to try. `telegram.tokenEnvNames` is checked first, but the loader can also recognize a Telegram-looking token from the env file. `telegram.allowedUserEnvNames` is checked first for user ids; if none are found, the loader falls back to env names that look like owner/user/allowed id variables. `opencode.passwordEnvNames` works the same simple way for the OpenCodez password.
 
-Non-secret behavior belongs in config: chat id, allowed user ids, default prompt profile, mirror options, hidden tools, multipart buffering, attachment limits, uploads paths, and optional WireGuard settings.
+Non-secret config is intentionally small. It covers deployment identity and ownership: chat id, allowed user ids, OpenCodez servers, default prompt profile, chat templates, final-notification recipients, artifact gateway address, paths, and optional web/WireGuard helpers. Mirror policy, prompt pinning, reconcile windows, multipart buffering, attachment limits, and tool compaction are fixed defaults in code.
 
 ## Telegram
 
-`telegram.chatId` pins the bot to the intended Telegram forum chat. `telegram.mainTopicId` is the topic used for general bot replies when there is no session-specific topic.
+`telegram.chatId` pins the bot to the intended Telegram forum chat.
 
 `telegram.allowedUserIds` limits who can control the bot. Keep this explicit before handing the bot to someone else. `telegram.allowChatBootstrap` is useful only during first setup: if no chat is configured yet, the first allowed message can bind the bot to that chat. After setup, set the chat id and turn bootstrap off.
 
-`telegram.autocreateTopics` lets the bot create forum topics automatically for new OpenCodez sessions. This applies both to Telegram-created sessions and to web-originated OpenCodez sessions discovered through events or reconcile. Disable it if you want topic creation to be fully manual.
+The bot always autocreates Telegram forum topics for new OpenCodez sessions discovered through Telegram commands, OpenCodez events, or bounded reconcile. Topic creation is part of the product model, not a runtime mode.
 
 ## OpenCodez
 
@@ -86,41 +86,19 @@ Then start a topic with:
 /new fast work on the upload flow
 ```
 
-## Mirror
+## Fixed Mirror Policy
 
-`mirror.enabled` is the main kill switch for OpenCodez-to-Telegram mirroring. Telegram commands can still exist around it, but assistant/tool events are ignored when mirroring is disabled.
+The mirror policy is deliberately not a public matrix of modes. The bot mirrors user-facing OpenCodez activity, hides internal helper tools such as `todo`/`todowrite`, keeps reasoning summaries out of Telegram, compacts tool status into expandable quotes, and uses fixed Telegram-safe message limits.
 
-`mirror.pinUserPrompts` pins the user prompt that started the run in the topic. For Telegram-origin prompts this pins the original Telegram message; for web-origin prompts this pins the mirrored user prompt message. `mirror.deletePinServiceMessages` removes Telegram's automatic pin service messages when possible, keeping topics quieter.
+User prompts are always pinned. Telegram-origin runs pin the original user message after OpenCodez accepts the prompt; web-origin runs pin the mirrored user-prompt message. Telegram pin service messages are cleaned up when possible. Final assistant answers are marked with `🏁` but are not pinned.
 
-`mirror.finalMarker` is appended when the assistant step finishes normally. Keep it short; it is there to make final answers easy to spot in a busy topic.
-
-`mirror.maxTelegramChars` caps message size before the renderer splits or truncates output for Telegram limits. `mirror.editDebounceMs` controls how often an in-progress assistant message may be edited if streaming-style rendering is active. Current assistant text is normally sent as completed blocks, so this is mostly a safety knob.
-
-`mirror.showReasoningSummaries` controls whether reasoning summaries are mirrored. Keep it false unless you explicitly want that noise in Telegram.
-
-`mirror.hiddenTools` hides tool names from the live tool quote. This is useful for internal helper tools such as `todo`, `todowrite`, or other agent bookkeeping tools that do not help the Telegram reader.
-
-`mirror.toolBatchMaxLines` limits how many recent tool lines are kept in the expandable tool quote. Raising it gives more live detail; lowering it keeps Telegram topics quieter.
-
-## Multipart Prompts
-
-`multipartPrompts` is a small in-memory repair layer for Telegram clients that split long messages near Telegram limits. It is not a second prompt editor.
-
-`enabled` turns the buffer on or off. `minChars` decides how large a message must be before the bot treats it as a possible partial prompt. `idleMs` is how long the bot waits for more parts before sending. `maxParts` and `maxChars` stop accidental huge buffers.
-
-If long prompts are being sent too early, raise `idleMs`. If ordinary messages are getting buffered unexpectedly, raise `minChars`.
-
-## Prompt Feedback
-
-`promptFeedback` controls the small Telegram replies that make prompt delivery visible. When enabled, the bot says when OpenCodez accepted a prompt and reports unbound topics, backend rejection, or later session errors instead of failing silently.
-
-Each feedback class can be disabled separately with `accepted`, `queued`, and `errors`, but production use should normally keep error feedback on.
+Long Telegram prompts, Telegram attachments, and bounded missed-event recovery are always on with conservative internal limits. These mechanisms are part of the bot's reliability model rather than config modes.
 
 ## Final Notifications
 
 `finalNotifications` controls optional private DM notifications for final mirrored answers. `finalNotifications.userIds` is the configured recipient allowlist. `/notify_on` enables notifications for those configured ids after verifying that the bot can DM them; `/notify_off` disables those configured recipients again.
 
-The final DM is intentionally short: it names the topic, provides an `Open topic` button for the final message in the Telegram topic, and quotes the original user prompt in an expandable block for orientation. It does not include the final answer text. `maxSentMarkers` caps durable dedupe markers so live events plus reconcile do not send the same final notification twice.
+The final DM is intentionally short: it names the topic, provides an `Open topic` button for the final message in the Telegram topic, and quotes the original user prompt in an expandable block for orientation. It does not include the final answer text. Durable dedupe markers are capped internally so live events plus reconcile do not send the same final notification twice.
 
 ## Artifacts
 
@@ -130,23 +108,9 @@ The final DM is intentionally short: it names the topic, provides an `Open topic
 
 `artifacts.tokenEnvNames` lists environment variable names that may contain the artifact token. The default is `OPENCODEBOT_ARTIFACT_TOKEN`. This token is shared with the OpenCodez plugin. It is not the Telegram bot token, and the plugin should never receive the Telegram bot token.
 
-`artifacts.maxPayloadBytes`, `maxFileBytes`, `maxTextChars`, and `maxCaptionChars` are safety limits for the LAN API and Telegram formatting. Text artifacts are sent as expandable quotes. Suitable JPEG, PNG, and WebP files are sent with `sendPhoto` in `auto` mode; other files are sent with `sendDocument`.
+Artifact payload, file, text, and caption limits are fixed safety defaults in code. Text artifacts are sent as expandable quotes. Suitable JPEG, PNG, and WebP files are sent with `sendPhoto` in `auto` mode; other files are sent with `sendDocument`.
 
 The active target is chosen from Telegram with `/artifacts_here`. Running that command in another topic replaces the previous target. The target is stored in `state.json`, not config.
-
-## Reconcile
-
-`reconcile` is a bounded recovery path for the current or recent run. It is not a full historical backfill. When a Telegram prompt is sent, a web topic is autocreated, or a web-origin prompt arrives through events, the binding gets a `reconcileAfter` lower bound and a `reconcileUntil` expiry.
-
-`intervalMs` controls how often the recovery loop runs. `lookbackMs` gives a small safety margin before the triggering prompt or topic creation. `activeWindowMs` decides how long a binding stays eligible for missed-event recovery after current activity. Raising it helps very long runs; lowering it keeps old topics quieter sooner.
-
-## Attachments
-
-`attachments.enabled` controls Telegram file download support. Files are downloaded to `paths.uploadsDir`, attached to the next prompt as data URLs for OpenCodez, and later cleaned by age.
-
-`mediaGroupIdleMs` lets Telegram albums settle before processing. `promptIdleMs` is how long files can wait for the user to send the text prompt that should go with them.
-
-`maxFiles`, `maxFileBytes`, and `maxTotalBytes` are the safety limits. Keep them boring before sharing the bot; Telegram makes it easy to send more data than intended. `cleanupAfterMs` controls how long downloaded files remain on disk before cleanup.
 
 ## Web And WireGuard
 
@@ -160,7 +124,7 @@ The active target is chosen from Telegram with `/artifacts_here`. Running that c
 
 If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. Reconnects, progress events, and tool-only events do not release or clear the queue.
 
-`paths.uploadsDir` stores downloaded Telegram files. Uploaded files are runtime material and should stay out of git. WireGuard private keys and peer configs live under the configured runtime state path and `/etc/wireguard` on Linux hosts, not in the repo.
+`paths.uploadsDir` stores downloaded Telegram files. Uploaded files are runtime material and should stay out of git. Download limits and cleanup age are fixed defaults. WireGuard private keys and peer configs live under the configured runtime state path and `/etc/wireguard` on Linux hosts, not in the repo.
 
 ## Useful Changes
 
@@ -182,6 +146,6 @@ notepad .\servers.json
 npm start
 ```
 
-Before sharing the bot with a friend, the important knobs are usually `telegram.chatId`, `telegram.allowedUserIds`, `telegram.allowChatBootstrap`, `defaultPrompt.serverID`, `chatTemplates`, `mirror.hiddenTools`, attachment limits, and web base URLs.
+Before sharing the bot with a friend, the important knobs are usually `telegram.chatId`, `telegram.allowedUserIds`, `telegram.allowChatBootstrap`, `defaultPrompt.serverID`, `chatTemplates`, final-notification recipients, artifact gateway address/token env, and web base URLs.
 
 When changing the config shape, update `config.example.json`, `src/config.mjs`, and the relevant docs together. Keep defaults reasonable and boring.

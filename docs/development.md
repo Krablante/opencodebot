@@ -2,7 +2,7 @@
 
 This codebase should stay small enough to read in one sitting. The goal is not a framework around OpenCodez; the goal is a reliable companion bot with clear source boundaries.
 
-The current split is intentionally modest. `main.mjs` wires runtime flow. `commands.mjs` owns Telegram commands. `chat-templates.mjs` owns `/new` parsing and template application. `render.mjs` coordinates Telegram message rendering. `tool-formatting.mjs` and `rich-markdown.mjs` hold pure formatting helpers. `attachments.mjs`, `multipart-prompts.mjs`, and `prompt-queue.mjs` hold the short-lived buffers that are easy to reason about alone.
+The current split is intentionally modest. `main.mjs` wires startup, shutdown, and module composition. `telegram-polling.mjs` owns update polling and Telegram input routing. `prompt-routing.mjs` owns Telegram-origin prompt delivery, attachments, multipart prompt buffering, prompt feedback, and the prompt queue. `session-reconcile.mjs` owns OpenCodez event handling and bounded missed-event recovery. `topic-lifecycle.mjs` owns forum topic creation and lifecycle handling. `final-notifications.mjs` owns final-answer DMs. `commands.mjs` owns Telegram command handlers. `render.mjs` coordinates Telegram message rendering while `render-side-effects.mjs` owns pin/final/mirror side effects. `tool-formatting.mjs` and `rich-markdown.mjs` hold pure formatting helpers.
 
 ## Checks
 

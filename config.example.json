@@ -7,11 +7,7 @@
   },
   "telegram": {
     "chatId": null,
-    "mainTopicId": null,
     "allowChatBootstrap": true,
-    "autocreateTopics": true,
-    "mirrorEnabled": true,
-    "randomTopicIcon": true,
     "allowedUserIds": [],
     "tokenEnvNames": ["OPENCODEBOT_TOKEN", "TELEGRAM_BOT_TOKEN", "BOT_TOKEN", "TOKEN"],
     "allowedUserEnvNames": ["OPENCODEBOT_ALLOWED_USER_IDS", "TELEGRAM_ALLOWED_USER_IDS", "TELEGRAM_USER_ID", "USER_ID"]
@@ -25,48 +21,15 @@
     "agent": "build",
     "model": null
   },
-  "multipartPrompts": {
-    "enabled": true,
-    "minChars": 3600,
-    "idleMs": 2000,
-    "maxParts": 20,
-    "maxChars": 120000
-  },
-  "reconcile": {
-    "enabled": true,
-    "intervalMs": 15000,
-    "activeWindowMs": 7200000,
-    "lookbackMs": 30000
-  },
-  "promptFeedback": {
-    "enabled": true,
-    "accepted": true,
-    "queued": true,
-    "errors": true
-  },
   "finalNotifications": {
     "enabled": true,
-    "userIds": [],
-    "maxSentMarkers": 1000
+    "userIds": []
   },
   "artifacts": {
     "enabled": false,
     "listenHost": "0.0.0.0",
     "port": 8788,
-    "tokenEnvNames": ["OPENCODEBOT_ARTIFACT_TOKEN"],
-    "maxPayloadBytes": 78643200,
-    "maxFileBytes": 52428800,
-    "maxTextChars": 3400,
-    "maxCaptionChars": 900
-  },
-  "attachments": {
-    "enabled": true,
-    "mediaGroupIdleMs": 2000,
-    "promptIdleMs": 60000,
-    "maxFiles": 10,
-    "maxFileBytes": 20000000,
-    "maxTotalBytes": 60000000,
-    "cleanupAfterMs": 86400000
+    "tokenEnvNames": ["OPENCODEBOT_ARTIFACT_TOKEN"]
   },
   "chatTemplates": {
     "d4flash": {
@@ -84,15 +47,6 @@
       "model": { "providerID": "openai", "modelID": "gpt-5.5", "variant": "xhigh" },
       "opencodezTemplate": "gpt55"
     }
-  },
-  "mirror": {
-    "showReasoningSummaries": false,
-    "pinUserPrompts": true,
-    "deletePinServiceMessages": true,
-    "hiddenTools": ["todo", "todowrite", "todo_write"],
-    "toolBatchMaxLines": 12,
-    "editDebounceMs": 1200,
-    "maxTelegramChars": 3900
   },
   "web": {
     "host": "opencodez.example.com",

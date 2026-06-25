@@ -7,6 +7,7 @@ const projectRoot = path.resolve(__dirname, "..")
 const defaultConfigPath = path.join(projectRoot, "config.local.json")
 const exampleConfigPath = path.join(projectRoot, "config.example.json")
 const defaultHiddenTools = ["todo", "todowrite", "todo_write"]
+const defaultMirror = { showReasoningSummaries: false, deletePinServiceMessages: true, pinUserPrompts: true, hiddenTools: defaultHiddenTools, toolBatchMaxLines: 12, editDebounceMs: 1200, maxTelegramChars: 3900 }
 const defaultMultipartPrompts = { enabled: true, minChars: 3600, idleMs: 2000, maxParts: 20, maxChars: 120000 }
 const defaultReconcile = { enabled: true, intervalMs: 15000, activeWindowMs: 2 * 60 * 60 * 1000, lookbackMs: 30000 }
 const defaultPromptFeedback = { enabled: true, accepted: true, queued: true, errors: true }
@@ -68,11 +69,9 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
   const openCodePassword = pickValue(mergedEnv, config.opencode?.passwordEnvNames || [])
   const artifactToken = pickValue(mergedEnv, config.artifacts?.tokenEnvNames || defaultArtifacts.tokenEnvNames) || config.artifacts?.token
   const chatId = config.telegram?.chatId ?? readFirstNumber(mergedEnv, ["OPENCODEBOT_CHAT_ID", "TELEGRAM_CHAT_ID"])
-  const mainTopicId = config.telegram?.mainTopicId ?? readFirstNumber(mergedEnv, ["OPENCODEBOT_MAIN_TOPIC_ID", "TELEGRAM_MAIN_TOPIC_ID"])
   const servers = readServers(serversJsonPath)
 
   return {
-    ...config,
     sourcePath,
     projectRoot,
     paths: {
@@ -83,29 +82,30 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
       uploadsDir,
     },
     telegram: {
-      ...config.telegram,
+      chatId,
+      allowChatBootstrap: config.telegram?.allowChatBootstrap === true,
+      autocreateTopics: true,
+      mirrorEnabled: true,
+      randomTopicIcon: true,
+      botUsername: config.telegram?.botUsername,
       token: telegramToken,
       allowedUserIds,
-      chatId,
-      mainTopicId,
     },
     opencode: {
       ...config.opencode,
       password: openCodePassword,
       servers,
     },
-    mirror: {
-      ...config.mirror,
-      pinUserPrompts: config.mirror?.pinUserPrompts ?? true,
-      hiddenTools: normalizeStringList(config.mirror?.hiddenTools, defaultHiddenTools),
-    },
-    multipartPrompts: normalizeMultipartPrompts(config.multipartPrompts),
-    reconcile: normalizeReconcile(config.reconcile),
-    promptFeedback: normalizePromptFeedback(config.promptFeedback),
+    defaultPrompt: config.defaultPrompt || {},
+    mirror: { ...defaultMirror },
+    multipartPrompts: { ...defaultMultipartPrompts },
+    reconcile: { ...defaultReconcile },
+    promptFeedback: { ...defaultPromptFeedback },
     finalNotifications: normalizeFinalNotifications(config.finalNotifications),
     artifacts: normalizeArtifacts(config.artifacts, artifactToken),
     attachments: normalizeAttachments(config.attachments),
     chatTemplates: normalizeChatTemplates(config.chatTemplates),
+    web: config.web || {},
     wireguard: {
       ...config.wireguard,
       stateDir: wireguardStateDir,
@@ -217,39 +217,11 @@ function normalizeStringList(value, fallback = []) {
   return [...new Set(source.map((item) => String(item).trim()).filter(Boolean))]
 }
 
-function normalizeMultipartPrompts(value = {}) {
-  return {
-    enabled: value.enabled !== false,
-    minChars: numberAtLeast(value.minChars, defaultMultipartPrompts.minChars, 1),
-    idleMs: numberAtLeast(value.idleMs, defaultMultipartPrompts.idleMs, 100),
-    maxParts: numberAtLeast(value.maxParts, defaultMultipartPrompts.maxParts, 2),
-    maxChars: numberAtLeast(value.maxChars, defaultMultipartPrompts.maxChars, 4096),
-  }
-}
-
-function normalizeReconcile(value = {}) {
-  return {
-    enabled: value.enabled !== false,
-    intervalMs: numberAtLeast(value.intervalMs, defaultReconcile.intervalMs, 1000),
-    activeWindowMs: numberAtLeast(value.activeWindowMs, defaultReconcile.activeWindowMs, 60_000),
-    lookbackMs: numberAtLeast(value.lookbackMs, defaultReconcile.lookbackMs, 0),
-  }
-}
-
-function normalizePromptFeedback(value = {}) {
-  return {
-    enabled: value.enabled !== false,
-    accepted: value.accepted !== false,
-    queued: value.queued !== false,
-    errors: value.errors !== false,
-  }
-}
-
 function normalizeFinalNotifications(value = {}) {
   return {
     enabled: value.enabled !== false,
     userIds: uniqueNumbers(value.userIds || []),
-    maxSentMarkers: numberAtLeast(value.maxSentMarkers, defaultFinalNotifications.maxSentMarkers, 100),
+    maxSentMarkers: defaultFinalNotifications.maxSentMarkers,
   }
 }
 
@@ -260,23 +232,15 @@ function normalizeArtifacts(value = {}, token) {
     port: numberAtLeast(value.port, defaultArtifacts.port, 1),
     token,
     tokenEnvNames: normalizeStringList(value.tokenEnvNames, defaultArtifacts.tokenEnvNames),
-    maxPayloadBytes: numberAtLeast(value.maxPayloadBytes, defaultArtifacts.maxPayloadBytes, 1024),
-    maxFileBytes: numberAtLeast(value.maxFileBytes, defaultArtifacts.maxFileBytes, 1024),
-    maxTextChars: numberAtLeast(value.maxTextChars, defaultArtifacts.maxTextChars, 512),
-    maxCaptionChars: numberAtLeast(value.maxCaptionChars, defaultArtifacts.maxCaptionChars, 64),
+    maxPayloadBytes: defaultArtifacts.maxPayloadBytes,
+    maxFileBytes: defaultArtifacts.maxFileBytes,
+    maxTextChars: defaultArtifacts.maxTextChars,
+    maxCaptionChars: defaultArtifacts.maxCaptionChars,
   }
 }
 
-function normalizeAttachments(value = {}) {
-  return {
-    enabled: value.enabled !== false,
-    mediaGroupIdleMs: numberAtLeast(value.mediaGroupIdleMs, defaultAttachments.mediaGroupIdleMs, 100),
-    promptIdleMs: numberAtLeast(value.promptIdleMs, defaultAttachments.promptIdleMs, 1000),
-    maxFiles: numberAtLeast(value.maxFiles, defaultAttachments.maxFiles, 1),
-    maxFileBytes: numberAtLeast(value.maxFileBytes, defaultAttachments.maxFileBytes, 1024),
-    maxTotalBytes: numberAtLeast(value.maxTotalBytes, defaultAttachments.maxTotalBytes, 1024),
-    cleanupAfterMs: numberAtLeast(value.cleanupAfterMs, defaultAttachments.cleanupAfterMs, 60_000),
-  }
+function normalizeAttachments() {
+  return { ...defaultAttachments }
 }
 
 function normalizeChatTemplates(value = {}) {

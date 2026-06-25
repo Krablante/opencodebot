@@ -6,7 +6,7 @@ The useful shape is deliberately narrow. A topic is a working thread, `/new` cre
 
 ## Topics
 
-The bot expects a forum-enabled Telegram chat when topic creation is used. A topic can be created from Telegram with `/new`, or autocreated for web-created OpenCodez sessions when `autocreateTopics` is enabled.
+The bot expects a forum-enabled Telegram chat when topic creation is used. A topic can be created from Telegram with `/new`, or autocreated for web-created OpenCodez sessions discovered through events or bounded reconcile.
 
 Deleting or closing a Telegram topic is treated as an explicit stop for that topic's mirror binding. The bot disables the binding and must not continue mirroring that session into `#General` or any other fallback topic.
 
@@ -60,7 +60,7 @@ After a Telegram prompt is handed to OpenCodez, the bot sends a short acknowledg
 
 Telegram-origin prompts can include attachments. The bot downloads supported files into the configured uploads directory under Politia state, then sends them to OpenCodez as data URL file parts next to the prompt text so the backend can read media independently of the bot container filesystem. Files with captions flush as one prompt after media groups settle. Files without captions wait for the next plain text message from the same user/topic.
 
-Supported attachment inputs include documents, photos, videos, animations, audio, voice messages, video notes, and media groups. Limits live in `attachments.maxFiles`, `attachments.maxFileBytes`, and `attachments.maxTotalBytes`.
+Supported attachment inputs include documents, photos, videos, animations, audio, voice messages, video notes, and media groups. File count, file size, total size, and cleanup limits are fixed conservative defaults in code.
 
 ## Queue
 
@@ -76,16 +76,16 @@ The queue advances only after the same final-answer path used for `🏁`, where 
 
 Web-origin text prompts are mirrored into Telegram with a small `💬` marker. Telegram-origin prompts are suppressed when the bot can match them to its own pending send.
 
-Assistant text is accumulated until OpenCodez completes the text block. The bot does not edit Telegram token-by-token. Completed assistant text is sent as Telegram Rich Message markdown when the Bot API accepts it, with fallback for local Markdown links and formatting errors. Real final answers are marked with `🏁 `. When configured, the bot pins the user prompt that started the run: the original Telegram message for Telegram-origin prompts, or the mirrored user message for web-origin prompts.
+Assistant text is accumulated until OpenCodez completes the text block. The bot does not edit Telegram token-by-token. Completed assistant text is sent as Telegram Rich Message markdown when the Bot API accepts it, with fallback for local Markdown links and formatting errors. Real final answers are marked with `🏁 `. The bot pins the user prompt that started the run: the original Telegram message for Telegram-origin prompts, or the mirrored user message for web-origin prompts.
 
 Tool calls are compact and expandable. Adjacent tool results update one Telegram message until assistant text starts a new block. Tool batches use Telegram MarkdownV2 expandable blockquotes, so details are one tap away without filling the topic with raw output.
 
-Hidden tool names in `mirror.hiddenTools` are suppressed from live mirror and reconcile. The default hides todo-style tools so task-list maintenance does not crowd Telegram. Subagent sessions are also treated as implementation details: Telegram shows the parent-visible task tool line, not a separate child session log.
+Internal helper tools such as todo-style task-list tools are suppressed from live mirror and reconcile so bookkeeping does not crowd Telegram. Subagent sessions are also treated as implementation details: Telegram shows the parent-visible task tool line, not a separate child session log.
 
 ## Reconcile
 
 Live `/event` SSE is the primary path. Reconcile is a narrow fallback for the current or very recent run, not a historical backfill of every bound session. A Telegram prompt, a freshly autocreated web topic, or a live web prompt opens a bounded reconcile window for that binding. Within that window, reconcile may recover missed user/assistant messages and especially the final answer; outside it, old topics stay quiet.
 
-The lower bound is stored on the binding as `reconcileAfter`, and the expiry as `reconcileUntil`. Defaults live in `reconcile.lookbackMs`, `reconcile.activeWindowMs`, and `reconcile.intervalMs`. Mirrored message markers are tracked per session so a busy session cannot evict markers for another one and cause phantom replays.
+The lower bound is stored on the binding as `reconcileAfter`, and the expiry as `reconcileUntil`. The lookback, active window, and interval are fixed conservative defaults. Mirrored message markers are tracked per session so a busy session cannot evict markers for another one and cause phantom replays.
 
 Backend hosts may be off. Event streams and reconcile API calls use exponential backoff up to two minutes with rate-limited offline logs and recovery logs, so a powered-off server does not spam the service journal.
