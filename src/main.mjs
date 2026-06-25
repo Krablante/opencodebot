@@ -275,7 +275,7 @@ async function createPendingTopic(message, args) {
 async function sendTelegramPrompt(binding, text, files = [], { sourceMessageId } = {}) {
   promptQueue.markBusy(binding)
   await activateBindingForPrompt(binding, "telegram-prompt")
-  await sendPromptFeedback({ binding, text: promptFeedbackStartingText(), kind: "accepted" })
+  const feedbackMessage = await sendPromptFeedback({ binding, text: promptFeedbackStartingText(), kind: "accepted" })
   try {
     const profile = await currentProfile(binding)
     await state.addPendingPrompt({
@@ -285,7 +285,7 @@ async function sendTelegramPrompt(binding, text, files = [], { sourceMessageId }
       messageId: sourceMessageId,
     })
     await opencode.promptAsync(binding.serverID, binding.sessionID, promptPayload(text, profile, files))
-    if (await pinTelegramPromptMessage(binding, sourceMessageId, "telegram-prompt")) {
+    if (await pinTelegramPromptMessage(binding, sourceMessageId, "telegram-prompt", { serviceMessageAfterId: feedbackMessage?.message_id })) {
       await state.markPendingPromptPinned(binding.serverID, binding.sessionID, text, sourceMessageId).catch(logError)
     }
     await updatePromptFeedback(binding, promptFeedbackAcceptedText()).catch(logError)
@@ -605,10 +605,10 @@ async function pinConsumedTelegramPrompt(binding, marker) {
   await renderer.pinMessage(binding, messageId, { origin: "telegram-prompt-event" })
 }
 
-async function pinTelegramPromptMessage(binding, sourceMessageId, origin) {
+async function pinTelegramPromptMessage(binding, sourceMessageId, origin, fields = {}) {
   const messageId = Number(sourceMessageId)
   if (!renderer.shouldPinUserPrompts() || !Number.isSafeInteger(messageId) || messageId <= 0) return false
-  return renderer.pinMessage(binding, messageId, { origin })
+  return renderer.pinMessage(binding, messageId, { origin, ...fields })
 }
 
 async function reconcileLoop() {
@@ -867,9 +867,14 @@ async function cleanupOwnPinServiceMessage(message) {
   if (config.mirror.deletePinServiceMessages === false) return
   const configuredChatId = state.chatId || config.telegram.chatId
   if (!message?.pinned_message || String(message.chat?.id) !== String(configuredChatId)) return
-  if (message.pinned_message.from?.id !== botInfo.id) return
   try {
     await telegram.deleteMessage({ chatId: message.chat.id, messageId: message.message_id })
+    logInfo("telegram.pin_service_message.deleted", {
+      chatId: message.chat.id,
+      topicId: topicId(message),
+      messageId: message.message_id,
+      pinnedMessageId: message.pinned_message.message_id,
+    })
   } catch (error) {
     console.warn(`[opencodebot] failed to delete pin service message: ${error.message}`)
   }

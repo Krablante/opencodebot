@@ -37,7 +37,7 @@ export class TelegramClient {
     }
     if (!response.ok || data.ok === false) {
       const error = new Error(`Telegram ${method} failed: ${data.description || response.status}`)
-      logErrorEvent("telegram.request.failed", error, { method, attempt, status: response.status, durationMs: elapsedMs, ...telegramPayloadSummary(payload) })
+      if (!options.suppressFailureLog) logErrorEvent("telegram.request.failed", error, { method, attempt, status: response.status, durationMs: elapsedMs, ...telegramPayloadSummary(payload) })
       throw error
     }
     if (shouldLogTelegramSlow(method, elapsedMs)) logInfo("telegram.request.slow", { method, attempt, durationMs: elapsedMs, ...telegramPayloadSummary(payload) })
@@ -186,8 +186,8 @@ export class TelegramClient {
     })
   }
 
-  async deleteMessage({ chatId, messageId }) {
-    return this.request("deleteMessage", { chat_id: chatId, message_id: messageId })
+  async deleteMessage({ chatId, messageId, suppressFailureLog = false }) {
+    return this.request("deleteMessage", { chat_id: chatId, message_id: messageId }, 0, { suppressFailureLog })
   }
 
   async createForumTopic({ chatId, name, iconCustomEmojiId }) {
