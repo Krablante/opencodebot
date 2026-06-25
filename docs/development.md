@@ -18,7 +18,7 @@ Run local contract smoke checks:
 npm run smoke
 ```
 
-`npm run check` is implemented as a Node script so it works on Linux, macOS, and Windows without relying on shell glob expansion. `npm run smoke` without arguments is a local contract smoke and uses `config.example.json`. It checks local logic for `/new` parsing, tool formatting, prompt queue behavior, multipart prompt buffering, and attachment buffering, then loads the selected config, checks Telegram `getMe`, probes OpenCodez servers, and verifies chat-template selection with a temporary session when the selected server is not marked `offline_ok`. It should not send prompts or print tokens.
+`npm run check` is implemented as a Node script so it works on Linux, macOS, and Windows without relying on shell glob expansion. `npm run smoke` without arguments is a local contract smoke and uses `config.example.json`. It checks local logic for `/new` parsing, tool formatting, final-notification todo summaries, prompt queue behavior, multipart prompt buffering, and attachment buffering, then loads the selected config, checks Telegram `getMe`, probes OpenCodez servers, and verifies chat-template selection with a temporary session when the selected server is not marked `offline_ok`. It should not send prompts or print tokens.
 
 On Windows, use PowerShell and the same npm commands:
 

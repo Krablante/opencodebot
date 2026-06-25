@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { AttachmentBuffer } from "../src/attachments.mjs"
 import { parseNewTopicArgs } from "../src/chat-templates.mjs"
 import { loadConfig } from "../src/config.mjs"
+import { completedTodosBeforeAssistant, formatCompletedTodoMarkdown } from "../src/final-notifications.mjs"
 import { MultipartPromptBuffer } from "../src/multipart-prompts.mjs"
 import { OpenCodeClient } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
@@ -45,6 +46,7 @@ if (failed) process.exitCode = 1
 async function smokeLocalLogic() {
   smokeNewParser()
   smokeToolFormatting()
+  smokeFinalNotificationTodos()
   await smokePromptQueue()
   await smokeMultipartPrompts()
   await smokeAttachmentBuffer()
@@ -73,6 +75,56 @@ function smokeNewParser() {
 function smokeToolFormatting() {
   assert.equal(formatToolLine("tool", { filePath: "/tmp/project/main.mjs", offset: 3 }, true), "✅ Read main.mjs offset=3")
   assert.match(formatToolLine("tool", { patchText: "*** Begin Patch\n*** Update File: src/main.mjs\n*** End Patch" }, false), /^❌ Patch files/)
+}
+
+function smokeFinalNotificationTodos() {
+  const messages = [
+    { info: { id: "user-1", role: "user" }, parts: [{ type: "text", text: "ship it" }] },
+    {
+      info: { id: "assistant-1", role: "assistant" },
+      parts: [
+        {
+          type: "tool",
+          tool: "todowrite",
+          state: {
+            status: "completed",
+            input: {
+              todos: [
+                { content: "Inspect final DM", status: "completed", priority: "high" },
+                { content: "Add todo section", status: "completed", priority: "high" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+    { info: { id: "assistant-final", role: "assistant" }, parts: [{ type: "text", text: "done" }] },
+  ]
+
+  assert.deepEqual(completedTodosBeforeAssistant(messages, "assistant-final"), ["Inspect final DM", "Add todo section"])
+  assert.deepEqual(formatCompletedTodoMarkdown(["Inspect final DM"]), ["✅ *Completed todo*", "• Inspect final DM"])
+
+  const activeMessages = [
+    ...messages,
+    {
+      info: { id: "assistant-2", role: "assistant" },
+      parts: [
+        {
+          type: "tool",
+          tool: "todowrite",
+          state: {
+            status: "completed",
+            input: JSON.stringify({ todos: [{ content: "Still working", status: "in_progress", priority: "high" }] }),
+          },
+        },
+      ],
+    },
+  ]
+  assert.deepEqual(completedTodosBeforeAssistant(activeMessages, null), [])
+
+  const many = Array.from({ length: 18 }, (_, index) => `Task ${index + 1}`)
+  const formatted = formatCompletedTodoMarkdown(many, { maxItems: 2, maxItemChars: 20 })
+  assert.deepEqual(formatted, ["✅ *Completed todo*", "• Task 1", "• Task 2", "• and 16 more"])
 }
 
 async function smokePromptQueue() {

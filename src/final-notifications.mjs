@@ -14,10 +14,10 @@ export function createFinalNotifier({ config, state, telegram, opencode }) {
       if (!userIds.length) return
       const link = telegramMessageLink(binding.chatId, messageId)
       const title = binding.title || `Topic ${binding.topicId}`
-      const promptText = await finalPromptText({ opencode, binding, assistantMessageID })
+      const summary = await finalSessionSummary({ opencode, binding, assistantMessageID })
       const replyMarkup = finalNotificationReplyMarkup(link)
-      const text = finalNotificationMarkdown({ title, serverID: binding.serverID, promptText })
-      const fallbackText = finalNotificationFallbackHtml({ title, serverID: binding.serverID })
+      const text = finalNotificationMarkdown({ title, serverID: binding.serverID, promptText: summary.promptText, completedTodos: summary.completedTodos })
+      const fallbackText = finalNotificationFallbackHtml({ title, serverID: binding.serverID, completedTodos: summary.completedTodos })
       for (const userId of userIds) {
         try {
           await sendFinalNotificationMessage({ telegram, userId, text, fallbackText, replyMarkup })
@@ -41,22 +41,27 @@ async function sendFinalNotificationMessage({ telegram, userId, text, fallbackTe
   }
 }
 
-function finalNotificationMarkdown({ title, serverID, promptText }) {
+function finalNotificationMarkdown({ title, serverID, promptText, completedTodos = [] }) {
   const lines = [
     "🏁 *Final answer is ready*",
     `🧵 *${escapeMarkdownV2(title)}*`,
     `🖥️ Server: ${escapeMarkdownV2(serverID)}`,
   ]
   if (promptText) lines.push("", toolQuoteMarkdownV2(promptText))
+  const todoLines = formatCompletedTodoMarkdown(completedTodos)
+  if (todoLines.length) lines.push("", ...todoLines)
   return lines.join("\n")
 }
 
-function finalNotificationFallbackHtml({ title, serverID }) {
-  return [
+function finalNotificationFallbackHtml({ title, serverID, completedTodos = [] }) {
+  const lines = [
     "🏁 Final answer is ready",
     `🧵 <b>${escapeHtml(title)}</b>`,
     `🖥️ Server: <code>${escapeHtml(serverID)}</code>`,
-  ].join("\n")
+  ]
+  const todoLines = formatCompletedTodoHtml(completedTodos)
+  if (todoLines.length) lines.push("", ...todoLines)
+  return lines.join("\n")
 }
 
 function finalNotificationReplyMarkup(link) {
@@ -64,17 +69,20 @@ function finalNotificationReplyMarkup(link) {
   return { inline_keyboard: [[{ text: "Open topic", url: link }]] }
 }
 
-async function finalPromptText({ opencode, binding, assistantMessageID }) {
+async function finalSessionSummary({ opencode, binding, assistantMessageID }) {
   try {
     const messages = await opencode.messages(binding.serverID, binding.sessionID)
-    return promptTextBeforeAssistant(messages, assistantMessageID)
+    return {
+      promptText: promptTextBeforeAssistant(messages, assistantMessageID),
+      completedTodos: completedTodosBeforeAssistant(messages, assistantMessageID),
+    }
   } catch (error) {
-    logErrorEvent("final_notification.prompt_lookup_failed", error, {
+    logErrorEvent("final_notification.session_summary_lookup_failed", error, {
       serverID: binding.serverID,
       sessionID: binding.sessionID,
       assistantMessageID,
     })
-    return ""
+    return { promptText: "", completedTodos: [] }
   }
 }
 
@@ -100,4 +108,65 @@ function textFromMessagePrompt(message) {
   const fromMessage = textFromPrompt(message)
   if (fromMessage) return fromMessage
   return textFromPrompt(message?.content)
+}
+
+export function completedTodosBeforeAssistant(messages, assistantMessageID) {
+  if (!Array.isArray(messages) || !messages.length) return []
+  let stopIndex = messages.length
+  if (assistantMessageID) {
+    const index = messages.findIndex((message) => message?.info?.id === assistantMessageID || message?.id === assistantMessageID)
+    if (index >= 0) stopIndex = index
+  }
+  for (let messageIndex = stopIndex - 1; messageIndex >= 0; messageIndex -= 1) {
+    const parts = Array.isArray(messages[messageIndex]?.parts) ? messages[messageIndex].parts : []
+    for (let partIndex = parts.length - 1; partIndex >= 0; partIndex -= 1) {
+      const todos = todosFromToolPart(parts[partIndex])
+      if (todos === null) continue
+      return todos.length > 0 && todos.every((todo) => todo.status === "completed") ? todos.map((todo) => todo.content).filter(Boolean) : []
+    }
+  }
+  return []
+}
+
+function todosFromToolPart(part) {
+  if (part?.type !== "tool" || part?.tool !== "todowrite") return null
+  if (part.state?.status && part.state.status !== "completed") return []
+  const input = normalizeToolInput(part.state?.input ?? part.input)
+  const todos = Array.isArray(input?.todos) ? input.todos : []
+  return todos
+    .map((todo) => ({ content: String(todo?.content || "").trim(), status: String(todo?.status || "") }))
+    .filter((todo) => todo.content)
+}
+
+function normalizeToolInput(input) {
+  if (!input || typeof input !== "string") return input
+  try {
+    return JSON.parse(input)
+  } catch {
+    return {}
+  }
+}
+
+export function formatCompletedTodoMarkdown(todos, { maxItems = 16, maxItemChars = 160 } = {}) {
+  const items = clampTodoItems(todos, { maxItems, maxItemChars })
+  if (!items.visible.length) return []
+  const lines = ["✅ *Completed todo*"]
+  for (const item of items.visible) lines.push(`• ${escapeMarkdownV2(item)}`)
+  if (items.hidden > 0) lines.push(`• ${escapeMarkdownV2(`and ${items.hidden} more`)}`)
+  return lines
+}
+
+function formatCompletedTodoHtml(todos, { maxItems = 16, maxItemChars = 160 } = {}) {
+  const items = clampTodoItems(todos, { maxItems, maxItemChars })
+  if (!items.visible.length) return []
+  const lines = ["✅ <b>Completed todo</b>"]
+  for (const item of items.visible) lines.push(`• ${escapeHtml(item)}`)
+  if (items.hidden > 0) lines.push(`• ${escapeHtml(`and ${items.hidden} more`)}`)
+  return lines
+}
+
+function clampTodoItems(todos, { maxItems, maxItemChars }) {
+  const all = Array.isArray(todos) ? todos.map((item) => String(item || "").trim()).filter(Boolean) : []
+  const visible = all.slice(0, maxItems).map((item) => (item.length > maxItemChars ? `${item.slice(0, maxItemChars - 3)}...` : item))
+  return { visible, hidden: Math.max(0, all.length - visible.length) }
 }
