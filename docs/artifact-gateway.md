@@ -1,6 +1,6 @@
 # Artifact Gateway
 
-opencodebot can act as a small Telegram artifact gateway for AI agents. The design is intentionally simple: one central opencodebot instance owns the Telegram bot token and one current Telegram artifacts topic. Agent-side plugins on any LAN host read local files or text and upload the artifact bytes to opencodebot, which then sends the artifact to Telegram.
+opencodebot can act as a small Telegram artifact gateway for AI agents. The design is intentionally simple: one central opencodebot instance owns the Telegram bot token and one current Telegram artifacts topic. Agent-side plugins on any LAN host read local files or text and stream the artifact bytes to opencodebot, which then sends the artifact to Telegram.
 
 This avoids guessing the current mirror topic, avoids SSH, and avoids sharing the Telegram bot token with agents.
 
