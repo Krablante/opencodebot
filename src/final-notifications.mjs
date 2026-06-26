@@ -3,6 +3,11 @@ import { escapeMarkdownV2, toolQuoteMarkdownV2 } from "./rich-markdown.mjs"
 import { escapeHtml, telegramMessageLink } from "./telegram.mjs"
 import { logErrorEvent, logInfo } from "./logger.mjs"
 
+const FINAL_NOTIFICATION_SAFE_CHARS = 3800
+const FINAL_NOTIFICATION_PROMPT_CHARS = 1200
+const FINAL_NOTIFICATION_TODO_ITEMS = 12
+const FINAL_NOTIFICATION_TODO_CHARS = 140
+
 export function createFinalNotifier({ config, state, telegram, opencode }) {
   return {
     async notifyFinalAnswerReady(binding, { assistantMessageID, messageId }) {
@@ -18,23 +23,32 @@ export function createFinalNotifier({ config, state, telegram, opencode }) {
       const replyMarkup = finalNotificationReplyMarkup(link)
       const text = finalNotificationMarkdown({ topicSource, serverID: binding.serverID, promptText: summary.promptText, completedTodos: summary.completedTodos })
       const fallbackText = finalNotificationFallbackHtml({ topicSource, serverID: binding.serverID, completedTodos: summary.completedTodos })
+      const compactText = finalNotificationCompactHtml({ topicSource, serverID: binding.serverID })
+      let sentCount = 0
       for (const userId of userIds) {
         try {
-          await sendFinalNotificationMessage({ telegram, userId, text, fallbackText, replyMarkup })
+          await sendFinalNotificationMessage({ telegram, userId, text, fallbackText, compactText, replyMarkup })
+          sentCount += 1
           logInfo("final_notification.sent", { userId, serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId, messageId })
         } catch (error) {
           logErrorEvent("final_notification.failed", error, { userId, serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId, messageId })
         }
       }
+      if (!sentCount) return
       await state.markFinalNotificationSent(binding.serverID, binding.sessionID, assistantMessageID, messageId, config.finalNotifications.maxSentMarkers)
     },
   }
 }
 
-async function sendFinalNotificationMessage({ telegram, userId, text, fallbackText, replyMarkup }) {
+async function sendFinalNotificationMessage({ telegram, userId, text, fallbackText, compactText, replyMarkup }) {
   try {
     await telegram.sendMessage({ chatId: userId, text, format: "markdownv2", disablePreview: true, replyMarkup })
   } catch (error) {
+    if (/message is too long/i.test(error.message)) {
+      logInfo("final_notification.too_long", { userId })
+      await telegram.sendMessage({ chatId: userId, text: compactText, disablePreview: true, replyMarkup })
+      return
+    }
     if (!/can't parse entities|entity/i.test(error.message)) throw error
     logErrorEvent("final_notification.markdown_failed", error, { userId })
     await telegram.sendMessage({ chatId: userId, text: fallbackText, disablePreview: true, replyMarkup })
@@ -47,10 +61,11 @@ export function finalNotificationMarkdown({ topicSource, serverID, promptText, c
     finalNotificationTopicMarkdown(topicSource),
     `🖥️ Server: ${escapeMarkdownV2(serverID)}`,
   ]
-  if (promptText) lines.push("", toolQuoteMarkdownV2(promptText))
-  const todoLines = formatCompletedTodoMarkdown(completedTodos)
+  const prompt = truncateNotificationText(promptText, FINAL_NOTIFICATION_PROMPT_CHARS)
+  if (prompt) lines.push("", toolQuoteMarkdownV2(prompt))
+  const todoLines = formatCompletedTodoMarkdown(completedTodos, { maxItems: FINAL_NOTIFICATION_TODO_ITEMS, maxItemChars: FINAL_NOTIFICATION_TODO_CHARS })
   if (todoLines.length) lines.push("", ...todoLines)
-  return lines.join("\n")
+  return clampNotificationMarkdown(lines)
 }
 
 function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos = [] }) {
@@ -59,9 +74,32 @@ function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos =
     finalNotificationTopicHtml(topicSource),
     `🖥️ Server: <code>${escapeHtml(serverID)}</code>`,
   ]
-  const todoLines = formatCompletedTodoHtml(completedTodos)
+  const todoLines = formatCompletedTodoHtml(completedTodos, { maxItems: FINAL_NOTIFICATION_TODO_ITEMS, maxItemChars: FINAL_NOTIFICATION_TODO_CHARS })
   if (todoLines.length) lines.push("", ...todoLines)
   return lines.join("\n")
+}
+
+function finalNotificationCompactHtml({ topicSource, serverID }) {
+  return [
+    "🏁 Final answer is ready",
+    finalNotificationTopicHtml(topicSource),
+    `🖥️ Server: <code>${escapeHtml(serverID)}</code>`,
+  ].join("\n")
+}
+
+function clampNotificationMarkdown(lines) {
+  let text = lines.join("\n")
+  if (text.length <= FINAL_NOTIFICATION_SAFE_CHARS) return text
+  const compact = lines.slice(0, 3)
+  compact.push("", toolQuoteMarkdownV2("Notification context was too long and was trimmed. Open the topic for full context."))
+  text = compact.join("\n")
+  return text.length <= FINAL_NOTIFICATION_SAFE_CHARS ? text : text.slice(0, FINAL_NOTIFICATION_SAFE_CHARS - 3) + "..."
+}
+
+function truncateNotificationText(value, maxChars) {
+  const text = String(value || "").trim()
+  if (!text || text.length <= maxChars) return text
+  return `${text.slice(0, Math.max(0, maxChars - 16)).trimEnd()}... [trimmed]`
 }
 
 function finalNotificationReplyMarkup(link) {

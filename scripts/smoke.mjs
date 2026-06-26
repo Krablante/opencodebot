@@ -4,7 +4,7 @@ import { artifactFileCaptionHtml, artifactPathLines } from "../src/artifacts-gat
 import { AttachmentBuffer } from "../src/attachments.mjs"
 import { parseNewTopicArgs } from "../src/chat-templates.mjs"
 import { loadConfig } from "../src/config.mjs"
-import { completedTodosBeforeAssistant, finalNotificationMarkdown, finalNotificationTopicSource, formatCompletedTodoMarkdown } from "../src/final-notifications.mjs"
+import { completedTodosBeforeAssistant, createFinalNotifier, finalNotificationMarkdown, finalNotificationTopicSource, formatCompletedTodoMarkdown } from "../src/final-notifications.mjs"
 import { MultipartPromptBuffer } from "../src/multipart-prompts.mjs"
 import { OpenCodeClient } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
@@ -47,7 +47,7 @@ if (failed) process.exitCode = 1
 async function smokeLocalLogic() {
   smokeNewParser()
   smokeToolFormatting()
-  smokeFinalNotificationTodos()
+  await smokeFinalNotificationTodos()
   smokeArtifactCaptionPaths()
   await smokePromptQueue()
   await smokeMultipartPrompts()
@@ -89,7 +89,7 @@ function smokeArtifactCaptionPaths() {
   )
 }
 
-function smokeFinalNotificationTodos() {
+async function smokeFinalNotificationTodos() {
   const messages = [
     { info: { id: "user-1", role: "user" }, parts: [{ type: "text", text: "ship it" }] },
     {
@@ -160,6 +160,43 @@ function smokeFinalNotificationTodos() {
   const many = Array.from({ length: 18 }, (_, index) => `Task ${index + 1}`)
   const formatted = formatCompletedTodoMarkdown(many, { maxItems: 2, maxItemChars: 20 })
   assert.deepEqual(formatted, [">📋 Tasks \\[2/18\\]:", ">✅ 1\\. Task 1", ">✅ 2\\. Task 2", ">✅ 3\\. and 16 more||"])
+
+  const longNotification = finalNotificationMarkdown({
+    topicSource: { title: "Long Topic" },
+    serverID: "nuc",
+    promptText: "x".repeat(12_000),
+    completedTodos: Array.from({ length: 40 }, (_, index) => `Long task ${index + 1} ${"y".repeat(200)}`),
+  })
+  assert.ok(longNotification.length < 4096, `final notification too long: ${longNotification.length}`)
+  assert.match(longNotification, /trimmed|too long/)
+
+  const marked = []
+  const sends = []
+  const notifier = createFinalNotifier({
+    telegram: {
+      sendMessage: async (payload) => {
+        sends.push(payload)
+        if (payload.format === "markdownv2") throw new Error("Bad Request: message is too long")
+      },
+    },
+    state: {
+      finalNotificationUserIds: () => [42],
+      finalNotificationSent: () => false,
+      markFinalNotificationSent: async (...args) => marked.push(args),
+    },
+    opencode: {
+      messages: async () => messages,
+    },
+    config: { finalNotifications: { userIds: [42], maxSentMarkers: 100 } },
+  })
+  await notifier.notifyFinalAnswerReady({ serverID: "nuc", sessionID: "session", topicId: 7, topicTitle: "Topic" }, {
+    assistantMessageID: "assistant-final",
+    messageId: 123,
+  })
+  assert.equal(sends.length, 2)
+  assert.equal(sends[0].format, "markdownv2")
+  assert.equal(sends[1].format, undefined)
+  assert.equal(marked.length, 1)
 }
 
 async function smokePromptQueue() {
