@@ -189,6 +189,14 @@ async function smokeArtifactGatewayStream() {
     const body = await response.json()
     assert.equal(body.ok, true)
     await assert.rejects(readFile(sentPath), /ENOENT/)
+    const legacyResponse = await fetch(`http://127.0.0.1:${port}/artifacts/send`, {
+      method: "POST",
+      headers: { authorization: "Bearer token", "content-type": "application/json" },
+      body: JSON.stringify({ caption: "legacy", file: { filename: "legacy.txt", contentType: "text/plain", dataBase64: Buffer.from("legacy").toString("base64") } }),
+    })
+    assert.equal(legacyResponse.status, 400)
+    const legacyBody = await legacyResponse.json()
+    assert.equal(legacyBody.error, "stream_required")
   } finally {
     server.close()
     await rm(dir, { recursive: true, force: true })
@@ -245,7 +253,7 @@ async function smokeTelegramClientLocalFiles() {
 function smokeSavedAttachmentPrompt() {
   const payload = promptPayload("please inspect", {}, [{ type: "saved_file", filename: "large.mov", mime: "video/quicktime", path: "/app/state/uploads/large.mov", size: 75_000_000 }])
   assert.equal(payload.parts.length, 1)
-  assert.match(payload.parts[0].text, /Telegram attachments saved locally/)
+  assert.match(payload.parts[0].text, /Saved Telegram attachment/)
   assert.match(payload.parts[0].text, /large\.mov/)
 }
 

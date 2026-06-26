@@ -54,8 +54,10 @@ export function startArtifactGateway({ config, state, telegram, signal }) {
       })
       sendJson(response, 200, { ok: true, target: safeTarget(target), ...result })
     } catch (error) {
-      logErrorEvent("artifacts.request.failed", error, { durationMs: durationMs(startedAt) })
-      sendJson(response, statusForError(error), { ok: false, error: error.publicCode || "artifact_send_failed", message: error.publicMessage || error.message })
+      const status = statusForError(error)
+      if (status >= 500) logErrorEvent("artifacts.request.failed", error, { durationMs: durationMs(startedAt) })
+      else logWarn("artifacts.request.rejected", { durationMs: durationMs(startedAt), status, error: error.publicCode || "artifact_send_failed" })
+      sendJson(response, status, { ok: false, error: error.publicCode || "artifact_send_failed", message: error.publicMessage || error.message })
     }
   })
 
@@ -72,8 +74,9 @@ async function sendArtifact({ config, telegram, target, payload }) {
   const captionPaths = payload?.captionPaths
   const messages = []
   if (payload?.file) {
+    if (payload._stream !== true) throw publicError("stream_required", "Files must be sent to /artifacts/send-file as a stream.", 400)
     if (mode === "text") throw publicError("invalid_text_file_mode", "Send file content as text instead of file when mode is text.", 400)
-    const file = fileFromPayload(payload.file, config.artifacts.maxFileBytes, { allowLocalPath: payload._stream === true })
+    const file = fileFromPayload(payload.file, config.artifacts.maxFileBytes)
     if (!telegram.local && file.localPath && !file.bytes) file.bytes = await fsp.readFile(file.localPath)
     const method = fileSendMethod(mode, file)
     const sent = await sendFileWithAutoFallback({ telegram, target, file, caption: artifactFileCaptionHtml(caption, captionPaths), method, mode })
@@ -192,26 +195,14 @@ function clampTelegramCaptionHtml(value, maxChars = 950) {
   return `${text.slice(0, Math.max(0, maxChars - 34)).trimEnd()}\n...truncated artifact caption...`
 }
 
-function fileFromPayload(file, maxFileBytes, { allowLocalPath = false } = {}) {
-  if (file?.localPath) {
-    if (!allowLocalPath) throw publicError("invalid_file_path_payload", "Local file paths are only accepted by the streaming artifact endpoint.", 400)
-    const size = Number(file.size || 0)
-    if (!Number.isSafeInteger(size) || size <= 0) throw publicError("empty_file", "File payload is empty.", 400)
-    if (size > maxFileBytes) throw publicError("file_too_large", `File is too large (${size} bytes; max ${maxFileBytes}).`, 413)
-    return {
-      localPath: path.resolve(String(file.localPath)),
-      size,
-      filename: safeFilename(file.filename),
-      contentType: safeContentType(file.contentType),
-    }
-  }
-  const dataBase64 = String(file?.dataBase64 || "")
-  if (!dataBase64) throw publicError("missing_file_data", "file.dataBase64 is required.", 400)
-  const bytes = Buffer.from(dataBase64, "base64")
-  if (!bytes.length) throw publicError("empty_file", "File payload is empty.", 400)
-  if (bytes.length > maxFileBytes) throw publicError("file_too_large", `File is too large (${bytes.length} bytes; max ${maxFileBytes}).`, 413)
+function fileFromPayload(file, maxFileBytes) {
+  const size = Number(file?.size || 0)
+  if (!file?.localPath) throw publicError("missing_file_path", "Streaming file payload is missing local spool path.", 400)
+  if (!Number.isSafeInteger(size) || size <= 0) throw publicError("empty_file", "File payload is empty.", 400)
+  if (size > maxFileBytes) throw publicError("file_too_large", `File is too large (${size} bytes; max ${maxFileBytes}).`, 413)
   return {
-    bytes,
+    localPath: path.resolve(String(file.localPath)),
+    size,
     filename: safeFilename(file.filename),
     contentType: safeContentType(file.contentType),
   }

@@ -141,7 +141,7 @@ function fileParts(files) {
 function savedFilesText(files) {
   if (!files.length) return ""
   return [
-    "Telegram attachments saved locally because they are too large to inline safely:",
+    "Saved Telegram attachment(s):",
     ...files.map((file) => `- ${file.filename || "file"} (${formatBytes(file.size)}, ${file.mime || "application/octet-stream"}): ${file.path || file.localPath}`),
   ].join("\n")
 }
