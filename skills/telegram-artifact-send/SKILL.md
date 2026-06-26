@@ -13,20 +13,15 @@ Use this only when Telegram delivery is explicit. Good triggers include “send 
 
 1. Identify exactly what should be delivered: an existing file, a batch of files, a newly created artifact, or a text snippet.
 2. Keep file paths host-local. The plugin reads `path`/`paths` on the host where the agent is running, then streams bytes to the central opencodebot gateway.
-3. Before sending logs, configs, screenshots, or archives, make a quick secret/privacy check. Do not send tokens, private keys, `.env` files, vault exports, or sensitive chat/user data unless the user explicitly asked for that exact material.
-4. Prefer `text` for short logs, command output, snippets, or notes. Do not create a temporary file just to send text unless the user asked for an attachment.
-5. Pick the send mode from the guide below.
-6. Use a compact caption in this shape: `host/project/artifact/reason`.
-7. Call `opencodebot_send_artifact` with `path`, `paths`, or `text`, `caption`, and only the needed optional fields.
-8. Report the result with the returned Telegram method/message id/link. If sending fails, state the concrete blocker from the tool error.
+3. Prefer `text` for short logs, command output, snippets, or notes. Do not create a temporary file just to send text unless the user asked for an attachment.
+4. Pick the send mode from the guide below.
+5. Use a compact caption in this shape: `host/project/artifact/reason`.
+6. Call `opencodebot_send_artifact` with `path`, `paths`, or `text`, `caption`, and only the needed optional fields.
+7. Report the result with the returned Telegram method/message id/link. If sending fails, state the concrete blocker from the tool error.
 
 ## Mode Guide
 
 Use `auto` for ordinary files and images when no special handling matters. Use `photo` for images/screenshots that should render inline in Telegram. Use `document` for exact file delivery, archives, PDFs, raw screenshots, and logs as files. Use `text` for pasted output, short logs, snippets, or notes that should appear as an expandable quote.
-
-## Size Behavior
-
-The plugin streams files to the gateway. Small files and screenshots work in both cloud and local Telegram Bot API modes. Cloud mode keeps Telegram-safe file limits; local mode can accept much larger files through the local Bot API sidecar. Do not raise `maxBytes` to bypass a gateway error: the gateway is the authoritative limit for the running deployment.
 
 ## Path Quote
 
