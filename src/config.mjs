@@ -12,6 +12,11 @@ const defaultMultipartPrompts = { enabled: true, minChars: 3600, idleMs: 2000, m
 const defaultReconcile = { enabled: true, intervalMs: 15000, activeWindowMs: 2 * 60 * 60 * 1000, lookbackMs: 30000 }
 const defaultPromptFeedback = { enabled: true, accepted: true, queued: true, errors: true }
 const defaultFinalNotifications = { enabled: true, userIds: [], maxSentMarkers: 1000 }
+const telegramCloudRootUrl = "https://api.telegram.org"
+const telegramLocalRootUrl = "http://telegram-bot-api:8081"
+const telegramLocalFilesRoot = "/var/lib/telegram-bot-api"
+const telegramLocalSpoolDir = path.join(telegramLocalFilesRoot, "opencodebot-spool")
+const telegramLocalMaxFileBytes = 2_000_000_000
 const defaultArtifacts = {
   enabled: false,
   listenHost: "0.0.0.0",
@@ -29,6 +34,7 @@ const defaultAttachments = {
   maxFiles: 10,
   maxFileBytes: 20000000,
   maxTotalBytes: 60000000,
+  maxInlineBytes: 20000000,
   cleanupAfterMs: 86400000,
 }
 const defaultChatTemplates = {
@@ -70,6 +76,7 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
   const artifactToken = pickValue(mergedEnv, config.artifacts?.tokenEnvNames || defaultArtifacts.tokenEnvNames) || config.artifacts?.token
   const chatId = config.telegram?.chatId ?? readFirstNumber(mergedEnv, ["OPENCODEBOT_CHAT_ID", "TELEGRAM_CHAT_ID"])
   const servers = readServers(serversJsonPath)
+  const telegramBotApi = normalizeTelegramBotApi(config.telegram?.botApi, mergedEnv)
 
   return {
     sourcePath,
@@ -90,6 +97,7 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
       botUsername: config.telegram?.botUsername,
       token: telegramToken,
       allowedUserIds,
+      botApi: telegramBotApi,
     },
     opencode: {
       ...config.opencode,
@@ -102,8 +110,8 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
     reconcile: { ...defaultReconcile },
     promptFeedback: { ...defaultPromptFeedback },
     finalNotifications: normalizeFinalNotifications(config.finalNotifications),
-    artifacts: normalizeArtifacts(config.artifacts, artifactToken),
-    attachments: normalizeAttachments(config.attachments),
+    artifacts: normalizeArtifacts(config.artifacts, artifactToken, telegramBotApi),
+    attachments: normalizeAttachments(config.attachments, telegramBotApi),
     chatTemplates: normalizeChatTemplates(config.chatTemplates),
     web: config.web || {},
     wireguard: {
@@ -123,6 +131,12 @@ export function assertRuntimeConfig(config) {
   if (!config.telegram.allowedUserIds.length) errors.push("Allowed Telegram user id is missing")
   if (!config.opencode.servers.length) errors.push("OpenCodez servers list is empty")
   if (config.artifacts.enabled && !config.artifacts.token) errors.push("Artifact gateway token is missing")
+  if (config.telegram.botApi.mode === "local") {
+    if (!config.telegram.botApi.apiIdPresent) errors.push("TELEGRAM_API_ID is required for local Telegram Bot API mode")
+    if (!config.telegram.botApi.apiHashPresent) errors.push("TELEGRAM_API_HASH is required for local Telegram Bot API mode")
+    if (!path.isAbsolute(config.telegram.botApi.localFilesRoot)) errors.push("telegram.botApi.localFilesRoot must be an absolute path")
+    if (!path.isAbsolute(config.telegram.botApi.spoolDir)) errors.push("telegram.botApi.spoolDir must be an absolute path")
+  }
   if (errors.length) throw new Error(errors.join("; "))
 }
 
@@ -225,7 +239,26 @@ function normalizeFinalNotifications(value = {}) {
   }
 }
 
-function normalizeArtifacts(value = {}, token) {
+function normalizeTelegramBotApi(value = {}, env = {}) {
+  const mode = value?.mode === "local" ? "local" : "cloud"
+  const rootUrl = trimTrailingSlash(value?.rootUrl || value?.apiBaseUrl || env.TELEGRAM_BOT_API_ROOT_URL || (mode === "local" ? telegramLocalRootUrl : telegramCloudRootUrl))
+  const fileRootUrl = trimTrailingSlash(value?.fileRootUrl || env.TELEGRAM_BOT_API_FILE_ROOT_URL || rootUrl)
+  const localFilesRoot = normalizeAbsolute(value?.localFilesRoot || env.TELEGRAM_BOT_API_LOCAL_FILES_ROOT || telegramLocalFilesRoot)
+  const spoolDir = normalizeAbsolute(value?.spoolDir || env.OPENCODEBOT_ARTIFACT_SPOOL_DIR || (mode === "local" ? telegramLocalSpoolDir : path.join(projectRoot, "state", "artifacts")))
+  return {
+    mode,
+    rootUrl,
+    fileRootUrl,
+    localFilesRoot,
+    spoolDir,
+    local: mode === "local",
+    apiIdPresent: Boolean(env.TELEGRAM_API_ID),
+    apiHashPresent: Boolean(env.TELEGRAM_API_HASH),
+  }
+}
+
+function normalizeArtifacts(value = {}, token, botApi = { local: false }) {
+  const maxFileBytes = botApi.local ? telegramLocalMaxFileBytes : defaultArtifacts.maxFileBytes
   return {
     enabled: value.enabled === true,
     listenHost: value.listenHost ? String(value.listenHost) : defaultArtifacts.listenHost,
@@ -233,14 +266,21 @@ function normalizeArtifacts(value = {}, token) {
     token,
     tokenEnvNames: normalizeStringList(value.tokenEnvNames, defaultArtifacts.tokenEnvNames),
     maxPayloadBytes: defaultArtifacts.maxPayloadBytes,
-    maxFileBytes: defaultArtifacts.maxFileBytes,
+    maxFileBytes,
     maxTextChars: defaultArtifacts.maxTextChars,
     maxCaptionChars: defaultArtifacts.maxCaptionChars,
   }
 }
 
-function normalizeAttachments() {
-  return { ...defaultAttachments }
+function normalizeAttachments(value = {}, botApi = { local: false }) {
+  const maxFileBytes = botApi.local ? telegramLocalMaxFileBytes : defaultAttachments.maxFileBytes
+  const maxTotalBytes = botApi.local ? telegramLocalMaxFileBytes : defaultAttachments.maxTotalBytes
+  return {
+    ...defaultAttachments,
+    maxFileBytes,
+    maxTotalBytes,
+    maxInlineBytes: numberAtLeast(value.maxInlineBytes, defaultAttachments.maxInlineBytes, 1),
+  }
 }
 
 function normalizeChatTemplates(value = {}) {
@@ -276,4 +316,12 @@ function normalizeModel(model) {
 function numberAtLeast(value, fallback, min) {
   const number = Number(value)
   return Number.isFinite(number) && number >= min ? Math.floor(number) : fallback
+}
+
+function trimTrailingSlash(value) {
+  return String(value || "").replace(/\/+$/, "")
+}
+
+function normalizeAbsolute(value) {
+  return path.resolve(String(value || "."))
 }

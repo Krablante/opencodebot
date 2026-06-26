@@ -10,7 +10,13 @@
     "allowChatBootstrap": true,
     "allowedUserIds": [],
     "tokenEnvNames": ["OPENCODEBOT_TOKEN", "TELEGRAM_BOT_TOKEN", "BOT_TOKEN", "TOKEN"],
-    "allowedUserEnvNames": ["OPENCODEBOT_ALLOWED_USER_IDS", "TELEGRAM_ALLOWED_USER_IDS", "TELEGRAM_USER_ID", "USER_ID"]
+    "allowedUserEnvNames": ["OPENCODEBOT_ALLOWED_USER_IDS", "TELEGRAM_ALLOWED_USER_IDS", "TELEGRAM_USER_ID", "USER_ID"],
+    "botApi": {
+      "mode": "cloud",
+      "rootUrl": "https://api.telegram.org",
+      "fileRootUrl": "https://api.telegram.org",
+      "localFilesRoot": "/var/lib/telegram-bot-api"
+    }
   },
   "opencode": {
     "useServerHomeAsDirectory": true,

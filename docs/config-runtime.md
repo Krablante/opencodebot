@@ -30,7 +30,7 @@ OpenCodez servers come from `paths.serversJson`, not from the main config body. 
 
 ## Secrets
 
-`token.env` is read by local scripts and the Compose runtime. It holds values such as the Telegram bot token, allowed user ids, the OpenCodez password, and the optional artifact gateway token. Do not print it, paste it into docs, or commit it.
+`token.env` is read by local scripts and the Compose runtime. It holds values such as the Telegram bot token, allowed user ids, the OpenCodez password, the optional artifact gateway token, and optional `TELEGRAM_API_ID`/`TELEGRAM_API_HASH` credentials for the local Telegram Bot API sidecar. Do not print it, paste it into docs, or commit it.
 
 The config names the environment variables to try. `telegram.tokenEnvNames` is checked first, but the loader can also recognize a Telegram-looking token from the env file. `telegram.allowedUserEnvNames` is checked first for user ids; if none are found, the loader falls back to env names that look like owner/user/allowed id variables. `opencode.passwordEnvNames` works the same simple way for the OpenCodez password.
 
@@ -43,6 +43,24 @@ Non-secret config is intentionally small. It covers deployment identity and owne
 `telegram.allowedUserIds` limits who can control the bot. Keep this explicit before handing the bot to someone else. `telegram.allowChatBootstrap` is useful only during first setup: if no chat is configured yet, the first allowed message can bind the bot to that chat. After setup, set the chat id and turn bootstrap off.
 
 The bot always autocreates Telegram forum topics for new OpenCodez sessions discovered through Telegram commands, OpenCodez events, or bounded reconcile. Topic creation is part of the product model, not a runtime mode.
+
+`telegram.botApi` controls which Bot API endpoint the bot uses. If it is omitted, the bot uses the normal cloud endpoint at `https://api.telegram.org`. Local mode is explicit:
+
+```json
+{
+  "telegram": {
+    "botApi": {
+      "mode": "local",
+      "rootUrl": "http://telegram-bot-api:8081",
+      "localFilesRoot": "/var/lib/telegram-bot-api"
+    }
+  }
+}
+```
+
+Local mode requires `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in `token.env`, the `telegram-local` Compose profile, and `npm run telegram-local -- enable --yes` before the token can move from Telegram's cloud Bot API to the local server. In Docker deployments, use `docker compose exec -T opencodebot npm run telegram-local -- doctor` after restart to verify config, endpoint reachability, `getMe`, and the shared file root. The local server is an HTTP sidecar reachable only inside Docker by default.
+
+To leave local mode, run `docker compose exec -T opencodebot npm run telegram-local -- disable --yes` while config still points at the local server, then switch `telegram.botApi.mode` back to `cloud` and restart. This lets the helper call Telegram `close` on the right endpoint.
 
 ## OpenCodez
 
@@ -108,7 +126,7 @@ The final DM is intentionally short: it includes a source `Topic:` line from Tel
 
 `artifacts.tokenEnvNames` lists environment variable names that may contain the artifact token. The default is `OPENCODEBOT_ARTIFACT_TOKEN`. This token is shared with the OpenCodez plugin. It is not the Telegram bot token, and the plugin should never receive the Telegram bot token.
 
-Artifact payload, file, text, and caption limits are fixed safety defaults in code. Text artifacts are sent as expandable quotes. Suitable JPEG, PNG, and WebP files are sent with `sendPhoto` in `auto` mode; other files are sent with `sendDocument`.
+Artifact JSON payload, text, and caption limits are fixed safety defaults in code. File limits depend on Bot API mode: cloud mode keeps the conservative 50 MiB file limit, while local mode allows Telegram's 2 GB local Bot API limit through the streaming `/artifacts/send-file` path. Text artifacts are sent as expandable quotes. Suitable JPEG, PNG, and WebP files are sent with `sendPhoto` in `auto` mode; other files are sent with `sendDocument`.
 
 The active target is chosen from Telegram with `/artifacts_here`. Running that command in another topic replaces the previous target. The target is stored in `state.json`, not config.
 
@@ -124,7 +142,7 @@ The active target is chosen from Telegram with `/artifacts_here`. Running that c
 
 If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. Reconnects, progress events, and tool-only events do not release or clear the queue.
 
-`paths.uploadsDir` stores downloaded Telegram files. Uploaded files are runtime material and should stay out of git. Download limits and cleanup age are fixed defaults. WireGuard private keys and peer configs live under the configured runtime state path and `/etc/wireguard` on Linux hosts, not in the repo.
+`paths.uploadsDir` stores downloaded Telegram files. Uploaded files are runtime material and should stay out of git. Small files are inlined into OpenCodez prompts as data URLs. Oversized local-mode downloads stay on disk and are described to the model as saved files with path, size, and MIME metadata, because the OpenCodez process may not be able to read container-local paths directly. Download limits and cleanup age are fixed defaults. WireGuard private keys and peer configs live under the configured runtime state path and `/etc/wireguard` on Linux hosts, not in the repo.
 
 ## Useful Changes
 

@@ -146,14 +146,17 @@ export async function downloadTelegramFiles(telegram, descriptors, uploadDir, se
       const downloaded = await telegram.downloadFile({ fileId: descriptor.fileID, destination: localPath, maxBytes: normalized.maxFileBytes })
       const stat = await fs.stat(localPath)
       const mime = descriptor.mime || "application/octet-stream"
+      const size = stat.size || downloaded.file?.file_size || descriptor.size || 0
+      const inline = size <= normalized.maxInlineBytes
       downloads.push({
-        type: "file",
+        type: inline ? "file" : "saved_file",
         mime,
         filename: descriptor.filename,
-        url: await dataURL(localPath, mime),
+        url: inline ? await dataURL(localPath, mime) : undefined,
+        path: inline ? undefined : localPath,
         source: { type: "telegram", kind: descriptor.kind, fileUniqueId: descriptor.fileUniqueID },
         localPath,
-        size: stat.size || downloaded.file?.file_size || descriptor.size || 0,
+        size,
       })
     }
     return downloads
@@ -197,6 +200,7 @@ export function normalizeAttachmentSettings(settings = {}) {
     maxFiles: numberAtLeast(settings.maxFiles, 10, 1),
     maxFileBytes: numberAtLeast(settings.maxFileBytes, 20_000_000, 1024),
     maxTotalBytes: numberAtLeast(settings.maxTotalBytes, 60_000_000, 1024),
+    maxInlineBytes: numberAtLeast(settings.maxInlineBytes, 20_000_000, 1024),
     cleanupAfterMs: numberAtLeast(settings.cleanupAfterMs, 24 * 60 * 60 * 1000, 60_000),
   }
 }

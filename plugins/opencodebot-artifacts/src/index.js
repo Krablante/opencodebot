@@ -1,9 +1,10 @@
+import { createReadStream } from "node:fs"
 import { readFile, stat } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-const DEFAULT_MAX_BYTES = 50 * 1024 * 1024
+const DEFAULT_MAX_BYTES = 2_000_000_000
 const DEFAULT_MODE = "auto"
 
 export const OpencodebotArtifactsPlugin = async (_input, options = {}) => ({
@@ -12,7 +13,7 @@ export const OpencodebotArtifactsPlugin = async (_input, options = {}) => ({
     opencodebot_send_artifact: {
       description: `Send a local artifact to the configured opencodebot Telegram artifacts topic.
 
-Use this only when the user explicitly asks to send, upload, share, or forward something to Telegram/TG/opencodebot artifacts. The tool reads file paths locally on the host where this OpenCodez process is running, then uploads bytes to the central opencodebot gateway. It does not need or receive the Telegram bot token.`,
+Use this only when the user explicitly asks to send, upload, share, or forward something to Telegram/TG/opencodebot artifacts. The tool reads file paths locally on the host where this OpenCodez process is running, then streams file bytes to the central opencodebot gateway. It does not need or receive the Telegram bot token.`,
       args: {
         path: { type: "string", description: "Local file path to send. Relative paths resolve from the current project directory. file:// URLs are supported." },
         paths: { type: "array", items: { type: "string" }, description: "Multiple local file paths to send as one batch. Relative paths resolve from the current project directory. file:// URLs are supported." },
@@ -21,7 +22,7 @@ Use this only when the user explicitly asks to send, upload, share, or forward s
         mode: { type: "string", enum: ["auto", "photo", "document", "text"], description: "How to send the artifact. auto chooses photo for suitable images and document otherwise." },
         filename: { type: "string", description: "Filename override when sending file bytes." },
         contentType: { type: "string", description: "MIME type override for file bytes." },
-        maxBytes: { type: "number", description: "Maximum local file size to read, in bytes. Defaults to 50 MiB." },
+        maxBytes: { type: "number", description: "Maximum local file size to stream, in bytes. Defaults to 2 GB; the gateway may enforce a lower cloud-mode limit." },
       },
       async execute(args, context) {
         const gatewayUrl = String(options.gatewayUrl || process.env.OPENCODEBOT_ARTIFACT_GATEWAY_URL || "").replace(/\/$/, "")
@@ -50,8 +51,7 @@ Use this only when the user explicitly asks to send, upload, share, or forward s
             responses.push(await sendPayload({ gatewayUrl, token, payload }))
           } else {
             for (const filePath of filePaths) {
-              const payload = { ...commonPayload, file: await filePayload(filePath, args, Number(args.maxBytes || DEFAULT_MAX_BYTES)) }
-              responses.push(await sendPayload({ gatewayUrl, token, payload }))
+              responses.push(await sendFileStream({ gatewayUrl, token, payload: commonPayload, file: await fileMetadata(filePath, args, Number(args.maxBytes || DEFAULT_MAX_BYTES)) }))
             }
           }
         }
@@ -110,16 +110,36 @@ async function sendPayload({ gatewayUrl, token, payload }) {
   return body
 }
 
-async function filePayload(filePath, args, maxBytes) {
+async function sendFileStream({ gatewayUrl, token, payload, file }) {
+  const metadata = Buffer.from(JSON.stringify({ ...payload, file: { filename: file.filename, contentType: file.contentType } })).toString("base64url")
+  const response = await fetch(`${gatewayUrl}/artifacts/send-file`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": file.contentType,
+      "content-length": String(file.size),
+      "x-opencodebot-artifact-meta": metadata,
+    },
+    body: createReadStream(file.path),
+    duplex: "half",
+  })
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok || body.ok === false) {
+    throw new Error(`opencodebot artifact send failed: ${body.message || body.error || response.status}`)
+  }
+  return body
+}
+
+async function fileMetadata(filePath, args, maxBytes) {
   if (!Number.isFinite(maxBytes) || maxBytes <= 0) throw new Error("maxBytes must be a positive number")
   const info = await stat(filePath)
   if (!info.isFile()) throw new Error(`Not a file: ${filePath}`)
   if (info.size > maxBytes) throw new Error(`File is too large (${info.size} bytes; max ${maxBytes})`)
-  const bytes = await readFile(filePath)
   return {
+    path: filePath,
+    size: info.size,
     filename: args.filename || path.basename(filePath),
     contentType: args.contentType || contentTypeForPath(filePath),
-    dataBase64: bytes.toString("base64"),
   }
 }
 

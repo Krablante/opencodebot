@@ -2,7 +2,7 @@
 
 OpenCodez plugin for sending local files or text to an opencodebot Telegram artifacts topic.
 
-The plugin reads `path`/`paths` locally on the host where the OpenCodez agent is running, encodes the file bytes, and uploads them to the central opencodebot artifact gateway. It does not need the Telegram bot token.
+The plugin reads `path`/`paths` locally on the host where the OpenCodez agent is running and streams file bytes to the central opencodebot artifact gateway. It does not need the Telegram bot token.
 
 ## Configuration
 
@@ -36,6 +36,8 @@ opencodebot_send_artifact({ path?, paths?, text?, caption, mode? })
 ```
 
 `caption` is required and should be short: host/project/action/reason. Use `mode: "auto"` by default, `photo` for image display, `document` for exact file delivery, and `text` for logs or snippets that should be sent as an expandable quote.
+
+File sends use the gateway streaming endpoint. When opencodebot runs with its local Telegram Bot API sidecar, the gateway can hand the spooled file to Telegram by local path and use Telegram's higher local Bot API limits.
 
 When `path` or `paths` is used, the gateway appends a quoted path block to the Telegram caption. One file is shown as a full absolute path. Multiple files in one directory are shown as the absolute directory plus comma-separated file names. Files from different directories are listed as absolute paths.
 

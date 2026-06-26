@@ -1,6 +1,9 @@
 import { createServer } from "node:http"
-import { timingSafeEqual } from "node:crypto"
+import { randomUUID, timingSafeEqual } from "node:crypto"
+import { createWriteStream } from "node:fs"
+import fsp from "node:fs/promises"
 import path from "node:path"
+import { once } from "node:events"
 
 import { durationMs, logErrorEvent, logInfo, logWarn } from "./logger.mjs"
 import { escapeMarkdownV2, toolQuoteMarkdownV2 } from "./rich-markdown.mjs"
@@ -13,17 +16,18 @@ export function startArtifactGateway({ config, state, telegram, signal }) {
   if (!config.artifacts?.enabled) return null
   const server = createServer(async (request, response) => {
     const startedAt = Date.now()
+    const pathname = requestPathname(request)
     try {
       if (!isAuthorized(request, config.artifacts.token)) {
         sendJson(response, 401, { ok: false, error: "unauthorized" })
         return
       }
-      if (request.method === "GET" && request.url === "/artifacts/status") {
+      if (request.method === "GET" && pathname === "/artifacts/status") {
         const target = state.artifactsTopic()
-        sendJson(response, 200, { ok: true, configured: Boolean(target), target: safeTarget(target) })
+        sendJson(response, 200, { ok: true, configured: Boolean(target), target: safeTarget(target), botApiMode: config.telegram.botApi.mode })
         return
       }
-      if (request.method !== "POST" || request.url !== "/artifacts/send") {
+      if (request.method !== "POST" || !["/artifacts/send", "/artifacts/send-file"].includes(pathname)) {
         sendJson(response, 404, { ok: false, error: "not_found" })
         return
       }
@@ -32,13 +36,21 @@ export function startArtifactGateway({ config, state, telegram, signal }) {
         sendJson(response, 409, { ok: false, error: "artifacts_topic_not_configured" })
         return
       }
-      const payload = await readJsonBody(request, config.artifacts.maxPayloadBytes)
-      const result = await sendArtifact({ config, telegram, target, payload })
+      const payload = pathname === "/artifacts/send-file"
+        ? await readFileStreamBody(request, config)
+        : await readJsonBody(request, config.artifacts.maxPayloadBytes)
+      let result
+      try {
+        result = await sendArtifact({ config, telegram, target, payload })
+      } finally {
+        await cleanupPayloadSpool(payload)
+      }
       logInfo("artifacts.sent", {
         durationMs: durationMs(startedAt),
         sourceHost: payload?.source?.host,
         sourceProject: payload?.source?.project,
         messages: result.messages.length,
+        stream: pathname === "/artifacts/send-file",
       })
       sendJson(response, 200, { ok: true, target: safeTarget(target), ...result })
     } catch (error) {
@@ -61,7 +73,8 @@ async function sendArtifact({ config, telegram, target, payload }) {
   const messages = []
   if (payload?.file) {
     if (mode === "text") throw publicError("invalid_text_file_mode", "Send file content as text instead of file when mode is text.", 400)
-    const file = fileFromPayload(payload.file, config.artifacts.maxFileBytes)
+    const file = fileFromPayload(payload.file, config.artifacts.maxFileBytes, { allowLocalPath: payload._stream === true })
+    if (!telegram.local && file.localPath && !file.bytes) file.bytes = await fsp.readFile(file.localPath)
     const method = fileSendMethod(mode, file)
     const sent = await sendFileWithAutoFallback({ telegram, target, file, caption: artifactFileCaptionHtml(caption, captionPaths), method, mode })
     messages.push(messageResult(sent.method, target, sent.message))
@@ -83,7 +96,7 @@ async function sendFileWithAutoFallback({ telegram, target, file, caption, metho
     return { method, message }
   } catch (error) {
     if (mode !== "auto" || method !== "sendPhoto") throw error
-    logWarn("artifacts.photo_fallback", { filename: file.filename, bytes: file.bytes.length, contentType: file.contentType })
+    logWarn("artifacts.photo_fallback", { filename: file.filename, bytes: fileSize(file), contentType: file.contentType })
     const message = await telegram.sendDocument({ chatId: target.chatId, topicId: target.topicId, file, caption, captionFormat: "html" })
     return { method: "sendDocument", message }
   }
@@ -179,7 +192,19 @@ function clampTelegramCaptionHtml(value, maxChars = 950) {
   return `${text.slice(0, Math.max(0, maxChars - 34)).trimEnd()}\n...truncated artifact caption...`
 }
 
-function fileFromPayload(file, maxFileBytes) {
+function fileFromPayload(file, maxFileBytes, { allowLocalPath = false } = {}) {
+  if (file?.localPath) {
+    if (!allowLocalPath) throw publicError("invalid_file_path_payload", "Local file paths are only accepted by the streaming artifact endpoint.", 400)
+    const size = Number(file.size || 0)
+    if (!Number.isSafeInteger(size) || size <= 0) throw publicError("empty_file", "File payload is empty.", 400)
+    if (size > maxFileBytes) throw publicError("file_too_large", `File is too large (${size} bytes; max ${maxFileBytes}).`, 413)
+    return {
+      localPath: path.resolve(String(file.localPath)),
+      size,
+      filename: safeFilename(file.filename),
+      contentType: safeContentType(file.contentType),
+    }
+  }
   const dataBase64 = String(file?.dataBase64 || "")
   if (!dataBase64) throw publicError("missing_file_data", "file.dataBase64 is required.", 400)
   const bytes = Buffer.from(dataBase64, "base64")
@@ -195,8 +220,12 @@ function fileFromPayload(file, maxFileBytes) {
 function fileSendMethod(mode, file) {
   if (mode === "photo") return "sendPhoto"
   if (mode === "document") return "sendDocument"
-  if (PHOTO_TYPES.has(file.contentType) && file.bytes.length <= TELEGRAM_PHOTO_MAX_BYTES) return "sendPhoto"
+  if (PHOTO_TYPES.has(file.contentType) && fileSize(file) <= TELEGRAM_PHOTO_MAX_BYTES) return "sendPhoto"
   return "sendDocument"
+}
+
+function fileSize(file) {
+  return file.bytes?.length ?? file.size ?? 0
 }
 
 function normalizeMode(value) {
@@ -243,9 +272,75 @@ async function readJsonBody(request, maxBytes) {
   }
 }
 
+async function readFileStreamBody(request, config) {
+  const metadata = readStreamMetadata(request)
+  const contentLength = Number(request.headers["content-length"] || 0)
+  if (Number.isFinite(contentLength) && contentLength > config.artifacts.maxFileBytes) {
+    throw publicError("file_too_large", `File is too large (${contentLength} bytes; max ${config.artifacts.maxFileBytes}).`, 413)
+  }
+  const filename = safeFilename(metadata?.file?.filename || metadata?.filename)
+  const contentType = safeContentType(metadata?.file?.contentType || metadata?.contentType || request.headers["content-type"])
+  const spoolDir = config.telegram.botApi.spoolDir
+  await fsp.mkdir(spoolDir, { recursive: true, mode: 0o755 })
+  await fsp.chmod(spoolDir, 0o755).catch(() => {})
+  const localPath = path.join(spoolDir, `${Date.now()}-${randomUUID()}-${filename}`)
+  const size = await writeLimitedStream({ input: request, localPath, maxBytes: config.artifacts.maxFileBytes })
+  if (!size) {
+    await fsp.rm(localPath, { force: true })
+    throw publicError("empty_file", "File payload is empty.", 400)
+  }
+  return {
+    ...metadata,
+    _stream: true,
+    file: { localPath, size, filename, contentType },
+  }
+}
+
+function readStreamMetadata(request) {
+  const encoded = String(request.headers["x-opencodebot-artifact-meta"] || "")
+  if (!encoded) return {}
+  try {
+    return JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"))
+  } catch {
+    throw publicError("invalid_artifact_metadata", "x-opencodebot-artifact-meta must be base64url JSON.", 400)
+  }
+}
+
+async function writeLimitedStream({ input, localPath, maxBytes }) {
+  const output = createWriteStream(localPath, { flags: "wx", mode: 0o644 })
+  let total = 0
+  try {
+    for await (const chunk of input) {
+      total += chunk.length
+      if (total > maxBytes) throw publicError("file_too_large", `File is too large; max ${maxBytes} bytes.`, 413)
+      if (!output.write(chunk)) await once(output, "drain")
+    }
+    output.end()
+    await once(output, "finish")
+    return total
+  } catch (error) {
+    output.destroy()
+    await fsp.rm(localPath, { force: true })
+    throw error
+  }
+}
+
+async function cleanupPayloadSpool(payload) {
+  if (!payload?._stream || !payload.file?.localPath) return
+  await fsp.rm(payload.file.localPath, { force: true })
+}
+
 function sendJson(response, status, payload) {
   response.writeHead(status, { "content-type": "application/json" })
   response.end(JSON.stringify(payload))
+}
+
+function requestPathname(request) {
+  try {
+    return new URL(request.url || "/", "http://opencodebot.local").pathname
+  } catch {
+    return request.url || "/"
+  }
 }
 
 function statusForError(error) {

@@ -12,7 +12,7 @@ Use this only when Telegram delivery is explicit. Good triggers include “send 
 ## Workflow
 
 1. Identify exactly what should be delivered: an existing file, a batch of files, a newly created artifact, or a text snippet.
-2. Keep file paths host-local. The plugin reads `path`/`paths` on the host where the agent is running, then uploads bytes to the central opencodebot gateway.
+2. Keep file paths host-local. The plugin reads `path`/`paths` on the host where the agent is running, then streams bytes to the central opencodebot gateway.
 3. Prefer `text` for short logs, command output, snippets, or notes. Do not create a temporary file just to send text unless the user asked for an attachment.
 4. Pick the send mode from the guide below.
 5. Use a compact caption in this shape: `host/project/artifact/reason`.

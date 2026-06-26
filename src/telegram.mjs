@@ -1,15 +1,20 @@
 import fs from "node:fs"
 import fsp from "node:fs/promises"
 import path from "node:path"
+import { pathToFileURL } from "node:url"
 import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import { durationMs, logErrorEvent, logInfo, logWarn, shouldLogSlow } from "./logger.mjs"
 
 export class TelegramClient {
-  constructor(token) {
+  constructor(token, options = {}) {
     this.token = token
-    this.baseURL = `https://api.telegram.org/bot${token}`
-    this.fileBaseURL = `https://api.telegram.org/file/bot${token}`
+    this.rootURL = trimTrailingSlash(options.rootUrl || "https://api.telegram.org")
+    this.fileRootURL = trimTrailingSlash(options.fileRootUrl || this.rootURL)
+    this.baseURL = `${this.rootURL}/bot${token}`
+    this.fileBaseURL = `${this.fileRootURL}/file/bot${token}`
+    this.local = options.local === true || options.mode === "local"
+    this.localFilesRoot = options.localFilesRoot ? path.resolve(String(options.localFilesRoot)) : undefined
   }
 
   async request(method, payload = {}, attempt = 0, options = {}) {
@@ -67,6 +72,11 @@ export class TelegramClient {
     }
     if (!file.file_path) throw new Error("Telegram getFile did not return file_path")
     await fsp.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
+    if (this.local && path.isAbsolute(file.file_path)) {
+      const sourcePath = this.safeLocalPath(file.file_path)
+      await copyLocalFileWithLimit({ sourcePath, destination, maxBytes })
+      return { file: { ...file, source_path: sourcePath }, destination }
+    }
     const response = await fetch(`${this.fileBaseURL}/${file.file_path}`)
     if (!response.ok || !response.body) throw new Error(`Telegram file download failed: ${response.status}`)
     const contentLength = Number(response.headers.get("content-length") || 0)
@@ -108,6 +118,24 @@ export class TelegramClient {
   }
 
   async sendMultipartFile(method, fileField, { chatId, topicId, file, caption, captionFormat }) {
+    const localPath = this.localTelegramFilePath(file)
+    if (localPath) {
+      const payload = { chat_id: chatId, [fileField]: localPath }
+      if (topicId) payload.message_thread_id = topicId
+      if (caption) payload.caption = String(caption)
+      if (captionFormat === "html") payload.parse_mode = "HTML"
+      if (captionFormat === "markdownv2") payload.parse_mode = "MarkdownV2"
+      return this.request(method, payload, 0, {
+        summary: {
+          chatId,
+          topicId,
+          captionChars: typeof caption === "string" ? caption.length : undefined,
+          filename: file.filename,
+          bytes: file.size || file.bytes?.length,
+          localFile: true,
+        },
+      })
+    }
     return this.requestMultipart(method, () => {
       const form = new FormData()
       form.append("chat_id", String(chatId))
@@ -124,6 +152,26 @@ export class TelegramClient {
       filename: file.filename,
       bytes: file.bytes?.length,
     })
+  }
+
+  localTelegramFilePath(file) {
+    if (!this.local || !file?.localPath) return undefined
+    return pathToFileURL(this.safeLocalPath(file.localPath)).href
+  }
+
+  safeLocalPath(filePath) {
+    const resolved = path.resolve(String(filePath))
+    if (!this.localFilesRoot) throw new Error("Telegram local file root is not configured")
+    if (!isPathInside(resolved, this.localFilesRoot)) throw new Error("Telegram local file path is outside configured root")
+    return resolved
+  }
+
+  async logOut() {
+    return this.request("logOut")
+  }
+
+  async close() {
+    return this.request("close")
   }
 
   async requestMultipart(method, buildForm, summary = {}, attempt = 0) {
@@ -281,6 +329,28 @@ function telegramPayloadSummary(payload = {}) {
 function shouldLogTelegramSlow(method, elapsedMs) {
   if (method === "getUpdates") return false
   return shouldLogSlow(elapsedMs)
+}
+
+async function copyLocalFileWithLimit({ sourcePath, destination, maxBytes }) {
+  const stat = await fsp.stat(sourcePath)
+  if (!stat.isFile()) throw new Error("Telegram local file path is not a file")
+  if (stat.size > maxBytes) throw new Error(`Telegram file is too large (${stat.size} bytes; max ${maxBytes})`)
+  await fsp.copyFile(sourcePath, destination)
+  const copied = await fsp.stat(destination)
+  if (copied.size > maxBytes) {
+    await fsp.rm(destination, { force: true })
+    throw new Error(`Telegram local file copy exceeded limit (${copied.size} bytes; max ${maxBytes})`)
+  }
+}
+
+function isPathInside(filePath, rootPath) {
+  const root = path.resolve(rootPath)
+  const relative = path.relative(root, path.resolve(filePath))
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))
+}
+
+function trimTrailingSlash(value) {
+  return String(value || "").replace(/\/+$/, "")
 }
 
 function delay(ms, signal) {

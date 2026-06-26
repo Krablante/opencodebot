@@ -1,16 +1,17 @@
 import assert from "node:assert/strict"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { once } from "node:events"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 
-import { artifactFileCaptionHtml, artifactPathLines } from "../src/artifacts-gateway.mjs"
+import { artifactFileCaptionHtml, artifactPathLines, startArtifactGateway } from "../src/artifacts-gateway.mjs"
 import { AttachmentBuffer } from "../src/attachments.mjs"
 import { parseNewTopicArgs } from "../src/chat-templates.mjs"
 import { loadConfig } from "../src/config.mjs"
 import { completedTodosBeforeAssistant, createFinalNotifier, finalNotificationMarkdown, finalNotificationTopicSource, formatCompletedTodoMarkdown } from "../src/final-notifications.mjs"
 import { MultipartPromptBuffer } from "../src/multipart-prompts.mjs"
-import { OpenCodeClient } from "../src/opencode.mjs"
+import { OpenCodeClient, promptPayload } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
 import { formatToolLine } from "../src/tool-formatting.mjs"
@@ -55,6 +56,10 @@ async function smokeLocalLogic() {
   await smokeFinalNotificationTodos()
   smokeArtifactCaptionPaths()
   await smokeArtifactPluginFileUrls()
+  await smokeArtifactGatewayStream()
+  await smokeLocalTelegramConfig()
+  await smokeTelegramClientLocalFiles()
+  smokeSavedAttachmentPrompt()
   await smokePromptQueue()
   await smokeMultipartPrompts()
   await smokeAttachmentBuffer()
@@ -125,8 +130,10 @@ async function smokeArtifactPluginFileUrls() {
   await writeFile(filePath, "hello from file url\n")
   const originalFetch = globalThis.fetch
   const calls = []
-  globalThis.fetch = async (_url, options) => {
-    calls.push(JSON.parse(options.body))
+  globalThis.fetch = async (url, options) => {
+    const chunks = []
+    for await (const chunk of options.body) chunks.push(Buffer.from(chunk))
+    calls.push({ url, options, body: Buffer.concat(chunks).toString("utf8") })
     return new Response(JSON.stringify({ ok: true, messages: [{ method: "sendDocument", messageId: 123 }] }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -137,13 +144,109 @@ async function smokeArtifactPluginFileUrls() {
     const result = await plugin.tool.opencodebot_send_artifact.execute({ path: pathToFileURL(filePath).href, caption: "smoke/file-url" }, { directory: dir })
     assert.match(result, /message_id=123/)
     assert.equal(calls.length, 1)
-    assert.deepEqual(calls[0].captionPaths, [filePath])
-    assert.equal(calls[0].file.filename, "report.txt")
-    assert.equal(Buffer.from(calls[0].file.dataBase64, "base64").toString("utf8"), "hello from file url\n")
+    assert.equal(calls[0].url, "http://opencodebot.test/artifacts/send-file")
+    assert.equal(calls[0].options.method, "POST")
+    assert.equal(calls[0].options.duplex, "half")
+    assert.equal(calls[0].body, "hello from file url\n")
+    const metadata = JSON.parse(Buffer.from(calls[0].options.headers["x-opencodebot-artifact-meta"], "base64url").toString("utf8"))
+    assert.deepEqual(metadata.captionPaths, [filePath])
+    assert.equal(metadata.file.filename, "report.txt")
   } finally {
     globalThis.fetch = originalFetch
     await rm(dir, { recursive: true, force: true })
   }
+}
+
+async function smokeArtifactGatewayStream() {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "opencodebot-gateway-stream-"))
+  const spoolDir = path.join(dir, "spool")
+  let sentPath = ""
+  const server = startArtifactGateway({
+    config: {
+      artifacts: { enabled: true, listenHost: "127.0.0.1", port: 0, token: "token", maxPayloadBytes: 1024, maxFileBytes: 1024 * 1024, maxTextChars: 1000, maxCaptionChars: 1000 },
+      telegram: { botApi: { mode: "local", spoolDir } },
+    },
+    state: { artifactsTopic: () => ({ chatId: 42, topicId: 7 }) },
+    telegram: {
+      local: true,
+      sendDocument: async ({ file }) => {
+        sentPath = file.localPath
+        assert.equal(await readFile(file.localPath, "utf8"), "streamed file body")
+        return { method: "sendDocument", message_id: 777, chat: { id: 42 }, message_thread_id: 7 }
+      },
+    },
+  })
+  try {
+    if (!server.listening) await once(server, "listening")
+    const port = server.address().port
+    const metadata = Buffer.from(JSON.stringify({ caption: "stream", file: { filename: "stream.txt", contentType: "text/plain" } })).toString("base64url")
+    const response = await fetch(`http://127.0.0.1:${port}/artifacts/send-file`, {
+      method: "POST",
+      headers: { authorization: "Bearer token", "content-type": "text/plain", "x-opencodebot-artifact-meta": metadata },
+      body: "streamed file body",
+    })
+    assert.equal(response.status, 200)
+    const body = await response.json()
+    assert.equal(body.ok, true)
+    await assert.rejects(readFile(sentPath), /ENOENT/)
+  } finally {
+    server.close()
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+async function smokeLocalTelegramConfig() {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "opencodebot-config-"))
+  try {
+    const tokenPath = path.join(dir, "token.env")
+    const serversPath = path.join(dir, "servers.json")
+    const configPath = path.join(dir, "config.json")
+    await writeFile(tokenPath, "TELEGRAM_BOT_TOKEN=test-token\nTELEGRAM_API_ID=123\nTELEGRAM_API_HASH=hash\nOPENCODEBOT_ARTIFACT_TOKEN=artifact\n")
+    await writeFile(serversPath, JSON.stringify({ servers: [{ id: "local", url: "http://127.0.0.1:4096" }] }))
+    await writeFile(configPath, JSON.stringify({
+      telegram: { botApi: { mode: "local", rootUrl: "http://telegram-bot-api:8081", localFilesRoot: "/var/lib/telegram-bot-api" } },
+      paths: { tokenEnv: tokenPath, serversJson: serversPath },
+    }))
+    const localConfig = loadConfig(configPath)
+    assert.equal(localConfig.telegram.botApi.mode, "local")
+    assert.equal(localConfig.telegram.botApi.apiIdPresent, true)
+    assert.equal(localConfig.telegram.botApi.apiHashPresent, true)
+    assert.equal(localConfig.artifacts.maxFileBytes, 2_000_000_000)
+    assert.equal(localConfig.attachments.maxInlineBytes, 20_000_000)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+async function smokeTelegramClientLocalFiles() {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "opencodebot-local-file-"))
+  const source = path.join(dir, "telegram", "documents", "big.bin")
+  const destination = path.join(dir, "downloaded.bin")
+  const originalFetch = globalThis.fetch
+  try {
+    await mkdir(path.dirname(source), { recursive: true })
+    await writeFile(source, "local telegram bytes")
+    globalThis.fetch = async (url) => {
+      assert.equal(String(url), "http://telegram-bot-api:8081/botTOKEN/getFile")
+      return new Response(JSON.stringify({ ok: true, result: { file_id: "file", file_path: source, file_size: 20 } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    }
+    const telegram = new TelegramClient("TOKEN", { mode: "local", rootUrl: "http://telegram-bot-api:8081", localFilesRoot: path.join(dir, "telegram") })
+    await telegram.downloadFile({ fileId: "file", destination, maxBytes: 1000 })
+    assert.equal(await readFile(destination, "utf8"), "local telegram bytes")
+  } finally {
+    globalThis.fetch = originalFetch
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+function smokeSavedAttachmentPrompt() {
+  const payload = promptPayload("please inspect", {}, [{ type: "saved_file", filename: "large.mov", mime: "video/quicktime", path: "/app/state/uploads/large.mov", size: 75_000_000 }])
+  assert.equal(payload.parts.length, 1)
+  assert.match(payload.parts[0].text, /Telegram attachments saved locally/)
+  assert.match(payload.parts[0].text, /large\.mov/)
 }
 
 async function smokeFinalNotificationTodos() {

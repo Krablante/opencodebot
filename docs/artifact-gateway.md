@@ -9,7 +9,7 @@ This avoids guessing the current mirror topic, avoids SSH, and avoids sharing th
 ```text
 agent on any host
   -> OpenCodez plugin reads local path or text
-  -> POST http://opencodebot-host:8788/artifacts/send
+  -> POST http://opencodebot-host:8788/artifacts/send-file for files, /artifacts/send for text/legacy JSON
   -> opencodebot sends to the configured Telegram artifacts topic
 ```
 
@@ -77,7 +77,27 @@ Send text:
 }
 ```
 
-Send a file:
+Send a file with the streaming endpoint used by the bundled plugin:
+
+```text
+POST /artifacts/send-file
+Content-Type: application/octet-stream
+X-Opencodebot-Artifact-Meta: <base64url JSON metadata>
+
+<raw file bytes>
+```
+
+The metadata JSON accepts the same top-level fields as `/artifacts/send`, plus small file metadata:
+
+```json
+{
+  "caption": "toma ui screenshot after layout fix",
+  "mode": "auto",
+  "file": { "filename": "screenshot.png", "contentType": "image/png" }
+}
+```
+
+Legacy JSON file upload is still accepted for compatibility:
 
 ```json
 {
@@ -91,7 +111,7 @@ Send a file:
 }
 ```
 
-`mode` can be `auto`, `photo`, `document`, or `text`. `auto` sends suitable JPEG/PNG/WebP files as Telegram photos and everything else as documents. Text artifacts are sent as Telegram MarkdownV2 expandable quotes.
+`mode` can be `auto`, `photo`, `document`, or `text`. `auto` sends suitable JPEG/PNG/WebP files as Telegram photos and everything else as documents. Text artifacts are sent as Telegram MarkdownV2 expandable quotes. In cloud Bot API mode, the gateway keeps the conservative 50 MiB file limit. In local Bot API mode, streamed files are spooled under the shared local Bot API volume and sent to Telegram by local file path, allowing the local Bot API 2 GB file limit.
 
 ## OpenCodez Plugin Setup
 
@@ -136,7 +156,7 @@ The plugin exposes this tool:
 opencodebot_send_artifact({ path?, paths?, text?, caption, mode? })
 ```
 
-If `path` is provided, the plugin reads that file on the local host where the agent is running and uploads its bytes to opencodebot. opencodebot on `nuc` does not read remote paths from `ser`, `toma`, `dima`, or `rtx`.
+If `path` is provided, the plugin reads that file on the local host where the agent is running and streams its bytes to opencodebot. opencodebot on `nuc` does not read remote paths from `ser`, `toma`, `dima`, or `rtx`.
 
 If `path` or `paths` is provided, the plugin resolves each value to an absolute path and the gateway appends a quoted path block to the Telegram caption. One file is shown as its full absolute path. Several files in one directory are shown as the absolute directory followed by comma-separated file names. Files from different directories are listed as absolute file paths. POSIX paths, Windows drive paths, Windows UNC paths, relative paths, and `file://` URLs are supported by the plugin and caption formatter. The gateway treats those paths as display metadata only; file reads happen locally inside the OpenCodez plugin process.
 

@@ -20,6 +20,7 @@ The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/eve
 - Expandable tool quotes with configurable hidden tools.
 - Attachments and Telegram media groups attached to the next prompt.
 - Optional Telegram artifact gateway for sending agent-created files, screenshots, logs, and text into one dedicated artifacts topic.
+- Optional local Telegram Bot API sidecar for higher file limits and streaming artifact delivery without a separate project.
 - Multipart prompt buffering for Telegram clients that split long messages.
 - Optional WireGuard helper for private off-LAN access to the existing OpenCodez web UI.
 
@@ -114,6 +115,8 @@ npm run smoke:live
 Your `config.local.json`, `servers.json`, `token.env`, and `state/` directory stay local and are not overwritten by updates.
 
 The artifact gateway and OpenCodez plugin are optional. Start without them first unless you specifically want agents to send files, screenshots, logs, or text to a Telegram artifacts topic. Enable that later with [Artifact Gateway](docs/artifact-gateway.md).
+
+The local Telegram Bot API sidecar is also optional. Add `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` to `token.env`, set `telegram.botApi.mode` to `local`, start Compose with the `telegram-local` profile, then run `docker compose exec -T opencodebot npm run telegram-local -- doctor`. Details are in [Docker](docs/docker.md) and [Config And Runtime](docs/config-runtime.md).
 
 ## Commands
 

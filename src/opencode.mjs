@@ -114,8 +114,11 @@ export class OpenCodeClient {
 }
 
 export function promptPayload(text, profile, files = []) {
+  const inlineFiles = (files || []).filter((file) => file?.type !== "saved_file" && file?.url)
+  const savedFiles = (files || []).filter((file) => file?.type === "saved_file")
+  const promptText = [savedFilesText(savedFiles), text].filter(Boolean).join("\n\n")
   const payload = {
-    parts: [...fileParts(files), { type: "text", text }],
+    parts: [...fileParts(inlineFiles), { type: "text", text: promptText }],
   }
   if (profile?.agent) payload.agent = profile.agent
   if (profile?.model) {
@@ -133,6 +136,23 @@ function fileParts(files) {
     filename: file.filename,
     url: file.url,
   }))
+}
+
+function savedFilesText(files) {
+  if (!files.length) return ""
+  return [
+    "Telegram attachments saved locally because they are too large to inline safely:",
+    ...files.map((file) => `- ${file.filename || "file"} (${formatBytes(file.size)}, ${file.mime || "application/octet-stream"}): ${file.path || file.localPath}`),
+  ].join("\n")
+}
+
+function formatBytes(value) {
+  const bytes = Number(value || 0)
+  if (!Number.isFinite(bytes) || bytes <= 0) return "unknown size"
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GiB`
 }
 
 function promptModel(model) {

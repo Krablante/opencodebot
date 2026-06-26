@@ -33,6 +33,13 @@ OPENCODEZ_SERVER_PASSWORD=your-opencodez-password
 
 These files stay local and are ignored by git. The Compose file mounts them into the container read-only and mounts `state/` for durable bot state and uploads.
 
+For the optional local Telegram Bot API sidecar, add app credentials from `https://my.telegram.org/apps` to the same `token.env`:
+
+```env
+TELEGRAM_API_ID=12345678
+TELEGRAM_API_HASH=your-api-hash
+```
+
 By default Compose reads these host paths:
 
 ```text
@@ -101,6 +108,35 @@ Stop it with:
 docker compose down
 ```
 
+## Local Telegram Bot API
+
+The local Bot API server is an optional sidecar in the same Compose project. It is not a separate opencodebot project. It stores TDLib/Bot API state under `state/telegram-bot-api`, and opencodebot mounts the same path at `/var/lib/telegram-bot-api` so large artifacts can be handed to Telegram by local file path.
+
+Enable it in `config.local.json`:
+
+```json
+{
+  "telegram": {
+    "botApi": {
+      "mode": "local",
+      "rootUrl": "http://telegram-bot-api:8081",
+      "localFilesRoot": "/var/lib/telegram-bot-api"
+    }
+  }
+}
+```
+
+Start or update the stack with the profile:
+
+```bash
+docker compose --profile telegram-local up -d --build
+npm run telegram-local -- enable --yes
+docker compose exec -T opencodebot npm run telegram-local -- doctor
+npm run smoke:live
+```
+
+`enable --yes` calls Telegram `logOut` on the cloud Bot API so the token can be served by the local Bot API server. The sidecar port is not published to the LAN; opencodebot reaches `http://telegram-bot-api:8081` on the Compose network. If you return to cloud mode, run `docker compose exec -T opencodebot npm run telegram-local -- disable --yes` while config still points at the local server, then set `telegram.botApi.mode` back to `cloud` and restart the bot. Telegram documents a short restriction window before cloud Bot API accepts the token again.
+
 Update after pulling new code:
 
 ```bash
@@ -111,7 +147,7 @@ npm run smoke:live
 
 ## What Docker Owns
 
-Docker runs only opencodebot. It does not run OpenCodez, Telegram, or WireGuard.
+Docker runs opencodebot and, only when the `telegram-local` profile is enabled, the optional Telegram Bot API sidecar. It does not run OpenCodez or WireGuard.
 
 Without the artifact gateway, the bot only makes outgoing requests to Telegram and OpenCodez, and writes state/uploads to the mounted `state/` directory. When the artifact gateway is enabled, Compose publishes the token-protected gateway on `OPENCODEBOT_ARTIFACT_PORT` or `8788` by default so OpenCodez plugins can upload files to Telegram. Keep that port private to hosts that should be allowed to send artifacts.
 

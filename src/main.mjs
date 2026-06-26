@@ -21,7 +21,7 @@ const state = new StateStore(config.paths.statePath)
 await state.load()
 if (config.telegram.chatId && !state.chatId) await state.setChatId(config.telegram.chatId)
 
-const telegram = new TelegramClient(config.telegram.token)
+  const telegram = new TelegramClient(config.telegram.token, config.telegram.botApi)
 const botInfo = await telegram.getMe()
 const opencode = new OpenCodeClient(config)
 const finalNotifier = createFinalNotifier({ config, state, telegram, opencode })

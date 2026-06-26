@@ -9,7 +9,23 @@ services:
       - ${OPENCODEBOT_SERVERS_FILE:-./servers.json}:/app/servers.json:ro
       - ${OPENCODEBOT_TOKEN_ENV_FILE:-./token.env}:/app/token.env:ro
       - ${OPENCODEBOT_STATE_DIR:-./state}:/app/state
+      - ${OPENCODEBOT_STATE_DIR:-./state}/telegram-bot-api:/var/lib/telegram-bot-api
     ports:
       - "${OPENCODEBOT_ARTIFACT_PORT:-8788}:8788"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:10.1
+    profiles:
+      - telegram-local
+    restart: unless-stopped
+    env_file:
+      - ${OPENCODEBOT_TOKEN_ENV_FILE:-./token.env}
+    environment:
+      TELEGRAM_LOCAL: "1"
+      TELEGRAM_HTTP_PORT: "8081"
+    volumes:
+      - ${OPENCODEBOT_STATE_DIR:-./state}/telegram-bot-api:/var/lib/telegram-bot-api
+    expose:
+      - "8081"

@@ -27,6 +27,7 @@
     "smoke": "node scripts/smoke.mjs",
     "smoke:live": "docker compose exec -T opencodebot npm run smoke -- /app/config.local.json",
     "init-config": "node scripts/init-config.mjs",
+    "telegram-local": "node scripts/telegram-local.mjs",
     "wireguard": "node scripts/wireguard.mjs"
   },
   "engines": {
