@@ -1,4 +1,8 @@
 import assert from "node:assert/strict"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
+import { pathToFileURL } from "node:url"
 
 import { artifactFileCaptionHtml, artifactPathLines } from "../src/artifacts-gateway.mjs"
 import { AttachmentBuffer } from "../src/attachments.mjs"
@@ -10,6 +14,7 @@ import { OpenCodeClient } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
 import { formatToolLine } from "../src/tool-formatting.mjs"
+import { OpencodebotArtifactsPlugin } from "../plugins/opencodebot-artifacts/src/index.js"
 
 const config = loadConfig(process.argv[2])
 const client = new OpenCodeClient(config)
@@ -49,6 +54,7 @@ async function smokeLocalLogic() {
   smokeToolFormatting()
   await smokeFinalNotificationTodos()
   smokeArtifactCaptionPaths()
+  await smokeArtifactPluginFileUrls()
   await smokePromptQueue()
   await smokeMultipartPrompts()
   await smokeAttachmentBuffer()
@@ -83,10 +89,61 @@ function smokeArtifactCaptionPaths() {
   assert.deepEqual(artifactPathLines(["/tmp/report.txt"]), ["/tmp/report.txt"])
   assert.deepEqual(artifactPathLines(["/tmp/a/report.txt", "/tmp/a/screenshot.png"]), ["/tmp/a", "report.txt, screenshot.png"])
   assert.deepEqual(artifactPathLines(["/tmp/a/report.txt", "/var/log/app.log"]), ["/tmp/a/report.txt", "/var/log/app.log"])
+  assert.deepEqual(artifactPathLines([String.raw`C:\Users\friend\Desktop\report.txt`]), [String.raw`C:\Users\friend\Desktop\report.txt`])
+  assert.deepEqual(
+    artifactPathLines([String.raw`C:\Users\friend\Desktop\report.txt`, String.raw`C:\Users\friend\Desktop\screenshot.png`]),
+    [String.raw`C:\Users\friend\Desktop`, "report.txt, screenshot.png"],
+  )
+  assert.deepEqual(
+    artifactPathLines(["C:/Users/friend/Desktop/report.txt", String.raw`C:\Users\friend\Desktop\screenshot.png`]),
+    ["C:/Users/friend/Desktop", "report.txt, screenshot.png"],
+  )
+  assert.deepEqual(
+    artifactPathLines([String.raw`\\nas\share\report.txt`, String.raw`\\nas\share\screenshot.png`]),
+    [String.raw`\\nas\share`, "report.txt, screenshot.png"],
+  )
+  assert.deepEqual(
+    artifactPathLines(["file:///C:/Users/friend/Desktop/report.txt", "file:///C:/Users/friend/Desktop/screenshot.png"]),
+    ["C:/Users/friend/Desktop", "report.txt, screenshot.png"],
+  )
   assert.equal(
     artifactFileCaptionHtml("nuc/app/report/final", ["/tmp/a/report.txt", "/tmp/a/screenshot.png"]),
     "nuc/app/report/final\n\n<blockquote>/tmp/a\nreport.txt, screenshot.png</blockquote>",
   )
+  assert.equal(
+    artifactFileCaptionHtml("win/app/report/final", [String.raw`C:\Users\friend\Desktop\report.txt`, String.raw`C:\Users\friend\Desktop\screenshot.png`]),
+    String.raw`win/app/report/final
+
+<blockquote>C:\Users\friend\Desktop
+report.txt, screenshot.png</blockquote>`,
+  )
+}
+
+async function smokeArtifactPluginFileUrls() {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "opencodebot-artifacts-"))
+  const filePath = path.join(dir, "report.txt")
+  await writeFile(filePath, "hello from file url\n")
+  const originalFetch = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (_url, options) => {
+    calls.push(JSON.parse(options.body))
+    return new Response(JSON.stringify({ ok: true, messages: [{ method: "sendDocument", messageId: 123 }] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })
+  }
+  try {
+    const plugin = await OpencodebotArtifactsPlugin(undefined, { gatewayUrl: "http://opencodebot.test", token: "token" })
+    const result = await plugin.tool.opencodebot_send_artifact.execute({ path: pathToFileURL(filePath).href, caption: "smoke/file-url" }, { directory: dir })
+    assert.match(result, /message_id=123/)
+    assert.equal(calls.length, 1)
+    assert.deepEqual(calls[0].captionPaths, [filePath])
+    assert.equal(calls[0].file.filename, "report.txt")
+    assert.equal(Buffer.from(calls[0].file.dataBase64, "base64").toString("utf8"), "hello from file url\n")
+  } finally {
+    globalThis.fetch = originalFetch
+    await rm(dir, { recursive: true, force: true })
+  }
 }
 
 async function smokeFinalNotificationTodos() {

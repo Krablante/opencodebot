@@ -1,6 +1,7 @@
 import { readFile, stat } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 
 const DEFAULT_MAX_BYTES = 50 * 1024 * 1024
 const DEFAULT_MODE = "auto"
@@ -13,8 +14,8 @@ export const OpencodebotArtifactsPlugin = async (_input, options = {}) => ({
 
 Use this only when the user explicitly asks to send, upload, share, or forward something to Telegram/TG/opencodebot artifacts. The tool reads file paths locally on the host where this OpenCodez process is running, then uploads bytes to the central opencodebot gateway. It does not need or receive the Telegram bot token.`,
       args: {
-        path: { type: "string", description: "Local file path to send. Relative paths resolve from the current project directory." },
-        paths: { type: "array", items: { type: "string" }, description: "Multiple local file paths to send as one batch. Relative paths resolve from the current project directory." },
+        path: { type: "string", description: "Local file path to send. Relative paths resolve from the current project directory. file:// URLs are supported." },
+        paths: { type: "array", items: { type: "string" }, description: "Multiple local file paths to send as one batch. Relative paths resolve from the current project directory. file:// URLs are supported." },
         text: { type: "string", description: "Text to send as an expandable quote." },
         caption: { type: "string", minLength: 1, description: "Short context shown with the artifact. Include host/project/action/reason." },
         mode: { type: "string", enum: ["auto", "photo", "document", "text"], description: "How to send the artifact. auto chooses photo for suitable images and document otherwise." },
@@ -69,9 +70,26 @@ export const server = OpencodebotArtifactsPlugin
 
 function resolveLocalPath(value, context) {
   const input = String(value)
+  const fileUrlPath = localFileUrlPath(input)
+  if (fileUrlPath) return fileUrlPath
+  if (isWindowsAbsolutePath(input)) return input
   if (path.isAbsolute(input)) return input
   const base = context?.directory || context?.worktree || process.cwd()
   return path.resolve(base, input)
+}
+
+function localFileUrlPath(value) {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== "file:") return null
+    return fileURLToPath(url)
+  } catch {
+    return null
+  }
+}
+
+function isWindowsAbsolutePath(value) {
+  return /^[A-Za-z]:[\\/]/.test(value) || /^\\\\[^\\/]+[\\/][^\\/]+/.test(value)
 }
 
 function inputPaths(args, context) {

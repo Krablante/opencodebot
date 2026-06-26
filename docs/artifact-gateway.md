@@ -121,6 +121,8 @@ OpenCodez plugin entries can be npm specs, `file://` URLs, relative paths, absol
 }
 ```
 
+On Windows OpenCodez clients, reference the plugin package with a normal absolute path such as `C:\Users\you\opencodebot\plugins\opencodebot-artifacts` or a valid file URL such as `file:///C:/Users/you/opencodebot/plugins/opencodebot-artifacts`.
+
 You can also keep the token out of config and use environment variables:
 
 ```text
@@ -136,7 +138,7 @@ opencodebot_send_artifact({ path?, paths?, text?, caption, mode? })
 
 If `path` is provided, the plugin reads that file on the local host where the agent is running and uploads its bytes to opencodebot. opencodebot on `nuc` does not read remote paths from `ser`, `toma`, `dima`, or `rtx`.
 
-If `path` or `paths` is provided, the plugin resolves each value to an absolute path and the gateway appends a quoted path block to the Telegram caption. One file is shown as its full absolute path. Several files in one directory are shown as the absolute directory followed by comma-separated file names. Files from different directories are listed as absolute file paths.
+If `path` or `paths` is provided, the plugin resolves each value to an absolute path and the gateway appends a quoted path block to the Telegram caption. One file is shown as its full absolute path. Several files in one directory are shown as the absolute directory followed by comma-separated file names. Files from different directories are listed as absolute file paths. POSIX paths, Windows drive paths, Windows UNC paths, relative paths, and `file://` URLs are supported by the plugin and caption formatter. The gateway treats those paths as display metadata only; file reads happen locally inside the OpenCodez plugin process.
 
 ## Skill Setup
 

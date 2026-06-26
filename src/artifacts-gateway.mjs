@@ -1,6 +1,7 @@
 import { createServer } from "node:http"
 import { timingSafeEqual } from "node:crypto"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 
 import { durationMs, logErrorEvent, logInfo, logWarn } from "./logger.mjs"
 import { escapeMarkdownV2, toolQuoteMarkdownV2 } from "./rich-markdown.mjs"
@@ -114,10 +115,63 @@ export function artifactFileCaptionHtml(caption, captionPaths) {
 export function artifactPathLines(captionPaths) {
   const paths = Array.isArray(captionPaths) ? captionPaths.map((value) => String(value || "").trim()).filter(Boolean) : []
   if (!paths.length) return []
-  if (paths.length === 1) return [paths[0]]
-  const directories = new Set(paths.map((filePath) => path.dirname(filePath)))
-  if (directories.size === 1) return [path.dirname(paths[0]), paths.map((filePath) => path.basename(filePath)).join(", ")]
-  return paths
+  const values = paths.map((filePath) => displayPathInfo(filePath))
+  if (values.length === 1) return [values[0].display]
+  const directories = new Set(values.map((filePath) => filePath.directoryKey))
+  if (directories.size === 1) return [values[0].directoryDisplay, values.map((filePath) => filePath.basename).join(", ")]
+  return values.map((filePath) => filePath.display)
+}
+
+function displayPathInfo(value) {
+  const display = displayPathString(value)
+  const flavor = pathFlavor(display)
+  const parser = flavor === "win32" ? path.win32 : path.posix
+  const directory = parser.dirname(display)
+  return {
+    display,
+    basename: parser.basename(display),
+    directoryDisplay: cleanDirectoryDisplay(directory, flavor),
+    directoryKey: directoryKey(directory, flavor),
+  }
+}
+
+function displayPathString(value) {
+  const input = String(value)
+  const fileUrlPath = fileUrlPathForDisplay(input)
+  return fileUrlPath || input
+}
+
+function fileUrlPathForDisplay(value) {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== "file:") return null
+    const pathname = decodeURIComponent(url.pathname)
+    if (url.hostname && url.hostname !== "localhost") return `//${url.hostname}${pathname}`
+    if (/^\/[A-Za-z]:\//.test(pathname)) return pathname.slice(1)
+    return pathname || fileURLToPath(url)
+  } catch {
+    return null
+  }
+}
+
+function pathFlavor(value) {
+  if (/^[A-Za-z]:[\\/]/.test(value)) return "win32"
+  if (/^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+/.test(value)) return "win32"
+  if (value.includes("\\")) return "win32"
+  return "posix"
+}
+
+function directoryKey(directory, flavor) {
+  if (flavor !== "win32") return directory
+  const normalized = directory.replace(/\//g, "\\").replace(/\\+$/, "")
+  return (normalized || directory.replace(/\//g, "\\")).toLowerCase()
+}
+
+function cleanDirectoryDisplay(directory, flavor) {
+  if (flavor !== "win32") return directory
+  if (/^[A-Za-z]:[\\/]$/.test(directory)) return directory
+  if (/^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+[\\/]$/.test(directory)) return directory.slice(0, -1)
+  return directory
 }
 
 function clampTelegramCaptionHtml(value, maxChars = 950) {
@@ -208,7 +262,7 @@ function publicError(publicCode, publicMessage, statusCode) {
 }
 
 function safeFilename(value) {
-  const name = path.basename(String(value || "artifact.bin")).replace(/[\u0000-\u001f]/g, "").trim()
+  const name = displayPathInfo(value || "artifact.bin").basename.replace(/[\u0000-\u001f]/g, "").trim()
   return name || "artifact.bin"
 }
 
