@@ -1,7 +1,6 @@
 import { createServer } from "node:http"
 import { timingSafeEqual } from "node:crypto"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
 
 import { durationMs, logErrorEvent, logInfo, logWarn } from "./logger.mjs"
 import { escapeMarkdownV2, toolQuoteMarkdownV2 } from "./rich-markdown.mjs"
@@ -148,7 +147,7 @@ function fileUrlPathForDisplay(value) {
     const pathname = decodeURIComponent(url.pathname)
     if (url.hostname && url.hostname !== "localhost") return `//${url.hostname}${pathname}`
     if (/^\/[A-Za-z]:\//.test(pathname)) return pathname.slice(1)
-    return pathname || fileURLToPath(url)
+    return pathname
   } catch {
     return null
   }

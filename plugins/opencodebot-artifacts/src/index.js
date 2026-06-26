@@ -72,7 +72,6 @@ function resolveLocalPath(value, context) {
   const input = String(value)
   const fileUrlPath = localFileUrlPath(input)
   if (fileUrlPath) return fileUrlPath
-  if (isWindowsAbsolutePath(input)) return input
   if (path.isAbsolute(input)) return input
   const base = context?.directory || context?.worktree || process.cwd()
   return path.resolve(base, input)
@@ -86,10 +85,6 @@ function localFileUrlPath(value) {
   } catch {
     return null
   }
-}
-
-function isWindowsAbsolutePath(value) {
-  return /^[A-Za-z]:[\\/]/.test(value) || /^\\\\[^\\/]+[\\/][^\\/]+/.test(value)
 }
 
 function inputPaths(args, context) {
