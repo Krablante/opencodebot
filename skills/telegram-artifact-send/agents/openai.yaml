@@ -1,0 +1,4 @@
+interface:
+  display_name: "Telegram Artifact Send"
+  short_description: "Send requested local artifacts to Telegram"
+  default_prompt: "Use $telegram-artifact-send when I explicitly ask to send a local file, screenshot, image, log, or text artifact to Telegram."
