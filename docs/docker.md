@@ -141,9 +141,11 @@ Update after pulling new code:
 
 ```bash
 git pull
-docker compose up -d --build
+docker compose up -d --build opencodebot
 npm run smoke:live
 ```
+
+Use full `docker compose up -d --build` when Compose services or the Telegram Bot API sidecar changed. If the update changed the OpenCodez artifact plugin or Telegram artifact skill, also refresh those OpenCodez copies and restart the affected OpenCodez services; see [Artifact Gateway](artifact-gateway.md#updating).
 
 ## What Docker Owns
 

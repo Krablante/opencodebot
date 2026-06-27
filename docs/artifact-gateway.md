@@ -109,7 +109,7 @@ plugins/opencodebot-artifacts
 
 Install or reference it from the OpenCodez environment on each host that should be able to send artifacts. Configure the plugin with the LAN gateway URL and artifact token.
 
-In Politia, `/home/bloob/politia/services/harness/opencodez/deploy.sh` is the live install/update path for the five OpenCodez hosts. It deploys a managed copy of the whole plugin package to `~/.config/opencodez/plugins/opencodebot-artifacts`, writes `~/.config/opencodez/artifacts.env`, points OpenCodez at the package directory, and opens the gateway port from the LAN on the gateway host.
+In Politia, `/home/bloob/politia/services/harness/opencodez/deploy.sh` is the live install/update path for the OpenCodez hosts. It deploys managed copies of the plugin package and Telegram artifact skill, writes `~/.config/opencodez/artifacts.env`, points OpenCodez at the package directory, restarts OpenCodez services, and opens the gateway port from the LAN on the gateway host.
 
 OpenCodez plugin entries can be npm specs, `file://` URLs, relative paths, absolute paths, or `[spec, options]` tuples. Install or vendor the plugin package on each OpenCodez host, then reference the package directory. For a local checkout, a config entry can look like this:
 
@@ -151,10 +151,26 @@ If `path` or `paths` is provided, the plugin resolves each value to an absolute 
 The bundled skill lives at:
 
 ```text
-skills/telegram-artifact-send/SKILL.md
+skills/telegram-artifact-send/
 ```
 
-Install it into the agent's skills directory or copy it into the deployment's supported skill location. The skill should only trigger for explicit Telegram delivery requests such as “send this screenshot to Telegram”, “скинь лог в TG”, or “закинь файл в artifacts topic”. It should not trigger for local-only requests like “show me the log” or “read this file”.
+Install the whole directory into the agent's skills directory or copy it into the deployment's supported skill location. Do not copy only `SKILL.md`: `agents/openai.yaml` contains short trigger metadata for the agent. The skill should only trigger for explicit Telegram delivery requests such as “send this screenshot to Telegram”, “скинь лог в TG”, or “закинь файл в artifacts topic”. It should not trigger for local-only requests like “show me the log” or “read this file”.
+
+## Updating
+
+After pulling a new opencodebot checkout, rebuild and restart the bot container:
+
+```bash
+git pull
+docker compose up -d --build opencodebot
+npm run smoke:live
+```
+
+Use full `docker compose up -d --build` instead when Compose services or the Telegram Bot API sidecar changed.
+
+If the update changed `plugins/opencodebot-artifacts/`, refresh the plugin package wherever OpenCodez loads it. If the update changed `skills/telegram-artifact-send/`, refresh the whole skill directory in the OpenCodez skills location, including `agents/openai.yaml`.
+
+Restart every OpenCodez service whose plugin or skill copy changed. Running agents may not reload plugin code or skill metadata until the service restarts. In Politia, use the harness deploy script for this rollout; when operating from `nuc`, restart `nuc` last and deferred.
 
 ## Verification
 
@@ -169,5 +185,5 @@ Install it into the agent's skills directory or copy it into the deployment's su
 Use this prompt with an AI agent that has access to the repo and runtime:
 
 ```text
-Update opencodebot artifact gateway, the bundled OpenCodez artifact plugin, and the telegram-artifact-send skill according to docs/artifact-gateway.md. Preserve the model: one central opencodebot gateway, one current artifacts topic selected by /artifacts_here, no SSH, no per-host topics, plugin reads local files and streams bytes, Telegram token remains only in opencodebot. Run checks, rebuild the service, verify gateway status and sample artifact sends, then commit and push.
+Update opencodebot artifact gateway, the bundled OpenCodez artifact plugin, and the telegram-artifact-send skill according to docs/artifact-gateway.md. Preserve the model: one central opencodebot gateway, one current artifacts topic selected by /artifacts_here, no SSH, no per-host topics, plugin reads local files and streams bytes, Telegram token remains only in opencodebot. Pull the repo, rebuild/restart the opencodebot container, refresh the OpenCodez plugin and the whole skill directory if they changed, restart OpenCodez services after plugin or skill updates, then run checks, live smoke, log checks, commit, and push.
 ```

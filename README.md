@@ -104,13 +104,19 @@ For direct local usage, run `npm start`. Production/live operation should use Do
 
 ## Update
 
-Update is intentionally boring:
+Update the bot container first:
 
 ```bash
 git pull
-docker compose up -d --build
+docker compose up -d --build opencodebot
 npm run smoke:live
 ```
+
+Use full `docker compose up -d --build` instead when the Compose file, Telegram Bot API sidecar, or other services changed.
+
+If the update changes `plugins/opencodebot-artifacts/` or `skills/telegram-artifact-send/`, refresh the OpenCodez plugin and skill copies wherever OpenCodez loads them. Copy the whole skill directory, including `agents/openai.yaml`; that file carries short trigger metadata for the agent. Restart each OpenCodez service after updating plugin or skill files, because running agents may not reload plugin code or skill metadata until the service restarts.
+
+In Politia, use `/home/bloob/politia/services/harness/opencodez/deploy.sh` for that OpenCodez rollout. If you are running the update from `nuc`, restart the local OpenCodez service last and deferred so the current agent session is not interrupted early.
 
 Your `config.local.json`, `servers.json`, `token.env`, and `state/` directory stay local and are not overwritten by updates.
 
