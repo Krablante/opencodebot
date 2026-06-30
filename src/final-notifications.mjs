@@ -139,7 +139,7 @@ function normalizeTopicIconEmoji(value) {
 
 async function finalSessionSummary({ opencode, binding, assistantMessageID }) {
   try {
-    const messages = await opencode.messages(binding.serverID, binding.sessionID)
+    const messages = await opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory })
     return {
       promptText: promptTextBeforeAssistant(messages, assistantMessageID),
       completedTodos: completedTodosBeforeAssistant(messages, assistantMessageID),

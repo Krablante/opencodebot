@@ -100,7 +100,7 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
       botApi: telegramBotApi,
     },
     opencode: {
-      ...config.opencode,
+      ...normalizeOpencode(config.opencode),
       password: openCodePassword,
       servers,
     },
@@ -229,6 +229,20 @@ function uniqueNumbers(values) {
 function normalizeStringList(value, fallback = []) {
   const source = Array.isArray(value) ? value : fallback
   return [...new Set(source.map((item) => String(item).trim()).filter(Boolean))]
+}
+
+function normalizeOpencode(value = {}) {
+  const mirrorScope = value.mirrorScope === "serverHome" || value.mirrorScope === "global"
+    ? value.mirrorScope
+    : value.useServerHomeAsDirectory === true
+      ? "serverHome"
+      : "global"
+  const newSessionDefaultDirectory = value.newSessionDefaultDirectory === "none" ? "none" : "serverHome"
+  return {
+    ...value,
+    mirrorScope,
+    newSessionDefaultDirectory,
+  }
 }
 
 function normalizeFinalNotifications(value = {}) {

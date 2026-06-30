@@ -32,8 +32,9 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       return
     }
     if (!context.pending) return
-    const session = await opencode.createSession(context.pending.serverID)
-    await applyChatTemplate(opencode, context.pending.serverID, session.id, context.pending.chatTemplate)
+    const directory = context.pending.directory || opencode.defaultNewSessionDirectory(context.pending.serverID)
+    const session = await opencode.createSession(context.pending.serverID, { directory })
+    await applyChatTemplate(opencode, context.pending.serverID, session.id, context.pending.chatTemplate, { directory })
     const newBinding = {
       chatId: context.message.chat.id,
       topicId: topicId(context.message),
@@ -42,6 +43,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       topicIconEmoji: context.pending.topicIconEmoji,
       serverID: context.pending.serverID,
       sessionID: session.id,
+      directory: session.directory || directory,
       title: context.pending.title || titleFromText(text || files[0]?.filename || "Attachments"),
       titleSource: context.pending.titleSource || "auto",
       chatTemplateName: context.pending.chatTemplateName,
@@ -117,7 +119,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
         hash: promptHash(text),
         messageId: sourceMessageId,
       })
-      await opencode.promptAsync(binding.serverID, binding.sessionID, promptPayload(text, profile, files))
+      await opencode.promptAsync(binding.serverID, binding.sessionID, promptPayload(text, profile, files), { directory: binding.directory })
       if (await pinTelegramPromptMessage(binding, sourceMessageId, "telegram-prompt", { serviceMessageAfterId: feedbackMessage?.message_id })) {
         await state.markPendingPromptPinned(binding.serverID, binding.sessionID, text, sourceMessageId).catch(logError)
       }
@@ -205,12 +207,12 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     if (binding.model) bindingProfile.model = binding.model
     if (bindingProfile.agent || bindingProfile.model) return { ...config.defaultPrompt, ...bindingProfile }
     try {
-      const session = await opencode.getSession(binding.serverID, binding.sessionID)
+      const session = await opencode.getSession(binding.serverID, binding.sessionID, { directory: binding.directory })
       const fromSession = profileFromSession(session)
       if (fromSession.model || fromSession.agent) return { ...config.defaultPrompt, ...fromSession }
     } catch {}
     try {
-      const messages = await opencode.messages(binding.serverID, binding.sessionID)
+      const messages = await opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory })
       const fromMessages = profileFromMessages(messages)
       if (fromMessages.model || fromMessages.agent) return { ...config.defaultPrompt, ...fromMessages }
     } catch {}

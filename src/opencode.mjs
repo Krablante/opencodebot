@@ -12,38 +12,40 @@ export class OpenCodeClient {
     return server
   }
 
-  async listSessions(serverID) {
-    return this.request(this.server(serverID), "/session")
+  async listSessions(serverID, options = {}) {
+    const server = this.server(serverID)
+    return this.request(server, "/session", this.requestOptions(server, options))
   }
 
-  async getSession(serverID, sessionID) {
-    return this.request(this.server(serverID), `/session/${encodeURIComponent(sessionID)}`)
+  async getSession(serverID, sessionID, options = {}) {
+    return this.request(this.server(serverID), `/session/${encodeURIComponent(sessionID)}`, options)
   }
 
-  async createSession(serverID) {
-    return this.request(this.server(serverID), "/session", { method: "POST" })
+  async createSession(serverID, options = {}) {
+    return this.request(this.server(serverID), "/session", { ...options, method: "POST" })
   }
 
-  async messages(serverID, sessionID) {
-    return this.request(this.server(serverID), `/session/${encodeURIComponent(sessionID)}/message`)
+  async messages(serverID, sessionID, options = {}) {
+    return this.request(this.server(serverID), `/session/${encodeURIComponent(sessionID)}/message`, options)
   }
 
-  async promptAsync(serverID, sessionID, payload) {
+  async promptAsync(serverID, sessionID, payload, options = {}) {
     return this.request(this.server(serverID), `/session/${encodeURIComponent(sessionID)}/prompt_async`, {
+      ...options,
       method: "POST",
       body: payload,
     })
   }
 
-  async selectPromptTemplate(serverID, sessionID, name, model) {
+  async selectPromptTemplate(serverID, sessionID, name, model, options = {}) {
     const body = { sessionID, kind: "template", name }
     const normalizedModel = promptModel(model)
     if (normalizedModel) body.model = normalizedModel
-    return this.request(this.server(serverID), "/opencodez/prompts/select", { method: "POST", body })
+    return this.request(this.server(serverID), "/opencodez/prompts/select", { ...options, method: "POST", body })
   }
 
   async request(server, pathname, options = {}) {
-    const url = this.url(server, pathname)
+    const url = this.url(server, pathname, options)
     const headers = { ...(options.headers || {}) }
     if (options.body !== undefined) headers["content-type"] = "application/json"
     const auth = this.authHeader()
@@ -66,12 +68,13 @@ export class OpenCodeClient {
 
   async subscribeEvents(serverID, onEvent, signal) {
     const server = this.server(serverID)
+    const requestOptions = this.requestOptions(server, { mirror: true })
     let retryDelayMs = 2500
     let offlineSince = 0
     let lastOfflineLogAt = 0
     while (!signal?.aborted) {
       try {
-        const url = this.url(server, "/event")
+        const url = this.url(server, "/event", requestOptions)
         const headers = {}
         const auth = this.authHeader()
         if (auth) headers.authorization = auth
@@ -98,12 +101,25 @@ export class OpenCodeClient {
     }
   }
 
-  url(server, pathname) {
+  url(server, pathname, options = {}) {
     const url = new URL(pathname, `${server.url}/`)
-    if (this.config.opencode.useServerHomeAsDirectory && server.home) {
-      url.searchParams.set("directory", server.home)
+    const directory = cleanDirectory(options.directory)
+    if (directory) {
+      url.searchParams.set("directory", directory)
     }
     return url
+  }
+
+  requestOptions(server, options = {}) {
+    if (options.mirror && this.config.opencode.mirrorScope === "serverHome") {
+      return { ...options, directory: options.directory || server.home }
+    }
+    return options
+  }
+
+  defaultNewSessionDirectory(serverID) {
+    if (this.config.opencode.newSessionDefaultDirectory !== "serverHome") return undefined
+    return this.server(serverID).home || undefined
   }
 
   authHeader() {
@@ -111,6 +127,12 @@ export class OpenCodeClient {
     if (!password) return undefined
     return `Basic ${Buffer.from(`:${password}`).toString("base64")}`
   }
+}
+
+function cleanDirectory(value) {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  return trimmed || undefined
 }
 
 export function promptPayload(text, profile, files = []) {

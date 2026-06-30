@@ -123,7 +123,7 @@ export function createSessionReconciler({
   async function seedExistingSessions() {
     const seen = []
     for (const server of config.opencode.servers) {
-      const sessions = await backendRequest(server.id, "seed sessions", () => opencode.listSessions(server.id))
+      const sessions = await backendRequest(server.id, "seed sessions", () => opencode.listSessions(server.id, { mirror: true }))
       if (sessions === skippedBackendRequest) continue
       for (const session of sessions) seen.push([server.id, session.id])
     }
@@ -135,7 +135,7 @@ export function createSessionReconciler({
     const chatId = state.chatId || config.telegram.chatId
     if (!chatId || !config.telegram.autocreateTopics) return
     for (const server of config.opencode.servers) {
-      const sessions = await backendRequest(server.id, "list sessions", () => opencode.listSessions(server.id))
+      const sessions = await backendRequest(server.id, "list sessions", () => opencode.listSessions(server.id, { mirror: true }))
       if (sessions === skippedBackendRequest) continue
       for (const session of sessions) {
         const binding = state.findBinding(server.id, session.id)
@@ -173,7 +173,7 @@ export function createSessionReconciler({
     const startedAt = Date.now()
     let mirroredUsers = 0
     let mirroredAssistants = 0
-    const messages = await backendRequest(binding.serverID, "session messages", () => opencode.messages(binding.serverID, binding.sessionID))
+    const messages = await backendRequest(binding.serverID, "session messages", () => opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory }))
     if (messages === skippedBackendRequest) return
     for (const message of messages) {
       const info = message.info || message

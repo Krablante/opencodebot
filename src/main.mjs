@@ -113,20 +113,22 @@ sessionReconciler.reconcileLoop().catch(logError)
 await telegramPolling.poll({ shouldStop: () => shutdownRequested })
 
 async function createPendingTopic(message, args) {
-  const { serverID, title, titleSource, chatTemplateName, chatTemplate } = parseNewTopicArgs(args, {
+  const { serverID, title, titleSource, chatTemplateName, chatTemplate, directory: requestedDirectory } = parseNewTopicArgs(args, {
     servers: opencode.servers,
     defaultServerID: config.defaultPrompt.serverID,
     chatTemplates: config.chatTemplates,
   })
+  const directory = requestedDirectory || opencode.defaultNewSessionDirectory(serverID)
   const chatId = state.chatId || message.chat.id
   const topicIcon = await randomTopicIcon()
   const topic = await telegram.createForumTopic({ chatId, name: title, iconCustomEmojiId: topicIcon?.customEmojiId })
-  await state.addPendingTopic(topic.message_thread_id, { serverID, topicTitle: title, topicIconCustomEmojiId: topic.icon_custom_emoji_id || topicIcon?.customEmojiId, topicIconEmoji: topicIcon?.emoji, title, titleSource, chatTemplateName, chatTemplate })
+  await state.addPendingTopic(topic.message_thread_id, { serverID, topicTitle: title, topicIconCustomEmojiId: topic.icon_custom_emoji_id || topicIcon?.customEmojiId, topicIconEmoji: topicIcon?.emoji, title, titleSource, chatTemplateName, chatTemplate, directory })
   const suffix = chatTemplateName ? ` using <code>${escapeHtml(chatTemplateName)}</code>` : ""
+  const directoryLine = directory ? `\nDirectory: <code>${escapeHtml(directory)}</code>` : ""
   await telegram.sendMessage({
     chatId,
     topicId: topic.message_thread_id,
-    text: `New OpenCodez topic for <code>${escapeHtml(serverID)}</code>${suffix}. Send the first prompt here.`,
+    text: `New OpenCodez topic for <code>${escapeHtml(serverID)}</code>${suffix}.${directoryLine}\nSend the first prompt here.`,
   })
 }
 

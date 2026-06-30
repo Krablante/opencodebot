@@ -66,7 +66,9 @@ To leave local mode, run `docker compose exec -T opencodebot npm run telegram-lo
 
 `opencode.baseUrl` is the local/default API origin used when a server-specific URL is not involved. `opencode.passwordEnvNames` lists env var names that may contain the OpenCodez password.
 
-`opencode.useServerHomeAsDirectory` controls the `directory` sent when the bot creates a session. When it is true and the selected server has a `home` field in `servers.json`, new sessions start there. When it is false, session creation leaves directory selection to OpenCodez defaults.
+`opencode.mirrorScope` controls which OpenCodez sessions are mirrored from configured servers. `global` listens without a `directory` query and mirrors new sessions from any workspace on that host. `serverHome` keeps the legacy host-home scope.
+
+`opencode.newSessionDefaultDirectory` controls `/new` session creation. The default `serverHome` starts Telegram-created sessions in the selected server's `home` from `servers.json`. `none` leaves directory selection to OpenCodez defaults. A `/new` command can override this per topic with `dir:<path>`.
 
 Each server in `servers.json` should have an `id` and `url`. Optional fields are `label`, `home`, and `offline_ok`. Offline servers do not stop the bot; the event stream backs off and retries.
 

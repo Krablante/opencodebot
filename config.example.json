@@ -19,7 +19,8 @@
     }
   },
   "opencode": {
-    "useServerHomeAsDirectory": true,
+    "mirrorScope": "global",
+    "newSessionDefaultDirectory": "serverHome",
     "passwordEnvNames": ["OPENCODE_SERVER_PASSWORD", "OPENCODEZ_SERVER_PASSWORD"]
   },
   "defaultPrompt": {

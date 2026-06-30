@@ -78,6 +78,7 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
       topicIconEmoji: topicIcon?.emoji,
       serverID,
       sessionID: session.id,
+      directory: session.directory,
       title,
       titleSource: session.title ? "opencode" : "auto",
     }

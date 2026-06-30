@@ -52,6 +52,7 @@ if (failed) process.exitCode = 1
 
 async function smokeLocalLogic() {
   smokeNewParser()
+  smokeOpenCodeDirectories()
   smokeToolFormatting()
   await smokeFinalNotificationTodos()
   smokeArtifactCaptionPaths()
@@ -83,6 +84,47 @@ function smokeNewParser() {
   assert.equal(fallback.serverID, "home")
   assert.equal(fallback.title, "d4flash")
   assert.equal(fallback.titleSource, "auto")
+
+  const posixPath = parseNewTopicArgs("nuc gpt55p dir:/home/bloob/politia/projects/tg/opencodebot Artifact gateway", {
+    servers: new Set(["nuc"]),
+    defaultServerID: "nuc",
+    chatTemplates: { gpt55p: { opencodezTemplate: "gpt55" } },
+  })
+  assert.equal(posixPath.serverID, "nuc")
+  assert.equal(posixPath.chatTemplateName, "gpt55p")
+  assert.equal(posixPath.directory, "/home/bloob/politia/projects/tg/opencodebot")
+  assert.equal(posixPath.title, "Artifact gateway")
+
+  const windowsPath = parseNewTopicArgs('dima d4flash dir:"C:\\Users\\dima\\My Projects\\voltaren" voltaren', {
+    servers: new Set(["dima"]),
+    defaultServerID: "dima",
+    chatTemplates: templates,
+  })
+  assert.equal(windowsPath.directory, "C:\\Users\\dima\\My Projects\\voltaren")
+  assert.equal(windowsPath.title, "voltaren")
+}
+
+function smokeOpenCodeDirectories() {
+  const scopedClient = new OpenCodeClient({
+    opencode: {
+      password: "test",
+      mirrorScope: "serverHome",
+      newSessionDefaultDirectory: "serverHome",
+      servers: [{ id: "home", url: "http://opencode.test", home: "C:\\Users\\dima" }],
+    },
+  })
+  const globalClient = new OpenCodeClient({
+    opencode: {
+      password: "test",
+      mirrorScope: "global",
+      newSessionDefaultDirectory: "serverHome",
+      servers: [{ id: "home", url: "http://opencode.test", home: "C:\\Users\\dima" }],
+    },
+  })
+  assert.equal(scopedClient.url(scopedClient.server("home"), "/session", scopedClient.requestOptions(scopedClient.server("home"), { mirror: true })).searchParams.get("directory"), "C:\\Users\\dima")
+  assert.equal(globalClient.url(globalClient.server("home"), "/session", globalClient.requestOptions(globalClient.server("home"), { mirror: true })).searchParams.get("directory"), null)
+  assert.equal(globalClient.defaultNewSessionDirectory("home"), "C:\\Users\\dima")
+  assert.equal(globalClient.url(globalClient.server("home"), "/session", { directory: "C:\\Users\\dima\\My Projects\\voltaren" }).searchParams.get("directory"), "C:\\Users\\dima\\My Projects\\voltaren")
 }
 
 function smokeToolFormatting() {

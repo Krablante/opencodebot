@@ -17,7 +17,7 @@ When OpenCodez later updates a session title, the linked Telegram topic is renam
 ## Commands
 
 ```text
-/new [server] [template] [title]  create a topic and wait for the first prompt
+/new [server] [template] [dir:<path>] [title]  create a topic and wait for the first prompt
 /session                           show topic, binding, session URL, and artifact target info
 /q <prompt>                       queue or send a prompt in this topic/session
 /q status                         show queued prompts
@@ -37,7 +37,7 @@ The bot syncs this slash-command menu on startup through Bot API `setMyCommands`
 
 `/session` is a small operator command for the current topic. It shows Telegram chat/topic/message ids, the active or last stored binding, OpenCodez server/session details, a web session URL when the backend session can be read, and artifact target status. It works in normal mirror topics and artifact topics, and it does not print secrets or runtime tokens.
 
-`/new` parses arguments from left to right. If the first argument matches a configured server id, that server is used. If the next argument, or the first argument when no server was given, matches `chatTemplates`, that template is used. Everything left becomes the user-owned topic title.
+`/new` parses arguments from left to right. If the first argument matches a configured server id, that server is used. If the next argument, or the first argument when no server was given, matches `chatTemplates`, that template is used. A `dir:<path>` argument sets the OpenCodez session directory for this topic; otherwise `/new` uses the selected server's configured home directory. Everything left becomes the user-owned topic title.
 
 Examples:
 
@@ -46,6 +46,8 @@ Examples:
 /new ser Release check
 /new d4flash Fix upload flow
 /new nuc gpt55p Architecture pass
+/new nuc gpt55p dir:/home/bloob/politia/projects/tg/opencodebot Artifact gateway
+/new dima d4flash dir:"C:\Users\dima\code\voltaren" voltaren
 ```
 
 The default templates are `d4flash`, `d4pro`, and `gpt55p`. They are host-independent Telegram-created-session profiles. Each can set agent, model, variant, and an OpenCodez prompt template. The bot applies the OpenCodez template after creating the session and before sending the first prompt.

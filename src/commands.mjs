@@ -184,7 +184,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
     let sessionError = ""
     if (storedBinding?.serverID && storedBinding?.sessionID && opencode?.getSession) {
       try {
-        session = await opencode.getSession(storedBinding.serverID, storedBinding.sessionID)
+        session = await opencode.getSession(storedBinding.serverID, storedBinding.sessionID, { directory: storedBinding.directory })
       } catch (error) {
         sessionError = error.message
       }
@@ -213,10 +213,11 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
       lines.push("🔗 <b>Binding</b>", "status: ⚪ no OpenCodez session bound", "")
     }
     if (storedBinding) {
+      const directory = session?.directory || storedBinding.directory
       lines.push(
         "🖥 <b>OpenCodez</b>",
         server?.url ? `server_url: <code>${escapeHtml(server.url)}</code>` : "server_url: unavailable",
-        session?.directory ? `directory: <code>${escapeHtml(session.directory)}</code>` : null,
+        directory ? `directory: <code>${escapeHtml(directory)}</code>` : null,
         session?.agent || storedBinding.agent ? `agent: <code>${escapeHtml(session?.agent || storedBinding.agent)}</code>` : null,
         modelLine(session?.model || storedBinding.model),
         sessionUrl ? `url: <code>${escapeHtml(sessionUrl)}</code>` : "url: unavailable",
