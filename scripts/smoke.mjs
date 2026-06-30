@@ -188,7 +188,9 @@ async function smokeArtifactGatewayStream() {
     assert.equal(response.status, 200)
     const body = await response.json()
     assert.equal(body.ok, true)
+    assert.equal(path.basename(sentPath), "stream.txt")
     await assert.rejects(readFile(sentPath), /ENOENT/)
+    await assert.rejects(readFile(path.dirname(sentPath)), /ENOENT/)
     const legacyResponse = await fetch(`http://127.0.0.1:${port}/artifacts/send`, {
       method: "POST",
       headers: { authorization: "Bearer token", "content-type": "application/json" },

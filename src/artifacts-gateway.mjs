@@ -274,16 +274,19 @@ async function readFileStreamBody(request, config) {
   const spoolDir = config.telegram.botApi.spoolDir
   await fsp.mkdir(spoolDir, { recursive: true, mode: 0o755 })
   await fsp.chmod(spoolDir, 0o755).catch(() => {})
-  const localPath = path.join(spoolDir, `${Date.now()}-${randomUUID()}-${filename}`)
+  const localDir = path.join(spoolDir, `${Date.now()}-${randomUUID()}`)
+  await fsp.mkdir(localDir, { recursive: false, mode: 0o755 })
+  await fsp.chmod(localDir, 0o755).catch(() => {})
+  const localPath = path.join(localDir, filename)
   const size = await writeLimitedStream({ input: request, localPath, maxBytes: config.artifacts.maxFileBytes })
   if (!size) {
-    await fsp.rm(localPath, { force: true })
+    await fsp.rm(localDir, { recursive: true, force: true })
     throw publicError("empty_file", "File payload is empty.", 400)
   }
   return {
     ...metadata,
     _stream: true,
-    file: { localPath, size, filename, contentType },
+    file: { localPath, localDir, size, filename, contentType },
   }
 }
 
@@ -319,6 +322,9 @@ async function writeLimitedStream({ input, localPath, maxBytes }) {
 async function cleanupPayloadSpool(payload) {
   if (!payload?._stream || !payload.file?.localPath) return
   await fsp.rm(payload.file.localPath, { force: true })
+  if (payload.file.localDir) {
+    await fsp.rm(payload.file.localDir, { recursive: true, force: true })
+  }
 }
 
 function sendJson(response, status, payload) {

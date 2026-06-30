@@ -37,7 +37,7 @@ opencodebot_send_artifact({ path?, paths?, text?, caption, mode? })
 
 `caption` is required and should be short: host/project/action/reason. Use `mode: "auto"` by default, `photo` for image display, `document` for exact file delivery, and `text` for logs or snippets that should be sent as an expandable quote.
 
-File sends use the gateway streaming endpoint. When opencodebot runs with its local Telegram Bot API sidecar, the gateway can hand the spooled file to Telegram by local path and use Telegram's higher local Bot API limits.
+File sends use the gateway streaming endpoint. When opencodebot runs with its local Telegram Bot API sidecar, the gateway can hand the spooled file to Telegram by local path and use Telegram's higher local Bot API limits. Telegram-visible file names preserve the requested file basename; unique spool IDs live in parent directories, not in the uploaded filename.
 
 When `path` or `paths` is used, the gateway appends a quoted path block to the Telegram caption. One file is shown as a full absolute path. Multiple files in one directory are shown as the absolute directory plus comma-separated file names. Files from different directories are listed as absolute paths.
 

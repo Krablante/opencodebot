@@ -97,7 +97,7 @@ The metadata JSON accepts the same top-level fields as `/artifacts/send`, plus s
 }
 ```
 
-`mode` can be `auto`, `photo`, `document`, or `text`. `auto` sends suitable JPEG/PNG/WebP files as Telegram photos and everything else as documents. Text artifacts are sent as Telegram MarkdownV2 expandable quotes. In cloud Bot API mode, the gateway keeps the conservative 50 MiB file limit. In local Bot API mode, streamed files are spooled under the shared local Bot API volume and sent to Telegram by local file path, allowing the local Bot API 2 GB file limit.
+`mode` can be `auto`, `photo`, `document`, or `text`. `auto` sends suitable JPEG/PNG/WebP files as Telegram photos and everything else as documents. Text artifacts are sent as Telegram MarkdownV2 expandable quotes. In cloud Bot API mode, the gateway keeps the conservative 50 MiB file limit. In local Bot API mode, streamed files are spooled under the shared local Bot API volume and sent to Telegram by local file path, allowing the local Bot API 2 GB file limit. The gateway keeps Telegram-visible file names clean by placing each streamed upload in a unique spool directory and preserving the requested file name as the local file basename.
 
 ## OpenCodez Plugin Setup
 
