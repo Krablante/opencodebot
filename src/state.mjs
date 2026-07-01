@@ -153,9 +153,17 @@ export class StateStore {
   async seedSeenSessions(serverSessions) {
     return this.update((data) => {
       data.seenSessions ||= []
-      if (data.seenSessions.length) return false
-      data.seenSessions = serverSessions.map(([serverID, sessionID]) => sessionKey(serverID, sessionID))
-      return true
+      const existing = new Set(data.seenSessions)
+      let added = 0
+      for (const [serverID, sessionID] of serverSessions) {
+        const key = sessionKey(serverID, sessionID)
+        if (existing.has(key)) continue
+        existing.add(key)
+        data.seenSessions.push(key)
+        added += 1
+      }
+      if (data.seenSessions.length > 5000) data.seenSessions = data.seenSessions.slice(-5000)
+      return added
     })
   }
 

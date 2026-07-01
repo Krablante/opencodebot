@@ -128,7 +128,7 @@ export function createSessionReconciler({
       for (const session of sessions) seen.push([server.id, session.id])
     }
     const seeded = await state.seedSeenSessions(seen)
-    if (seeded) console.log(`[opencodebot] seeded ${seen.length} existing OpenCodez sessions`)
+    if (seeded) console.log(`[opencodebot] seeded ${seeded} existing OpenCodez sessions`)
   }
 
   async function reconcileSessions() {

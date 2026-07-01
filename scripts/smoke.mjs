@@ -13,6 +13,7 @@ import { completedTodosBeforeAssistant, createFinalNotifier, finalNotificationMa
 import { MultipartPromptBuffer } from "../src/multipart-prompts.mjs"
 import { OpenCodeClient, promptPayload } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
+import { StateStore } from "../src/state.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
 import { formatToolLine } from "../src/tool-formatting.mjs"
 import { OpencodebotArtifactsPlugin } from "../plugins/opencodebot-artifacts/src/index.js"
@@ -56,6 +57,7 @@ async function smokeLocalLogic() {
   smokeToolFormatting()
   await smokeFinalNotificationTodos()
   smokeArtifactCaptionPaths()
+  await smokeStateSeenSessionSeeding()
   await smokeArtifactPluginFileUrls()
   await smokeArtifactGatewayStream()
   await smokeLocalTelegramConfig()
@@ -164,6 +166,20 @@ function smokeArtifactCaptionPaths() {
 <blockquote>C:\Users\friend\Desktop
 report.txt, screenshot.png</blockquote>`,
   )
+}
+
+async function smokeStateSeenSessionSeeding() {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "opencodebot-state-"))
+  try {
+    const state = new StateStore(path.join(dir, "state.json"))
+    await state.load()
+    assert.equal(await state.seedSeenSessions([["nuc", "old-home"]]), 1)
+    assert.equal(await state.seedSeenSessions([["nuc", "old-home"], ["dima", "already-existing-politia"]]), 1)
+    assert.equal(state.hasSeenSession("nuc", "old-home"), true)
+    assert.equal(state.hasSeenSession("dima", "already-existing-politia"), true)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 }
 
 async function smokeArtifactPluginFileUrls() {
