@@ -16,6 +16,12 @@
       "rootUrl": "https://api.telegram.org",
       "fileRootUrl": "https://api.telegram.org",
       "localFilesRoot": "/var/lib/telegram-bot-api"
+    },
+    "attachments": {
+      "enabled": true,
+      "maxInlineBytes": 20000000,
+      "maxFileBytes": 2000000000,
+      "maxTotalBytes": 2000000000
     }
   },
   "opencode": {

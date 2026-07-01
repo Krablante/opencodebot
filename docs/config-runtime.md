@@ -70,7 +70,7 @@ To leave local mode, run `docker compose exec -T opencodebot npm run telegram-lo
 
 `opencode.newSessionDefaultDirectory` controls `/new` session creation. The default `serverHome` starts Telegram-created sessions in the selected server's `home` from `servers.json`. `none` leaves directory selection to OpenCodez defaults. A `/new` command can override this per topic with `dir:<path>`.
 
-Each server in `servers.json` should have an `id` and `url`. Optional fields are `label`, `home`, and `offline_ok`. Offline servers do not stop the bot; the event stream backs off and retries.
+Each server in `servers.json` should have an `id` and `url`. Optional fields are `label`, `home`, `uploadRoot`, `pathStyle`, `transfer`, and `offline_ok`. Offline servers do not stop the bot; the event stream backs off and retries. If `uploadRoot` is omitted and `home` is present, the bot derives `<home>/.opencodebot/uploads`. `pathStyle` can be `posix` or `windows`. `transfer.type` can be `local` when the bot and OpenCodez share the same filesystem path, or `ssh` when the bot must copy saved Telegram files to another host before prompting OpenCodez.
 
 ## Prompt Profiles
 
@@ -144,7 +144,7 @@ The active target is chosen from Telegram with `/artifacts_here`. Running that c
 
 If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. Reconnects, progress events, and tool-only events do not release or clear the queue.
 
-`paths.uploadsDir` stores downloaded Telegram files. Uploaded files are runtime material and should stay out of git. Small files are inlined into OpenCodez prompts as data URLs. Oversized local-mode downloads stay on disk and are described to the model as saved files with path, size, and MIME metadata, because the OpenCodez process may not be able to read container-local paths directly. Download limits and cleanup age are fixed defaults. WireGuard private keys and peer configs live under the configured runtime state path and `/etc/wireguard` on Linux hosts, not in the repo.
+`paths.uploadsDir` stores downloaded Telegram files as local staging. Uploaded files are runtime material and should stay out of git. Small files are inlined into OpenCodez prompts as data URLs. Larger accepted files are copied to the selected server's `uploadRoot`, and the prompt describes the server-local path, size, and MIME metadata. This keeps multihost and Windows setups usable: a `dima` topic receives a `/home/dima/.opencodebot/uploads/...` path, while a Windows server can receive a `C:\Users\Alice\.opencodebot\uploads\...` path. WireGuard private keys and peer configs live under the configured runtime state path and `/etc/wireguard` on Linux hosts, not in the repo.
 
 ## Useful Changes
 

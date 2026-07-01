@@ -18,7 +18,7 @@ The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/eve
 - `/q` in-memory per-session prompt queue, with status/delete commands.
 - Rich assistant messages sent as completed blocks instead of noisy token streaming.
 - Expandable tool quotes with configurable hidden tools.
-- Attachments and Telegram media groups attached to the next prompt.
+- Attachments and Telegram media groups attached to the next prompt; large files are copied to the target server's configured upload root and referenced by server-local path.
 - Optional Telegram artifact gateway for sending agent-created files, screenshots, logs, and text into one dedicated artifacts topic.
 - Optional local Telegram Bot API sidecar for higher file limits and streaming artifact delivery without a separate project.
 - Multipart prompt buffering for Telegram clients that split long messages.

@@ -16,6 +16,7 @@ import { PromptQueue } from "../src/prompt-queue.mjs"
 import { StateStore } from "../src/state.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
 import { formatToolLine } from "../src/tool-formatting.mjs"
+import { prepareSavedFilesForServer, targetUploadPath } from "../src/upload-transfer.mjs"
 import { OpencodebotArtifactsPlugin } from "../plugins/opencodebot-artifacts/src/index.js"
 
 const config = loadConfig(process.argv[2])
@@ -58,6 +59,7 @@ async function smokeLocalLogic() {
   await smokeFinalNotificationTodos()
   smokeArtifactCaptionPaths()
   await smokeStateSeenSessionSeeding()
+  await smokeUploadTransfer()
   await smokeArtifactPluginFileUrls()
   await smokeArtifactGatewayStream()
   await smokeLocalTelegramConfig()
@@ -177,6 +179,42 @@ async function smokeStateSeenSessionSeeding() {
     assert.equal(await state.seedSeenSessions([["nuc", "old-home"], ["dima", "already-existing-politia"]]), 1)
     assert.equal(state.hasSeenSession("nuc", "old-home"), true)
     assert.equal(state.hasSeenSession("dima", "already-existing-politia"), true)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+}
+
+async function smokeUploadTransfer() {
+  const posixPath = targetUploadPath({
+    server: { uploadRoot: "/home/dima/.opencodebot/uploads", pathStyle: "posix" },
+    sessionID: "ses_test/unsafe",
+    filename: "big file.txt",
+    uniqueID: "uuid-1",
+  })
+  assert.equal(posixPath, "/home/dima/.opencodebot/uploads/ses_test-unsafe/uuid-1/big file.txt")
+
+  const windowsPath = targetUploadPath({
+    server: { uploadRoot: "C:\\Users\\Alice\\.opencodebot\\uploads", pathStyle: "windows" },
+    sessionID: "ses_test",
+    filename: "report/final.md",
+    uniqueID: "uuid-2",
+  })
+  assert.equal(windowsPath, "C:\\Users\\Alice\\.opencodebot\\uploads\\ses_test\\uuid-2\\report-final.md")
+
+  const dir = await mkdtemp(path.join(os.tmpdir(), "opencodebot-upload-"))
+  try {
+    const source = path.join(dir, "source.txt")
+    const uploadRoot = path.join(dir, "target")
+    await writeFile(source, "upload test")
+    const [prepared] = await prepareSavedFilesForServer([
+      { type: "saved_file", filename: "source.txt", path: source, size: 11, mime: "text/plain" },
+    ], {
+      server: { id: "local", uploadRoot, pathStyle: "posix", transfer: { type: "local" } },
+      sessionID: "ses_local",
+    })
+    assert.equal(prepared.transferred, true)
+    assert.match(prepared.path, /\/ses_local\/[A-Za-z0-9._-]+\/source\.txt$/)
+    assert.equal(await readFile(prepared.path, "utf8"), "upload test")
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

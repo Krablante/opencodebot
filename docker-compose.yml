@@ -1,15 +1,20 @@
 services:
   opencodebot:
     build: .
+    user: "${OPENCODEBOT_UID:-1000}:${OPENCODEBOT_GID:-1000}"
     restart: unless-stopped
     environment:
       OPENCODEBOT_CONFIG: /app/config.local.json
+      HOME: /home/node
     volumes:
       - ${OPENCODEBOT_CONFIG_FILE:-./config.local.json}:/app/config.local.json:ro
       - ${OPENCODEBOT_SERVERS_FILE:-./servers.json}:/app/servers.json:ro
       - ${OPENCODEBOT_TOKEN_ENV_FILE:-./token.env}:/app/token.env:ro
       - ${OPENCODEBOT_STATE_DIR:-./state}:/app/state
       - ${OPENCODEBOT_STATE_DIR:-./state}/telegram-bot-api:/var/lib/telegram-bot-api
+      - ${OPENCODEBOT_UPLOAD_ROOT:-./uploads}:${OPENCODEBOT_UPLOAD_ROOT:-/app/uploads}
+      - ${OPENCODEBOT_SSH_DIR:-./ssh}:/home/node/.ssh:ro
+      - ${OPENCODEBOT_SSH_IDENTITY_DIR:-./ssh}:${OPENCODEBOT_SSH_IDENTITY_DIR:-/home/node/.ssh}:ro
     ports:
       - "${OPENCODEBOT_ARTIFACT_PORT:-8788}:8788"
     extra_hosts:

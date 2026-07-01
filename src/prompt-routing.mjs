@@ -7,6 +7,7 @@ import { profileFromMessages, profileFromSession, promptPayload, titleFromText }
 import { PromptQueue } from "./prompt-queue.mjs"
 import { promptHash } from "./state.mjs"
 import { escapeHtml, topicId } from "./telegram.mjs"
+import { prepareSavedFilesForServer } from "./upload-transfer.mjs"
 
 export function createPromptRouter({ config, state, telegram, opencode, renderer, scheduleReconcile, logError }) {
   const promptFeedbackMessages = new Map()
@@ -113,13 +114,14 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     const feedbackMessage = await sendPromptFeedback({ binding, text: promptFeedbackStartingText(), kind: "accepted" })
     try {
       const profile = await currentProfile(binding)
+      const preparedFiles = await prepareSavedFilesForServer(files, { server: opencode.server(binding.serverID), sessionID: binding.sessionID })
       await state.addPendingPrompt({
         serverID: binding.serverID,
         sessionID: binding.sessionID,
         hash: promptHash(text),
         messageId: sourceMessageId,
       })
-      await opencode.promptAsync(binding.serverID, binding.sessionID, promptPayload(text, profile, files), { directory: binding.directory })
+      await opencode.promptAsync(binding.serverID, binding.sessionID, promptPayload(text, profile, preparedFiles), { directory: binding.directory })
       if (await pinTelegramPromptMessage(binding, sourceMessageId, "telegram-prompt", { serviceMessageAfterId: feedbackMessage?.message_id })) {
         await state.markPendingPromptPinned(binding.serverID, binding.sessionID, text, sourceMessageId).catch(logError)
       }

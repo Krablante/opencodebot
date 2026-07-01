@@ -5,6 +5,11 @@
       "label": "Local OpenCodez",
       "url": "http://127.0.0.1:4096",
       "home": ".",
+      "uploadRoot": ".opencodebot/uploads",
+      "pathStyle": "posix",
+      "transfer": {
+        "type": "local"
+      },
       "offline_ok": true
     }
   ]

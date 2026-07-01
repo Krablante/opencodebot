@@ -47,6 +47,8 @@ By default Compose reads these host paths:
 ./servers.json
 ./token.env
 ./state
+./uploads
+./ssh
 ```
 
 If you keep runtime files somewhere else, put path overrides in an ignored `.env` file:
@@ -56,6 +58,8 @@ OPENCODEBOT_CONFIG_FILE=/path/to/config.local.json
 OPENCODEBOT_SERVERS_FILE=/path/to/servers.json
 OPENCODEBOT_TOKEN_ENV_FILE=/path/to/token.env
 OPENCODEBOT_STATE_DIR=/path/to/state
+OPENCODEBOT_UPLOAD_ROOT=/home/alice/.opencodebot/uploads
+OPENCODEBOT_SSH_DIR=/home/alice/.ssh
 ```
 
 ## OpenCodez URL
@@ -67,7 +71,14 @@ If OpenCodez is reachable on your LAN, use the LAN URL:
 ```json
 {
   "servers": [
-    { "id": "local", "label": "OpenCodez", "url": "http://192.168.1.50:4096", "home": "." }
+    {
+      "id": "local",
+      "label": "OpenCodez",
+      "url": "http://192.168.1.50:4096",
+      "home": "/home/alice",
+      "uploadRoot": "/home/alice/.opencodebot/uploads",
+      "transfer": { "type": "local" }
+    }
   ]
 }
 ```
@@ -77,7 +88,15 @@ If OpenCodez runs on the same machine as Docker Desktop, use:
 ```json
 {
   "servers": [
-    { "id": "local", "label": "OpenCodez", "url": "http://host.docker.internal:4096", "home": "." }
+    {
+      "id": "local",
+      "label": "OpenCodez",
+      "url": "http://host.docker.internal:4096",
+      "home": "C:\\Users\\Alice",
+      "uploadRoot": "C:\\Users\\Alice\\.opencodebot\\uploads",
+      "pathStyle": "windows",
+      "transfer": { "type": "local" }
+    }
   ]
 }
 ```
