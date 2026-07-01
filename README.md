@@ -13,7 +13,7 @@ The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/eve
 ## Features
 
 - Telegram forum topics mapped to OpenCodez sessions.
-- `/new [server] [template] [title]` for explicit server/profile/topic setup.
+- `/new [server] [template] [dir:<path>] [title]` for explicit server/profile/directory/topic setup.
 - User-provided topic titles stay user-owned; placeholder titles can be renamed from OpenCodez session titles.
 - `/q` in-memory per-session prompt queue, with status/delete commands.
 - Rich assistant messages sent as completed blocks instead of noisy token streaming.
@@ -128,7 +128,7 @@ The local Telegram Bot API sidecar is also optional. Add `TELEGRAM_API_ID` and `
 
 Use `/start` or `/help` when you want the bot to show its command summary. These commands are safe to run in a normal topic, and they do not create or change an OpenCodez session.
 
-Use `/new` when you want a fresh Telegram topic and a new OpenCodez session. You can give it a server id, an optional chat template, and a title, for example `/new ser codex-full fix the deploy script`. After the topic is created, send the first prompt in that topic.
+Use `/new` when you want a fresh Telegram topic and a new OpenCodez session. You can give it a server id, an optional chat template, an optional `dir:<path>` override, and a title. If no server id is given, the default server is used, so `/new gpt55p gitt` is equivalent to `/new nuc gpt55p gitt` in the Politia runtime. After the topic is created, send the first prompt in that topic.
 
 Use `/q` inside an existing OpenCodez topic when you want to queue another prompt for the same session. `/q status` shows the queue, and `/q delete 2` removes a queued item by number.
 
