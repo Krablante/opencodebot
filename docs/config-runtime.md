@@ -66,11 +66,20 @@ To leave local mode, run `docker compose exec -T opencodebot npm run telegram-lo
 
 `opencode.baseUrl` is the local/default API origin used when a server-specific URL is not involved. `opencode.passwordEnvNames` lists env var names that may contain the OpenCodez password.
 
-`opencode.mirrorScope` controls which OpenCodez sessions are mirrored from configured servers. `global` listens without a `directory` query and mirrors new sessions from any workspace on that host. `serverHome` keeps the legacy host-home scope.
+The bot separates mirroring from Telegram-created session placement. `opencode.mirrorScope` controls what the bot watches on configured OpenCodez servers: `global` mirrors new sessions from any workspace on that host, while `serverHome` keeps the older host-home scope. `opencode.newSessionDefaultDirectory` controls where `/new` creates sessions when the operator does not pass `dir:<path>`; the normal value is `serverHome`, which uses the selected server's `home` from `servers.json`.
 
-`opencode.newSessionDefaultDirectory` controls `/new` session creation. The default `serverHome` starts Telegram-created sessions in the selected server's `home` from `servers.json`. `none` leaves directory selection to OpenCodez defaults. A `/new` command can override this per topic with `dir:<path>`.
+Each server in `servers.json` needs an `id` and `url`. The optional `home` field gives `/new` a default directory, and `uploadRoot` gives large Telegram attachments a server-local destination. If `uploadRoot` is omitted and `home` is present, the bot derives the conventional upload root from `home`. `transfer` stays simple: use `local` when the bot and OpenCodez share the path, and `ssh` when the bot must copy the file to another host before prompting OpenCodez.
 
-Each server in `servers.json` should have an `id` and `url`. Optional fields are `label`, `home`, `uploadRoot`, `pathStyle`, `transfer`, and `offline_ok`. Offline servers do not stop the bot; the event stream backs off and retries. If `uploadRoot` is omitted and `home` is present, the bot derives `<home>/.opencodebot/uploads`. `pathStyle` can be `posix` or `windows`. `transfer.type` can be `local` when the bot and OpenCodez share the same filesystem path, or `ssh` when the bot must copy saved Telegram files to another host before prompting OpenCodez.
+```json
+{
+  "id": "dima",
+  "url": "http://192.168.1.91:4098",
+  "home": "/home/dima",
+  "uploadRoot": "/home/dima/.opencodebot/uploads",
+  "pathStyle": "posix",
+  "transfer": { "type": "ssh", "host": "dima" }
+}
+```
 
 ## Prompt Profiles
 
@@ -81,7 +90,7 @@ Each server in `servers.json` should have an `id` and `url`. Optional fields are
 Each template can define:
 
 - `agent`: OpenCodez agent name.
-- `model.providerID`: provider id, such as `openai` or `deepseek`.
+- `model.providerID`: provider id.
 - `model.modelID`: model id.
 - `model.variant`: optional model effort/variant.
 - `opencodezTemplate`: OpenCodez-side chat template name.
@@ -144,7 +153,14 @@ The active target is chosen from Telegram with `/artifacts_here`. Running that c
 
 If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. Reconnects, progress events, and tool-only events do not release or clear the queue.
 
-`paths.uploadsDir` stores downloaded Telegram files as local staging. Uploaded files are runtime material and should stay out of git. Small files are inlined into OpenCodez prompts as data URLs. Larger accepted files are copied to the selected server's `uploadRoot`, and the prompt describes the server-local path, size, and MIME metadata. This keeps multihost and Windows setups usable: a `dima` topic receives a `/home/dima/.opencodebot/uploads/...` path, while a Windows server can receive a `C:\Users\Alice\.opencodebot\uploads\...` path. WireGuard private keys and peer configs live under the configured runtime state path and `/etc/wireguard` on Linux hosts, not in the repo.
+`paths.uploadsDir` stores downloaded Telegram files as local staging. Uploaded files are runtime material and should stay out of git. Small files are inlined into OpenCodez prompts as data URLs. Larger accepted files are copied to the selected server's `uploadRoot`, and the prompt describes the server-local path, size, and MIME metadata. This keeps multihost and Windows setups usable because the path shown to the model belongs to the selected OpenCodez host, not to the bot container.
+
+```text
+dima:    /home/dima/.opencodebot/uploads/...
+Windows: C:\Users\Alice\.opencodebot\uploads\...
+```
+
+WireGuard private keys and peer configs live under the configured runtime state path and `/etc/wireguard` on Linux hosts, not in the repo.
 
 ## Useful Changes
 

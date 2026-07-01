@@ -127,7 +127,12 @@ OpenCodez plugin entries can be npm specs, `file://` URLs, relative paths, absol
 }
 ```
 
-On Windows OpenCodez clients, reference the plugin package with a normal absolute path such as `C:\Users\you\opencodebot\plugins\opencodebot-artifacts` or a valid file URL such as `file:///C:/Users/you/opencodebot/plugins/opencodebot-artifacts`.
+On Windows OpenCodez clients, reference the plugin package with a normal absolute path or a valid file URL.
+
+```text
+C:\Users\you\opencodebot\plugins\opencodebot-artifacts
+file:///C:/Users/you/opencodebot/plugins/opencodebot-artifacts
+```
 
 You can also keep the token out of config and use environment variables:
 
