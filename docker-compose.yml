@@ -2,6 +2,8 @@ services:
   opencodebot:
     build: .
     user: "${OPENCODEBOT_UID:-1000}:${OPENCODEBOT_GID:-1000}"
+    group_add:
+      - "${TELEGRAM_BOT_API_GID:-101}"
     restart: unless-stopped
     environment:
       OPENCODEBOT_CONFIG: /app/config.local.json

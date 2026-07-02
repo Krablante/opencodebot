@@ -131,7 +131,7 @@ docker compose down
 
 The local Bot API server is an optional sidecar in the same Compose project. It is not a separate opencodebot project. It stores TDLib/Bot API state under `state/telegram-bot-api`, and opencodebot mounts the same path at `/var/lib/telegram-bot-api` so large artifacts can be handed to Telegram by local file path.
 
-The bot container normally runs as your user, while the local Bot API sidecar uses its own `telegram-bot-api` user inside the container. Keep the shared local Bot API state owned by uid/gid `101:101`, and keep only the artifact spool writable by the bot uid/gid. If you previously ran the bot as root or changed ownership recursively, repair the volume before debugging file downloads.
+The bot container normally runs as your user, while the local Bot API sidecar uses its own `telegram-bot-api` user inside the container. Keep the shared local Bot API state owned by uid/gid `101:101`, and keep only the artifact spool writable by the bot uid/gid. Compose adds the bot to group `101` so it can read local Bot API downloads without owning that state; set `TELEGRAM_BOT_API_GID` in `.env` only if the sidecar image uses a different group id. If you previously ran the bot as root or changed ownership recursively, repair the volume before debugging file downloads.
 
 ```bash
 sudo chown -R 101:101 state/telegram-bot-api
