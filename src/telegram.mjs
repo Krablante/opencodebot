@@ -66,7 +66,13 @@ export class TelegramClient {
   }
 
   async downloadFile({ fileId, destination, maxBytes }) {
-    const file = await this.getFile(fileId)
+    let file
+    try {
+      file = await this.getFile(fileId)
+    } catch (error) {
+      if (this.local) await this.diagnoseCloudGetFile(fileId, error)
+      throw error
+    }
     if (file.file_size && file.file_size > maxBytes) {
       throw new Error(`Telegram file is too large (${file.file_size} bytes; max ${maxBytes})`)
     }
@@ -88,6 +94,25 @@ export class TelegramClient {
       throw new Error(`Telegram file download exceeded limit (${stat.size} bytes; max ${maxBytes})`)
     }
     return { file, destination }
+  }
+
+  async diagnoseCloudGetFile(fileId, localError) {
+    const cloud = new TelegramClient(this.token, { rootUrl: "https://api.telegram.org", fileRootUrl: "https://api.telegram.org" })
+    try {
+      const file = await cloud.request("getFile", { file_id: fileId }, 0, { suppressFailureLog: true })
+      logInfo("telegram.getfile.cloud_diagnostic", {
+        localError: localError.message,
+        cloudOk: true,
+        cloudFilePath: Boolean(file?.file_path),
+        cloudFileSize: file?.file_size,
+      })
+    } catch (error) {
+      logWarn("telegram.getfile.cloud_diagnostic", {
+        localError: localError.message,
+        cloudOk: false,
+        cloudError: error.message,
+      })
+    }
   }
 
   async getUpdates(offset, timeout = 25, options = {}) {

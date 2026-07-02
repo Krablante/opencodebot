@@ -1,6 +1,6 @@
 import fs from "node:fs/promises"
 import path from "node:path"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 
 export class AttachmentBuffer {
   constructor({ settings, uploadDir, flushPrompt, onExpire, onError = (error) => console.error(error) }) {
@@ -141,13 +141,21 @@ export async function downloadTelegramFiles(telegram, descriptors, uploadDir, se
       if (descriptor.size && descriptor.size > normalized.maxFileBytes) {
         throw new Error(`${descriptor.filename} is too large (${descriptor.size} bytes; max ${normalized.maxFileBytes})`)
       }
+      logAttachment("attachment.download.start", descriptor)
       const localPath = path.join(uploadDir, uploadFileName(descriptor.filename))
       createdPaths.push(localPath)
-      const downloaded = await telegram.downloadFile({ fileId: descriptor.fileID, destination: localPath, maxBytes: normalized.maxFileBytes })
+      let downloaded
+      try {
+        downloaded = await telegram.downloadFile({ fileId: descriptor.fileID, destination: localPath, maxBytes: normalized.maxFileBytes })
+      } catch (error) {
+        logAttachment("attachment.download.failed", descriptor, { error })
+        throw error
+      }
       const stat = await fs.stat(localPath)
       const mime = descriptor.mime || "application/octet-stream"
       const size = stat.size || downloaded.file?.file_size || descriptor.size || 0
       const inline = size <= normalized.maxInlineBytes
+      logAttachment("attachment.download.complete", descriptor, { size, inline, sourcePath: downloaded.file?.source_path })
       downloads.push({
         type: inline ? "file" : "saved_file",
         mime,
@@ -165,6 +173,25 @@ export async function downloadTelegramFiles(telegram, descriptors, uploadDir, se
     await Promise.all(createdPaths.map((filePath) => fs.rm(filePath, { force: true })))
     throw error
   }
+}
+
+function logAttachment(event, descriptor, extra = {}) {
+  const details = {
+    kind: descriptor.kind,
+    filename: descriptor.filename,
+    mime: descriptor.mime,
+    size: descriptor.size,
+    fileUniqueID: descriptor.fileUniqueID,
+    fileIDHash: shortHash(descriptor.fileID),
+    ...extra,
+  }
+  if (details.error) details.error = { name: details.error.name, message: details.error.message }
+  if (details.sourcePath) details.sourcePath = "local-bot-api-path"
+  console.log(`[opencodebot] ${event} ${JSON.stringify(details)}`)
+}
+
+function shortHash(value) {
+  return createHash("sha256").update(String(value || "")).digest("hex").slice(0, 12)
 }
 
 async function dataURL(filePath, mime) {
