@@ -278,16 +278,22 @@ async function readFileStreamBody(request, config) {
   await fsp.mkdir(localDir, { recursive: false, mode: 0o755 })
   await fsp.chmod(localDir, 0o755).catch(() => {})
   const localPath = path.join(localDir, filename)
-  const size = await writeLimitedStream({ input: request, localPath, maxBytes: config.artifacts.maxFileBytes })
-  if (!size) {
+  let size = 0
+  try {
+    size = await writeLimitedStream({ input: request, localPath, maxBytes: config.artifacts.maxFileBytes })
+    if (size) {
+      return {
+        ...metadata,
+        _stream: true,
+        file: { localPath, localDir, size, filename, contentType },
+      }
+    }
+  } catch (error) {
     await fsp.rm(localDir, { recursive: true, force: true })
-    throw publicError("empty_file", "File payload is empty.", 400)
+    throw error
   }
-  return {
-    ...metadata,
-    _stream: true,
-    file: { localPath, localDir, size, filename, contentType },
-  }
+  await fsp.rm(localDir, { recursive: true, force: true })
+  throw publicError("empty_file", "File payload is empty.", 400)
 }
 
 function readStreamMetadata(request) {

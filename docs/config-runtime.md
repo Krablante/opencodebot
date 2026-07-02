@@ -34,7 +34,7 @@ OpenCodez servers come from `paths.serversJson`, not from the main config body. 
 
 The config names the environment variables to try. `telegram.tokenEnvNames` is checked first, but the loader can also recognize a Telegram-looking token from the env file. `telegram.allowedUserEnvNames` is checked first for user ids; if none are found, the loader falls back to env names that look like owner/user/allowed id variables. `opencode.passwordEnvNames` works the same simple way for the OpenCodez password.
 
-Non-secret config is intentionally small. It covers deployment identity and ownership: chat id, allowed user ids, OpenCodez servers, default prompt profile, chat templates, final-notification recipients, artifact gateway address, paths, and optional web/WireGuard helpers. Mirror policy, prompt pinning, reconcile windows, multipart buffering, attachment limits, and tool compaction are fixed defaults in code.
+Non-secret config is intentionally small. It covers deployment identity and ownership: chat id, allowed user ids, OpenCodez servers, default prompt profile, chat templates, attachment limits, artifact upload folders, final-notification recipients, artifact gateway address, paths, and optional web/WireGuard helpers. Mirror policy, prompt pinning, reconcile windows, multipart buffering, and tool compaction are fixed defaults in code.
 
 ## Telegram
 
@@ -62,13 +62,30 @@ Local mode requires `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in `token.env`, th
 
 To leave local mode, run `docker compose exec -T opencodebot npm run telegram-local -- disable --yes` while config still points at the local server, then switch `telegram.botApi.mode` back to `cloud` and restart. This lets the helper call Telegram `close` on the right endpoint.
 
+## Attachments
+
+`attachments` is top-level config. It controls whether Telegram files are accepted and the accepted inline, per-file, and per-message totals. Cloud Bot API mode clamps each file to Telegram's conservative cloud download limit. Local Bot API mode can use larger per-file values, up to the local Bot API file limit.
+
+Older local configs that copied `telegram.attachments` from a previous example still work, but new configs should keep attachment policy at the top level.
+
+```json
+{
+  "attachments": {
+    "enabled": true,
+    "maxInlineBytes": 20000000,
+    "maxFileBytes": 20000000,
+    "maxTotalBytes": 60000000
+  }
+}
+```
+
 ## OpenCodez
 
 `opencode.baseUrl` is the local/default API origin used when a server-specific URL is not involved. `opencode.passwordEnvNames` lists env var names that may contain the OpenCodez password.
 
 The bot separates mirroring from Telegram-created session placement. `opencode.mirrorScope` controls what the bot watches on configured OpenCodez servers: `global` mirrors new sessions from any workspace on that host, while `serverHome` keeps the older host-home scope. `opencode.newSessionDefaultDirectory` controls where `/new` creates sessions when the operator does not pass `dir:<path>`; the normal value is `serverHome`, which uses the selected server's `home` from `servers.json`.
 
-Each server in `servers.json` needs an `id` and `url`. The optional `home` field gives `/new` a default directory, and `uploadRoot` gives large Telegram attachments a server-local destination. If `uploadRoot` is omitted and `home` is present, the bot derives the conventional upload root from `home`. `transfer` stays simple: use `local` when the bot and OpenCodez share the path, and `ssh` when the bot must copy the file to another host before prompting OpenCodez.
+Each server in `servers.json` needs an `id` and `url`. The optional `home` field gives `/new` a default directory and lets `~/trash` expand naturally for artifact uploads. `uploadRoot` gives large Telegram prompt attachments a server-local destination. If `uploadRoot` is omitted and `home` is present, the bot derives the conventional prompt upload root from `home`. `artifactUploadRoot` overrides the global artifact file dropbox root for one server. `transfer` stays simple: use `local` when the bot and OpenCodez share the path, and `ssh` when the bot must copy a file to another host before prompting OpenCodez or saving a dropped artifact file.
 
 ```json
 {
@@ -121,7 +138,7 @@ The mirror policy is deliberately not a public matrix of modes. The bot mirrors 
 
 User prompts are always pinned. Telegram-origin runs pin the original user message after OpenCodez accepts the prompt; web-origin runs pin the mirrored user-prompt message. Telegram pin service messages are cleaned up when possible. Final assistant answers are marked with `🏁` but are not pinned.
 
-Long Telegram prompts, Telegram attachments, and bounded missed-event recovery are always on with conservative internal limits. These mechanisms are part of the bot's reliability model rather than config modes.
+Long Telegram prompts and bounded missed-event recovery are always on with conservative internal limits. Telegram attachments are always part of the product model, with size limits controlled by top-level `attachments` and clamped by Bot API mode.
 
 ## Final Notifications
 
@@ -140,6 +157,32 @@ The final DM is intentionally short: it includes a source `Topic:` line from Tel
 Artifact JSON payload, text, and caption limits are fixed safety defaults in code. File limits depend on Bot API mode: cloud mode keeps the conservative 50 MiB file limit, while local mode allows Telegram's 2 GB local Bot API limit through the streaming `/artifacts/send-file` path. Text artifacts are sent as expandable quotes. Suitable JPEG, PNG, and WebP files are sent with `sendPhoto` in `auto` mode; other files are sent with `sendDocument`.
 
 The active target is chosen from Telegram with `/artifacts_here`. Running that command in another topic replaces the previous target. The target is stored in `state.json`, not config.
+
+The same Telegram artifacts topic can receive files from users. A dropped file is saved on the configured default server when its caption is empty. When the caption starts with a server id, that server is used instead. Unknown server ids are rejected before the bot downloads the file. Saved files go under `artifactUploads.root`, then an optional `YYYY-MM-DD` folder, then a sanitized filename. The default root is `~/trash`, expanded from the target server's `home`; on Windows this can become `C:\Users\name\trash` when that is the server home.
+
+Cloud Bot API deployments are still limited by Telegram's cloud file download limit. Local Bot API deployments can accept larger files if `attachments` is raised and the local Bot API sidecar has access to the downloaded file root.
+
+```json
+{
+  "artifactUploads": {
+    "enabled": true,
+    "root": "~/trash",
+    "dateFolders": true
+  }
+}
+```
+
+Per-server roots belong in `servers.json` when one host needs a different dropbox path.
+
+```json
+{
+  "id": "winbox",
+  "url": "http://winbox.local:4096",
+  "home": "C:\\Users\\winbox",
+  "pathStyle": "windows",
+  "artifactUploadRoot": "D:\\Inbox\\opencodebot"
+}
+```
 
 ## Web And WireGuard
 
@@ -182,6 +225,6 @@ notepad .\servers.json
 npm start
 ```
 
-Before sharing the bot with a friend, the important knobs are usually `telegram.chatId`, `telegram.allowedUserIds`, `telegram.allowChatBootstrap`, `defaultPrompt.serverID`, `chatTemplates`, final-notification recipients, artifact gateway address/token env, and web base URLs.
+Before sharing the bot with a friend, the important knobs are usually `telegram.chatId`, `telegram.allowedUserIds`, `telegram.allowChatBootstrap`, `defaultPrompt.serverID`, `chatTemplates`, `attachments`, `artifactUploads`, final-notification recipients, artifact gateway address/token env, and web base URLs.
 
 When changing the config shape, update `config.example.json`, `src/config.mjs`, and the relevant docs together. Keep defaults reasonable and boring.

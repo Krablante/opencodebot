@@ -2,7 +2,7 @@
 
 opencodebot can act as a small Telegram artifact gateway for AI agents. The design is intentionally simple: one central opencodebot instance owns the Telegram bot token and one current Telegram artifacts topic. Agent-side plugins on any LAN host read local files or text and stream the artifact bytes to opencodebot, which then sends the artifact to Telegram.
 
-This avoids guessing the current mirror topic, avoids SSH, and avoids sharing the Telegram bot token with agents.
+This avoids guessing the current mirror topic and avoids sharing the Telegram bot token with agents. Agent-to-Telegram artifact delivery does not need SSH; Telegram user-dropped files use the configured server transfer only when the bot saves them to another host.
 
 ## Model
 
@@ -15,7 +15,7 @@ agent on any host
 
 There is one artifacts topic. It is not per host. When `/artifacts_here` is run in another Telegram forum topic, that new topic replaces the old target. The old target is forgotten.
 
-The artifacts topic is not a mirror topic. If it was bound to an OpenCodez session, `/artifacts_here` disables that binding. Ordinary messages and attachments in the artifacts topic are not sent to OpenCodez.
+The artifacts topic is not a mirror topic. If it was bound to an OpenCodez session, `/artifacts_here` disables that binding. Ordinary text in the artifacts topic is not sent to OpenCodez. Files dropped there by Telegram users are saved as file dropbox uploads instead.
 
 ## opencodebot Setup
 
@@ -52,6 +52,36 @@ Start or restart opencodebot, then open the Telegram forum topic that should rec
 ```
 
 Run the same command in a different topic whenever the artifact inbox should move. The latest topic wins.
+
+## User-Dropped Files
+
+The artifacts topic also works as a small file dropbox. When a user attaches a file there, the bot saves it to the configured artifact upload root on a target OpenCodez server and replies with the absolute saved path in a blockquote. An empty caption uses the configured default server. A caption whose first word is a server id saves to that server. If the server id is unknown, the bot reports the unknown id and does not download the file.
+
+Files are saved under `artifactUploads.root`, then a daily `YYYY-MM-DD` folder, then a sanitized filename. The default root is `~/trash`, expanded from the target server's `home`, so Linux/macOS and Windows hosts can use the same config shape. A server can override the root with `artifactUploadRoot` in `servers.json`.
+
+Cloud Bot API deployments still have Telegram's cloud download limit. Local Bot API deployments can accept larger files when `attachments` limits are raised and the local Bot API file root is shared with the bot container.
+
+```text
+caption: dima
+
+<blockquote>/home/dima/trash/2026-07-02/report.pdf</blockquote>
+```
+
+```text
+caption: winbox
+
+<blockquote>C:\Users\winbox\trash\2026-07-02\report.pdf</blockquote>
+```
+
+```json
+{
+  "artifactUploads": {
+    "enabled": true,
+    "root": "~/trash",
+    "dateFolders": true
+  }
+}
+```
 
 ## Gateway API
 

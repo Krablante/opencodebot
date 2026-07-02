@@ -9,6 +9,7 @@ export function createTelegramPolling({
   commandHandlers,
   handleTopicLifecycleMessage,
   handleAttachmentMessage,
+  handleArtifactUploadMessage,
   extractTelegramFiles,
   hasPendingAttachmentBatch,
   queueTelegramPrompt,
@@ -77,18 +78,22 @@ export function createTelegramPolling({
 
     const promptKey = multipartPromptKey(message)
     if (state.isArtifactsTopic(message.chat.id, topicId(message))) {
+      if (files.length) {
+        await handleArtifactUploadMessage({ message, files })
+        return
+      }
       if (text) {
         const command = parseCommand(text)
         if (artifactTopicCommandAllowed(command.name) && await commandHandlers.handle(message, command, promptKey)) return
         if (text.startsWith("/")) {
-          await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "This topic is reserved for agent artifact uploads. Use another topic for OpenCodez sessions." })
+          await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "This topic is reserved for artifacts and file dropbox uploads. Use another topic for OpenCodez sessions." })
           return
         }
       }
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: topicId(message),
-        text: "This topic is reserved for agent artifact uploads. It does not mirror prompts or attachments to OpenCodez.",
+        text: "This topic is reserved for artifacts and file dropbox uploads. Text here is not mirrored to OpenCodez.",
       })
       return
     }

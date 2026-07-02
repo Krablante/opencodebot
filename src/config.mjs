@@ -37,6 +37,13 @@ const defaultAttachments = {
   maxInlineBytes: 20000000,
   cleanupAfterMs: 86400000,
 }
+const defaultArtifactUploads = {
+  enabled: true,
+  root: "~/trash",
+  defaultServerId: "",
+  dateFolders: true,
+  mediaGroupIdleMs: 1200,
+}
 const defaultChatTemplates = {
   d4flash: {
     agent: "build",
@@ -77,6 +84,7 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
   const chatId = config.telegram?.chatId ?? readFirstNumber(mergedEnv, ["OPENCODEBOT_CHAT_ID", "TELEGRAM_CHAT_ID"])
   const servers = readServers(serversJsonPath)
   const telegramBotApi = normalizeTelegramBotApi(config.telegram?.botApi, mergedEnv)
+  const attachmentConfig = config.attachments ?? config.telegram?.attachments
 
   return {
     sourcePath,
@@ -111,7 +119,8 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
     promptFeedback: { ...defaultPromptFeedback },
     finalNotifications: normalizeFinalNotifications(config.finalNotifications),
     artifacts: normalizeArtifacts(config.artifacts, artifactToken, telegramBotApi),
-    attachments: normalizeAttachments(config.attachments, telegramBotApi),
+    artifactUploads: normalizeArtifactUploads(config.artifactUploads, config.opencode?.defaultServerId || config.defaultPrompt?.serverID),
+    attachments: normalizeAttachments(attachmentConfig, telegramBotApi),
     chatTemplates: normalizeChatTemplates(config.chatTemplates),
     web: config.web || {},
     wireguard: {
@@ -162,6 +171,7 @@ function normalizeServer(server) {
     url: String(server.url).replace(/\/$/, ""),
     home,
     uploadRoot,
+    artifactUploadRoot: server.artifactUploadRoot ? String(server.artifactUploadRoot) : undefined,
     pathStyle,
     transfer: normalizeTransfer(server.transfer, pathStyle),
     label: server.label ? String(server.label) : String(server.id),
@@ -331,9 +341,26 @@ function normalizeAttachments(value = {}, botApi = { local: false }) {
   const maxTotalBytes = Math.min(numberAtLeast(value.maxTotalBytes, botApi.local ? telegramLocalMaxFileBytes : defaultAttachments.maxTotalBytes, 1), telegramLocalMaxFileBytes)
   return {
     ...defaultAttachments,
+    ...value,
+    enabled: value.enabled !== false,
+    mediaGroupIdleMs: numberAtLeast(value.mediaGroupIdleMs, defaultAttachments.mediaGroupIdleMs, 100),
+    promptIdleMs: numberAtLeast(value.promptIdleMs, defaultAttachments.promptIdleMs, 1000),
+    maxFiles: numberAtLeast(value.maxFiles, defaultAttachments.maxFiles, 1),
     maxFileBytes,
     maxTotalBytes,
     maxInlineBytes: numberAtLeast(value.maxInlineBytes, defaultAttachments.maxInlineBytes, 1),
+  }
+}
+
+function normalizeArtifactUploads(value = {}, opencodeDefaultServerId = "") {
+  return {
+    ...defaultArtifactUploads,
+    ...value,
+    enabled: value.enabled !== false,
+    root: String(value.root || defaultArtifactUploads.root),
+    defaultServerId: value.defaultServerId ? String(value.defaultServerId) : String(opencodeDefaultServerId || defaultArtifactUploads.defaultServerId),
+    dateFolders: value.dateFolders !== false,
+    mediaGroupIdleMs: numberAtLeast(value.mediaGroupIdleMs, defaultArtifactUploads.mediaGroupIdleMs, 250),
   }
 }
 

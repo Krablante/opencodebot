@@ -6,6 +6,7 @@ import path from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { artifactFileCaptionHtml, artifactPathLines, startArtifactGateway } from "../src/artifacts-gateway.mjs"
+import { artifactTargetPath, handleArtifactUploadMessage, resolveUploadTarget } from "../src/artifact-uploads.mjs"
 import { AttachmentBuffer } from "../src/attachments.mjs"
 import { parseNewTopicArgs } from "../src/chat-templates.mjs"
 import { loadConfig } from "../src/config.mjs"
@@ -55,6 +56,8 @@ if (failed) process.exitCode = 1
 async function smokeLocalLogic() {
   smokeNewParser()
   smokeOpenCodeDirectories()
+  await smokeConfigAttachments()
+  await smokeArtifactUploads()
   smokePromptTextFilters()
   smokeToolFormatting()
   await smokeFinalNotificationTodos()
@@ -142,6 +145,144 @@ function smokeOpenCodeDirectories() {
   assert.equal(globalClient.url(globalClient.server("home"), "/session", globalClient.requestOptions(globalClient.server("home"), { mirror: true })).searchParams.get("directory"), null)
   assert.equal(globalClient.defaultNewSessionDirectory("home"), "C:\\Users\\dima")
   assert.equal(globalClient.url(globalClient.server("home"), "/session", { directory: "C:\\Users\\dima\\My Projects\\voltaren" }).searchParams.get("directory"), "C:\\Users\\dima\\My Projects\\voltaren")
+}
+
+async function smokeConfigAttachments() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-config-"))
+  try {
+    await writeFile(path.join(root, "token.env"), "BOT_TOKEN=123:test\nOPENCODE_API_PASSWORD=test\nARTIFACT_TOKEN=test\n")
+    await writeFile(path.join(root, "servers.json"), JSON.stringify({ servers: [{ id: "home", url: "http://opencode.test", home: root }] }))
+
+    const baseConfig = {
+      paths: { tokenEnv: "token.env", serversJson: "servers.json", statePath: "state.json" },
+      telegram: { chatId: 1, tokenEnvNames: ["BOT_TOKEN"], allowedUserIds: [1], botApi: { mode: "cloud" } },
+      opencode: { defaultServerId: "home", passwordEnvNames: ["OPENCODE_API_PASSWORD"] },
+      artifacts: { tokenEnvNames: ["ARTIFACT_TOKEN"] },
+    }
+
+    const topLevelPath = path.join(root, "top-level.json")
+    await writeFile(
+      topLevelPath,
+      JSON.stringify({
+        ...baseConfig,
+        attachments: { maxInlineBytes: 1234, maxFileBytes: 99000000, maxTotalBytes: 70000000 },
+      }),
+    )
+    const topLevel = loadConfig(topLevelPath)
+    assert.equal(topLevel.attachments.maxInlineBytes, 1234)
+    assert.equal(topLevel.attachments.maxFileBytes, 20000000)
+    assert.equal(topLevel.attachments.maxTotalBytes, 70000000)
+
+    const legacyPath = path.join(root, "legacy.json")
+    await writeFile(
+      legacyPath,
+      JSON.stringify({
+        ...baseConfig,
+        telegram: { ...baseConfig.telegram, attachments: { maxInlineBytes: 4321, maxFileBytes: 12345678, maxTotalBytes: 76543210 } },
+      }),
+    )
+    const legacy = loadConfig(legacyPath)
+    assert.equal(legacy.attachments.maxInlineBytes, 4321)
+    assert.equal(legacy.attachments.maxFileBytes, 12345678)
+    assert.equal(legacy.attachments.maxTotalBytes, 76543210)
+
+    const precedencePath = path.join(root, "precedence.json")
+    await writeFile(
+      precedencePath,
+      JSON.stringify({
+        ...baseConfig,
+        attachments: { maxInlineBytes: 1111 },
+        telegram: { ...baseConfig.telegram, attachments: { maxInlineBytes: 2222 } },
+      }),
+    )
+    assert.equal(loadConfig(precedencePath).attachments.maxInlineBytes, 1111)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+async function smokeArtifactUploads() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-artifact-uploads-"))
+  try {
+    const posixServer = { id: "nuc", home: root, pathStyle: "posix", transfer: { type: "local" } }
+    const windowsServer = { id: "dima", home: "C:\\Users\\dima", pathStyle: "windows", transfer: { type: "ssh", host: "dima" } }
+    const servers = new Map([[posixServer.id, posixServer], [windowsServer.id, windowsServer]])
+    const opencode = {
+      config: { opencode: { defaultServerId: "nuc" } },
+      servers,
+      server(id) {
+        const server = servers.get(id)
+        if (!server) throw new Error(`Unknown server: ${id}`)
+        return server
+      },
+    }
+    const uploadConfig = { enabled: true, root: "~/trash", defaultServerId: "nuc", dateFolders: true }
+    assert.equal(resolveUploadTarget({ caption: "", uploadConfig, opencode }).server.id, "nuc")
+    assert.equal(resolveUploadTarget({ caption: "dima", uploadConfig, opencode }).server.id, "dima")
+    assert.equal(resolveUploadTarget({ caption: "missing", uploadConfig, opencode }).error, "unknown_server")
+    assert.equal(artifactTargetPath({ config: { artifactUploads: uploadConfig }, server: posixServer, filename: "notes.txt", now: new Date(2026, 6, 2) }), path.join(root, "trash", "2026-07-02", "notes.txt"))
+    assert.equal(artifactTargetPath({ config: { artifactUploads: uploadConfig }, server: windowsServer, filename: "notes.txt", now: new Date(2026, 6, 2) }), "C:\\Users\\dima\\trash\\2026-07-02\\notes.txt")
+
+    let downloadCalls = 0
+    const sent = []
+    const telegram = {
+      async sendMessage(payload) {
+        sent.push(payload)
+        return { message_id: sent.length }
+      },
+      async downloadFile({ destination }) {
+        downloadCalls += 1
+        await writeFile(destination, "hello")
+        return { file: { file_size: 5 } }
+      },
+    }
+    const config = {
+      paths: { uploadsDir: path.join(root, "uploads") },
+      attachments: { enabled: true, maxFiles: 10, maxFileBytes: 20000000, maxTotalBytes: 60000000, maxInlineBytes: 20000000 },
+      artifactUploads: uploadConfig,
+    }
+    const message = { chat: { id: 1 }, message_thread_id: 2, caption: "", media_group_id: undefined }
+    const result = await handleArtifactUploadMessage({
+      telegram,
+      config,
+      opencode,
+      message,
+      files: [{ kind: "document", fileID: "file-1", fileUniqueID: "unique-1", filename: "hello.txt", mime: "text/plain", size: 5 }],
+    })
+    assert.equal(result.status, "saved")
+    assert.equal(downloadCalls, 1)
+    assert.equal(await readFile(result.files[0].targetPath, "utf8"), "hello")
+    assert.match(sent.at(-1).text, /<blockquote>.*hello\.txt<\/blockquote>/s)
+
+    const multi = await handleArtifactUploadMessage({
+      telegram,
+      config,
+      opencode,
+      message,
+      files: [
+        { kind: "document", fileID: "file-2", fileUniqueID: "unique-2", filename: "same.txt", mime: "text/plain", size: 5 },
+        { kind: "document", fileID: "file-3", fileUniqueID: "unique-3", filename: "same.txt", mime: "text/plain", size: 5 },
+      ],
+    })
+    assert.equal(multi.status, "saved")
+    assert.equal(downloadCalls, 3)
+    assert.match(multi.files[0].targetPath, /same\.txt$/)
+    assert.match(multi.files[1].targetPath, /same-2\.txt$/)
+    assert.match(sent.at(-1).text, /same\.txt[\s\S]*same-2\.txt/)
+
+    const unknown = await handleArtifactUploadMessage({
+      telegram,
+      config,
+      opencode,
+      message: { ...message, caption: "missing" },
+      files: [{ kind: "document", fileID: "file-2", filename: "skip.txt", size: 5 }],
+    })
+    assert.equal(unknown.status, "unknown_server")
+    assert.equal(downloadCalls, 3)
+    assert.match(sent.at(-1).text, /Unknown artifact upload server/)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 }
 
 function smokeToolFormatting() {

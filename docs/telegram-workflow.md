@@ -12,7 +12,7 @@ Deleting or closing a Telegram topic is treated as an explicit stop for that top
 
 If `telegram.chatId` is missing and `telegram.allowChatBootstrap` is enabled, the first message from an allowed user initializes the chat in local state. For a shared bot, set `telegram.chatId` and `telegram.allowedUserIds` deliberately instead of relying on accidental bootstrap messages.
 
-When OpenCodez later updates a session title, the linked Telegram topic is renamed too unless the topic title came directly from the user. This lets placeholder titles such as a template name become real session titles, while `/new nuc gpt55p Refactor auth` keeps `Refactor auth`. New topics use a random forum icon when Telegram exposes available topic icon stickers to the bot.
+When OpenCodez later updates a session title, the linked Telegram topic is renamed too unless the topic title came directly from the user. This lets placeholder titles such as a template name become real session titles, while `/new local gpt55p Refactor auth` keeps `Refactor auth`. New topics use a random forum icon when Telegram exposes available topic icon stickers to the bot.
 
 ## Commands
 
@@ -22,7 +22,7 @@ When OpenCodez later updates a session title, the linked Telegram topic is renam
 /q <prompt>                       queue or send a prompt in this topic/session
 /q status                         show queued prompts
 /q delete <number>                remove a queued prompt by status number
-/artifacts_here                   make this topic the single agent artifact target
+/artifacts_here                   make this topic the artifact target and file dropbox
 /notify_on                       enable final-answer DMs for configured recipients
 /notify_off                      disable final-answer DMs for configured recipients
 /notify_status                   show configured final-answer DM status
@@ -33,7 +33,7 @@ When OpenCodez later updates a session title, the linked Telegram topic is renam
 
 The bot syncs this slash-command menu on startup through Bot API `setMyCommands` for default, private-chat, group-chat, administrator, configured-chat, and configured-member scopes, so the same commands should appear in Telegram's command suggestions.
 
-`/artifacts_here` marks the current forum topic as the only artifact target for agent uploads. If another topic later runs `/artifacts_here`, the new topic replaces the old one. Artifact topics do not mirror OpenCodez sessions, and ordinary messages or attachments in them are not sent to OpenCodez. See [Artifact Gateway](artifact-gateway.md) for plugin and gateway setup.
+`/artifacts_here` marks the current forum topic as the only artifact target for agent uploads. If another topic later runs `/artifacts_here`, the new topic replaces the old one. Artifact topics do not mirror OpenCodez sessions. Ordinary text there is ignored as a prompt, while user-dropped files are saved to the configured artifact upload folder. See [Artifact Gateway](artifact-gateway.md) for plugin, gateway, and file dropbox setup.
 
 `/session` is a small operator command for the current topic. It shows Telegram chat/topic/message ids, the active or last stored binding, OpenCodez server/session details, a web session URL when the backend session can be read, and artifact target status. It works in normal mirror topics and artifact topics, and it does not print secrets or runtime tokens.
 
@@ -45,8 +45,8 @@ Examples:
 /new TGBOT
 /new ser Release check
 /new d4flash Fix upload flow
-/new nuc gpt55p Architecture pass
-/new nuc gpt55p dir:/home/bloob/politia/projects/tg/opencodebot Artifact gateway
+/new local gpt55p Architecture pass
+/new local gpt55p dir:/srv/opencodebot Artifact gateway
 /new dima d4flash dir:"C:\Users\dima\code\voltaren" voltaren
 ```
 
@@ -66,7 +66,7 @@ Telegram-origin prompts can include attachments. The bot downloads supported fil
 dima upload root: /home/dima/.opencodebot/uploads
 ```
 
-Supported attachment inputs include documents, photos, videos, animations, audio, voice messages, video notes, and media groups. File count, file size, total size, and cleanup limits are fixed conservative defaults in code.
+Supported attachment inputs include documents, photos, videos, animations, audio, voice messages, video notes, and media groups. File count, file size, total size, and cleanup limits are conservative runtime settings. Cloud Bot API mode clamps download size to Telegram's cloud limit; local Bot API mode can accept larger files when configured.
 
 ## Queue
 

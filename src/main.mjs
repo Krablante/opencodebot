@@ -1,5 +1,6 @@
 import { assertRuntimeConfig, loadConfig } from "./config.mjs"
 import { startArtifactGateway } from "./artifacts-gateway.mjs"
+import { ArtifactUploadBuffer, handleArtifactUploadMessage } from "./artifact-uploads.mjs"
 import { cleanupUploads, extractTelegramFiles } from "./attachments.mjs"
 import { createBackendRequester } from "./backend-backoff.mjs"
 import { parseNewTopicArgs } from "./chat-templates.mjs"
@@ -21,7 +22,7 @@ const state = new StateStore(config.paths.statePath)
 await state.load()
 if (config.telegram.chatId && !state.chatId) await state.setChatId(config.telegram.chatId)
 
-  const telegram = new TelegramClient(config.telegram.token, config.telegram.botApi)
+const telegram = new TelegramClient(config.telegram.token, config.telegram.botApi)
 const botInfo = await telegram.getMe()
 const opencode = new OpenCodeClient(config)
 const finalNotifier = createFinalNotifier({ config, state, telegram, opencode })
@@ -58,6 +59,11 @@ const backendRequester = createBackendRequester()
 const skippedBackendRequest = backendRequester.skipped
 const backendRequest = backendRequester.request
 const commandHandlers = createTelegramCommandHandlers({ config, state, telegram, opencode, promptQueue, multipartPrompts, createPendingTopic })
+const artifactUploads = new ArtifactUploadBuffer({
+  settings: config.artifactUploads,
+  flushUpload: ({ message, files }) => handleArtifactUploadMessage({ telegram, config, opencode, message, files }),
+  onError: logError,
+})
 sessionReconciler = createSessionReconciler({
   config,
   state,
@@ -84,6 +90,7 @@ const telegramPolling = createTelegramPolling({
   commandHandlers,
   handleTopicLifecycleMessage,
   handleAttachmentMessage,
+  handleArtifactUploadMessage: ({ message, files }) => artifactUploads.add({ message, files }),
   extractTelegramFiles,
   hasPendingAttachmentBatch: promptRouter.hasPendingAttachmentBatch,
   queueTelegramPrompt,

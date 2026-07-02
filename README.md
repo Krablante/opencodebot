@@ -19,7 +19,7 @@ The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/eve
 - Rich assistant messages sent as completed blocks instead of noisy token streaming.
 - Expandable tool quotes with configurable hidden tools.
 - Attachments and Telegram media groups attached to the next prompt; large files are copied to the target server's configured upload root and referenced by server-local path.
-- Optional Telegram artifact gateway for sending agent-created files, screenshots, logs, and text into one dedicated artifacts topic.
+- Optional Telegram artifact gateway for sending agent-created files, screenshots, logs, and text into one dedicated artifacts topic; the same topic can accept user-dropped files and save them to a configured server folder.
 - Optional local Telegram Bot API sidecar for higher file limits and streaming artifact delivery without a separate project.
 - Multipart prompt buffering for Telegram clients that split long messages.
 - Optional WireGuard helper for private off-LAN access to the existing OpenCodez web UI.
@@ -128,13 +128,13 @@ The local Telegram Bot API sidecar is also optional. Add `TELEGRAM_API_ID` and `
 
 Use `/start` or `/help` when you want the bot to show its command summary. These commands are safe to run in a normal topic, and they do not create or change an OpenCodez session.
 
-Use `/new` when you want a fresh Telegram topic and a new OpenCodez session. You can give it a server id, an optional chat template, an optional `dir:<path>` override, and a title. If no server id is given, the default server is used, so `/new gpt55p gitt` is equivalent to `/new nuc gpt55p gitt` in the Politia runtime. After the topic is created, send the first prompt in that topic.
+Use `/new` when you want a fresh Telegram topic and a new OpenCodez session. You can give it a server id, an optional chat template, an optional `dir:<path>` override, and a title. If no server id is given, the configured default server is used. After the topic is created, send the first prompt in that topic.
 
 Use `/q` inside an existing OpenCodez topic when you want to queue another prompt for the same session. `/q status` shows the queue, and `/q delete 2` removes a queued item by number.
 
 Use `/session` inside a topic when you want to see what Telegram topic is bound to which OpenCodez server/session. It also shows the web session URL and whether the current topic is the artifacts target.
 
-Use `/artifacts_here` inside a forum topic when you want that topic to become the single Telegram target for agent-sent artifacts. After that, `opencodebot_send_artifact` sends files, screenshots, logs, or text to that topic.
+Use `/artifacts_here` inside a forum topic when you want that topic to become the single Telegram target for agent-sent artifacts. After that, `opencodebot_send_artifact` sends files, screenshots, logs, or text to that topic. Files dropped by a user in the same topic are saved under `artifactUploads.root` on the default server, or on the server named by the file caption.
 
 Use `/notify_on`, `/notify_off`, and `/notify_status` to manage private final-answer notifications for the configured recipients. Those DMs include the source topic, an `Open topic` button, context quotes, and a completed task list when the agent closed one.
 
@@ -146,7 +146,7 @@ Default chat templates are `d4flash`, `d4pro`, and `gpt55p`. Public defaults use
 
 - [Telegram Workflow](docs/telegram-workflow.md) covers topics, `/new`, `/q`, attachments, multipart prompts, rich messages, tools, user-prompt pins, final notifications, and reconcile.
 - [Config And Runtime](docs/config-runtime.md) covers config loading, token handling, templates, mirror settings, attachments, and state.
-- [Artifact Gateway](docs/artifact-gateway.md) covers `/artifacts_here`, the LAN gateway, the OpenCodez plugin, and the bundled skill.
+- [Artifact Gateway](docs/artifact-gateway.md) covers `/artifacts_here`, the LAN gateway, user-dropped artifact uploads, the OpenCodez plugin, and the bundled skill.
 - [Docker](docs/docker.md) covers the recommended Compose deployment path.
 - [Development](docs/development.md) covers source layout, checks, smoke tests, service restart, and change style.
 - [WireGuard](docs/wireguard.md) covers the optional private access helper and what it does not own.

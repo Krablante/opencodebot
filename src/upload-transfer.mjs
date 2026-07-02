@@ -42,7 +42,7 @@ async function transferSavedFile(file, { server, sessionID }) {
   }
 }
 
-async function transferFile({ localPath, targetPath, server }) {
+export async function transferFile({ localPath, targetPath, server }) {
   const transfer = server.transfer || { type: "local" }
   if (transfer.type === "local") {
     await fsp.mkdir(parentPath(targetPath, pathStyle(server)), { recursive: true })
@@ -140,7 +140,7 @@ function safeSegment(value) {
   return text || shortHash(String(value || "segment"))
 }
 
-function safeFilename(value) {
+export function safeFilename(value) {
   const text = String(value || "file")
     .replace(/[\x00-\x1f\x7f/\\]/g, "-")
     .replace(/\s+/g, " ")
