@@ -213,13 +213,15 @@ export function textFromPrompt(prompt) {
   if (!prompt) return ""
   if (typeof prompt === "string") return prompt
   if (typeof prompt.text === "string") return prompt.text
-  if (Array.isArray(prompt.parts)) {
-    return prompt.parts
-      .filter((part) => part?.type === "text" && typeof part.text === "string")
-      .map((part) => part.text)
-      .join("\n")
-  }
+  if (Array.isArray(prompt.parts)) return visibleTextFromParts(prompt.parts)
   return ""
+}
+
+export function visibleTextFromParts(parts, joiner = "\n") {
+  return (parts || [])
+    .filter((part) => part?.type === "text" && part.synthetic !== true && typeof part.text === "string")
+    .map((part) => part.text)
+    .join(joiner)
 }
 
 export function titleFromText(text, fallback = "OpenCodez") {

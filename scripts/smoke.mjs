@@ -11,7 +11,7 @@ import { parseNewTopicArgs } from "../src/chat-templates.mjs"
 import { loadConfig } from "../src/config.mjs"
 import { completedTodosBeforeAssistant, createFinalNotifier, finalNotificationMarkdown, finalNotificationTopicSource, formatCompletedTodoMarkdown } from "../src/final-notifications.mjs"
 import { MultipartPromptBuffer } from "../src/multipart-prompts.mjs"
-import { OpenCodeClient, promptPayload } from "../src/opencode.mjs"
+import { OpenCodeClient, promptPayload, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { StateStore } from "../src/state.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
@@ -55,6 +55,7 @@ if (failed) process.exitCode = 1
 async function smokeLocalLogic() {
   smokeNewParser()
   smokeOpenCodeDirectories()
+  smokePromptTextFilters()
   smokeToolFormatting()
   await smokeFinalNotificationTodos()
   smokeArtifactCaptionPaths()
@@ -106,6 +107,18 @@ function smokeNewParser() {
   })
   assert.equal(windowsPath.directory, "C:\\Users\\dima\\My Projects\\voltaren")
   assert.equal(windowsPath.title, "voltaren")
+}
+
+function smokePromptTextFilters() {
+  assert.equal(
+    visibleTextFromParts([
+      { type: "text", synthetic: true, text: "Called the Read tool with the following input" },
+      { type: "text", synthetic: true, text: "<article>file body</article>" },
+      { type: "file", filename: "aricle.txt", mime: "text/html" },
+      { type: "text", text: "Привет еще раз, видишь файл? Это впрос" },
+    ]),
+    "Привет еще раз, видишь файл? Это впрос",
+  )
 }
 
 function smokeOpenCodeDirectories() {

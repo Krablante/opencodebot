@@ -1,5 +1,5 @@
 import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
-import { textFromPrompt } from "./opencode.mjs"
+import { textFromPrompt, visibleTextFromParts } from "./opencode.mjs"
 import { formatToolLine } from "./render.mjs"
 import { escapeHtml } from "./telegram.mjs"
 
@@ -48,7 +48,10 @@ export function createSessionReconciler({
         case "session.next.prompted": {
           promptQueue.markBusy(binding)
           const text = textFromPrompt(properties.prompt)
-          if (!text) return
+          if (!text) {
+            if (properties.messageID) await state.markUserMirrored(server.id, sessionID, properties.messageID)
+            return
+          }
           const consumed = await state.consumePendingPrompt(server.id, sessionID, text)
           if (consumed) await pinConsumedTelegramPrompt(binding, consumed)
           else await renderer.userPrompt(binding, text, "web")
@@ -180,7 +183,11 @@ export function createSessionReconciler({
       if (!messageInReconcileWindow(info, window)) continue
       if (info.role === "user") {
         const text = textFromStoredMessage(message)
-        if (text && info.id && !state.isUserMirrored(binding.serverID, binding.sessionID, info.id)) {
+        if (info.id && !state.isUserMirrored(binding.serverID, binding.sessionID, info.id)) {
+          if (!text) {
+            await state.markUserMirrored(binding.serverID, binding.sessionID, info.id)
+            continue
+          }
           const consumed = await state.consumePendingPrompt(binding.serverID, binding.sessionID, text)
           if (!consumed) await renderer.userPrompt(binding, text, "web")
           await state.markUserMirrored(binding.serverID, binding.sessionID, info.id)
@@ -291,10 +298,7 @@ function sessionErrorText(properties) {
 }
 
 function textFromStoredMessage(message) {
-  return (message.parts || [])
-    .filter((part) => part?.type === "text" && part.text)
-    .map((part) => part.text)
-    .join("\n")
+  return visibleTextFromParts(message.parts || [])
 }
 
 function compactStoredToolLine(part, renderer) {
