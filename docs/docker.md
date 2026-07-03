@@ -60,11 +60,34 @@ OPENCODEBOT_SERVERS_FILE=/path/to/servers.json
 OPENCODEBOT_TOKEN_ENV_FILE=/path/to/token.env
 OPENCODEBOT_STATE_DIR=/path/to/state
 OPENCODEBOT_UPLOAD_ROOT=/home/alice/.opencodebot/uploads
+OPENCODEBOT_ARTIFACT_UPLOAD_SOURCE=/home/alice/trash
 OPENCODEBOT_ARTIFACT_UPLOAD_ROOT=/home/alice/trash
 OPENCODEBOT_SSH_DIR=/home/alice/.ssh
 ```
 
-`OPENCODEBOT_ARTIFACT_UPLOAD_ROOT` is the host path used for files dropped by users in the `/artifacts_here` topic. If `artifactUploads.root` is `~/trash`, set this variable to the same absolute path that `~` expands to on the local server, such as `/home/alice/trash`, so the container can write the folder and the bot can report the real host path.
+## Artifact Dropbox Paths
+
+Files dropped by users in the `/artifacts_here` topic are saved under the selected server's artifact upload root. The path printed back to Telegram is the server path, not an arbitrary container scratch path. With the default config, `artifactUploads.root` is `~/trash`, so a server whose `home` is `/home/alice` gets files under `/home/alice/trash/YYYY-MM-DD/`.
+
+Docker adds one extra requirement: the bot container must be able to write that folder. Compose therefore has two artifact dropbox variables. `OPENCODEBOT_ARTIFACT_UPLOAD_SOURCE` is the host folder Docker mounts. `OPENCODEBOT_ARTIFACT_UPLOAD_ROOT` is where that folder appears inside the container. When the selected server uses `transfer: { "type": "local" }`, this container path must match the server path the bot is going to write.
+
+For a normal Linux or macOS host where Docker and the default OpenCodez server share the same host folder, set both values to the same absolute path. On Linux this is often under `/home/alice`; on macOS it is often under `/Users/Alice`.
+
+```env
+OPENCODEBOT_ARTIFACT_UPLOAD_SOURCE=/home/alice/trash
+OPENCODEBOT_ARTIFACT_UPLOAD_ROOT=/home/alice/trash
+```
+
+For a simple local-only setup where you are fine with container-style paths, leave the defaults and set `artifactUploads.root` to `/app/artifact-uploads` or set a matching `artifactUploadRoot` on the local server. This is easy to mount, but the path shown in Telegram will be a container path, so it is usually less convenient for a human-operated desktop host.
+
+```env
+OPENCODEBOT_ARTIFACT_UPLOAD_SOURCE=./trash
+OPENCODEBOT_ARTIFACT_UPLOAD_ROOT=/app/artifact-uploads
+```
+
+On Docker Desktop for Windows, a Windows path such as `C:\Users\Alice\trash` is a good server path to show to OpenCodez and to the user, but it is not a good Linux container target path. For Windows hosts, prefer either running opencodebot directly with Node on Windows, or using `transfer: { "type": "ssh" }` for that Windows server so the bot copies files to `C:\Users\Alice\trash` through SSH. If you intentionally use local Docker transfer on Windows, make sure Docker mounts the Windows folder to a container path and configure the server's artifact root to the path the container can actually write.
+
+Remote servers are different. If the selected server uses SSH transfer, Docker does not need the remote final folder as a bind mount. The bot downloads the Telegram file into its own runtime area, then copies it to the remote server's `artifactUploadRoot` or expanded `artifactUploads.root` over SSH.
 
 ## OpenCodez URL
 
@@ -87,7 +110,7 @@ If OpenCodez is reachable on your LAN, use the LAN URL:
 }
 ```
 
-If OpenCodez runs on the same machine as Docker Desktop, use:
+If OpenCodez runs on the same Windows machine as Docker Desktop and you want the bot to report Windows paths, prefer SSH transfer to the Windows host. The OpenCodez URL can still use `host.docker.internal`, while file copies go through Windows OpenSSH or another SSH server reachable from the container.
 
 ```json
 {
@@ -98,12 +121,15 @@ If OpenCodez runs on the same machine as Docker Desktop, use:
       "url": "http://host.docker.internal:4096",
       "home": "C:\\Users\\Alice",
       "uploadRoot": "C:\\Users\\Alice\\.opencodebot\\uploads",
+      "artifactUploadRoot": "C:\\Users\\Alice\\trash",
       "pathStyle": "windows",
-      "transfer": { "type": "local" }
+      "transfer": { "type": "ssh", "host": "host.docker.internal", "user": "Alice" }
     }
   ]
 }
 ```
+
+Use `transfer: { "type": "local" }` with Docker Desktop only when the server paths in `servers.json` are paths the Linux container can actually write. That is usually fine for WSL-style or container-style paths, but not for plain `C:\...` paths.
 
 Do not use `127.0.0.1` for host OpenCodez from inside Docker unless you intentionally run the container with host networking. In normal Compose networking, `127.0.0.1` means the container itself.
 

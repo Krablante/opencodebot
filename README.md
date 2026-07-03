@@ -134,7 +134,7 @@ Use `/q` inside an existing OpenCodez topic when you want to queue another promp
 
 Use `/session` inside a topic when you want to see what Telegram topic is bound to which OpenCodez server/session. It also shows the web session URL and whether the current topic is the artifacts target.
 
-Use `/artifacts_here` inside a forum topic when you want that topic to become the single Telegram target for agent-sent artifacts. After that, `opencodebot_send_artifact` sends files, screenshots, logs, or text to that topic. Files dropped by a user in the same topic are saved under `artifactUploads.root` on the default server, or on the server named by the file caption.
+Use `/artifacts_here` inside a forum topic when you want that topic to become the single Telegram target for agent-sent artifacts. After that, `opencodebot_send_artifact` sends files, screenshots, logs, or text to that topic. Files dropped by a user in the same topic are saved under `artifactUploads.root` on the default server, or on the server named by the file caption. Docker deployments must also mount that local artifact root; see [Docker](docs/docker.md#artifact-dropbox-paths).
 
 Use `/notify_on`, `/notify_off`, and `/notify_status` to manage private final-answer notifications for the configured recipients. Those DMs include the source topic, an `Open topic` button, context quotes, and a completed task list when the agent closed one.
 
