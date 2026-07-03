@@ -1,13 +1,16 @@
-import { createServer } from "node:http"
-import { randomUUID, timingSafeEqual } from "node:crypto"
-import { createWriteStream } from "node:fs"
+import { timingSafeEqual } from "node:crypto"
 import fsp from "node:fs/promises"
+import { createServer } from "node:http"
 import path from "node:path"
-import { once } from "node:events"
 
+import { cleanupPayloadSpool, readFileStreamBody, readJsonBody } from "./artifacts/http-body.mjs"
+import { publicError, statusForError } from "./artifacts/errors.mjs"
+import { artifactFileCaptionHtml, artifactPathLines, clampText, safeContentType, safeFilename } from "./artifacts/formatting.mjs"
 import { durationMs, logErrorEvent, logInfo, logWarn } from "./logger.mjs"
 import { escapeMarkdownV2, toolQuoteMarkdownV2 } from "./rich-markdown.mjs"
-import { escapeHtml, telegramMessageLink } from "./telegram.mjs"
+import { telegramMessageLink } from "./telegram.mjs"
+
+export { artifactFileCaptionHtml, artifactPathLines } from "./artifacts/formatting.mjs"
 
 const PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"])
 const TELEGRAM_PHOTO_MAX_BYTES = 10 * 1024 * 1024
@@ -120,81 +123,6 @@ async function sendTextArtifact({ telegram, target, caption, captionPaths, text 
   }
 }
 
-export function artifactFileCaptionHtml(caption, captionPaths) {
-  const lines = [escapeHtml(caption)]
-  const pathLines = artifactPathLines(captionPaths)
-  if (pathLines.length) lines.push("", `<blockquote>${pathLines.map((line) => escapeHtml(line)).join("\n")}</blockquote>`)
-  return clampTelegramCaptionHtml(lines.join("\n"))
-}
-
-export function artifactPathLines(captionPaths) {
-  const paths = Array.isArray(captionPaths) ? captionPaths.map((value) => String(value || "").trim()).filter(Boolean) : []
-  if (!paths.length) return []
-  const values = paths.map((filePath) => displayPathInfo(filePath))
-  if (values.length === 1) return [values[0].display]
-  const directories = new Set(values.map((filePath) => filePath.directoryKey))
-  if (directories.size === 1) return [values[0].directoryDisplay, values.map((filePath) => filePath.basename).join(", ")]
-  return values.map((filePath) => filePath.display)
-}
-
-function displayPathInfo(value) {
-  const display = displayPathString(value)
-  const flavor = pathFlavor(display)
-  const parser = flavor === "win32" ? path.win32 : path.posix
-  const directory = parser.dirname(display)
-  return {
-    display,
-    basename: parser.basename(display),
-    directoryDisplay: cleanDirectoryDisplay(directory, flavor),
-    directoryKey: directoryKey(directory, flavor),
-  }
-}
-
-function displayPathString(value) {
-  const input = String(value)
-  const fileUrlPath = fileUrlPathForDisplay(input)
-  return fileUrlPath || input
-}
-
-function fileUrlPathForDisplay(value) {
-  try {
-    const url = new URL(value)
-    if (url.protocol !== "file:") return null
-    const pathname = decodeURIComponent(url.pathname)
-    if (url.hostname && url.hostname !== "localhost") return `//${url.hostname}${pathname}`
-    if (/^\/[A-Za-z]:\//.test(pathname)) return pathname.slice(1)
-    return pathname
-  } catch {
-    return null
-  }
-}
-
-function pathFlavor(value) {
-  if (/^[A-Za-z]:[\\/]/.test(value)) return "win32"
-  if (/^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+/.test(value)) return "win32"
-  if (value.includes("\\")) return "win32"
-  return "posix"
-}
-
-function directoryKey(directory, flavor) {
-  if (flavor !== "win32") return directory
-  const normalized = directory.replace(/\//g, "\\").replace(/\\+$/, "")
-  return (normalized || directory.replace(/\//g, "\\")).toLowerCase()
-}
-
-function cleanDirectoryDisplay(directory, flavor) {
-  if (flavor !== "win32") return directory
-  if (/^[A-Za-z]:[\\/]$/.test(directory)) return directory
-  if (/^(?:\\\\|\/\/)[^\\/]+[\\/][^\\/]+[\\/]$/.test(directory)) return directory.slice(0, -1)
-  return directory
-}
-
-function clampTelegramCaptionHtml(value, maxChars = 950) {
-  const text = String(value || "")
-  if (text.length <= maxChars) return text
-  return `${text.slice(0, Math.max(0, maxChars - 34)).trimEnd()}\n...truncated artifact caption...`
-}
-
 function fileFromPayload(file, maxFileBytes) {
   const size = Number(file?.size || 0)
   if (!file?.localPath) throw publicError("missing_file_path", "Streaming file payload is missing local spool path.", 400)
@@ -247,92 +175,6 @@ function isAuthorized(request, token) {
   return left.length === right.length && timingSafeEqual(left, right)
 }
 
-async function readJsonBody(request, maxBytes) {
-  const chunks = []
-  let total = 0
-  for await (const chunk of request) {
-    total += chunk.length
-    if (total > maxBytes) throw publicError("payload_too_large", `Payload is too large; max ${maxBytes} bytes.`, 413)
-    chunks.push(chunk)
-  }
-  if (!chunks.length) throw publicError("empty_payload", "Request body is empty.", 400)
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"))
-  } catch {
-    throw publicError("invalid_json", "Request body must be JSON.", 400)
-  }
-}
-
-async function readFileStreamBody(request, config) {
-  const metadata = readStreamMetadata(request)
-  const contentLength = Number(request.headers["content-length"] || 0)
-  if (Number.isFinite(contentLength) && contentLength > config.artifacts.maxFileBytes) {
-    throw publicError("file_too_large", `File is too large (${contentLength} bytes; max ${config.artifacts.maxFileBytes}).`, 413)
-  }
-  const filename = safeFilename(metadata?.file?.filename || metadata?.filename)
-  const contentType = safeContentType(metadata?.file?.contentType || metadata?.contentType || request.headers["content-type"])
-  const spoolDir = config.telegram.botApi.spoolDir
-  await fsp.mkdir(spoolDir, { recursive: true, mode: 0o755 })
-  await fsp.chmod(spoolDir, 0o755).catch(() => {})
-  const localDir = path.join(spoolDir, `${Date.now()}-${randomUUID()}`)
-  await fsp.mkdir(localDir, { recursive: false, mode: 0o755 })
-  await fsp.chmod(localDir, 0o755).catch(() => {})
-  const localPath = path.join(localDir, filename)
-  let size = 0
-  try {
-    size = await writeLimitedStream({ input: request, localPath, maxBytes: config.artifacts.maxFileBytes })
-    if (size) {
-      return {
-        ...metadata,
-        _stream: true,
-        file: { localPath, localDir, size, filename, contentType },
-      }
-    }
-  } catch (error) {
-    await fsp.rm(localDir, { recursive: true, force: true })
-    throw error
-  }
-  await fsp.rm(localDir, { recursive: true, force: true })
-  throw publicError("empty_file", "File payload is empty.", 400)
-}
-
-function readStreamMetadata(request) {
-  const encoded = String(request.headers["x-opencodebot-artifact-meta"] || "")
-  if (!encoded) return {}
-  try {
-    return JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"))
-  } catch {
-    throw publicError("invalid_artifact_metadata", "x-opencodebot-artifact-meta must be base64url JSON.", 400)
-  }
-}
-
-async function writeLimitedStream({ input, localPath, maxBytes }) {
-  const output = createWriteStream(localPath, { flags: "wx", mode: 0o644 })
-  let total = 0
-  try {
-    for await (const chunk of input) {
-      total += chunk.length
-      if (total > maxBytes) throw publicError("file_too_large", `File is too large; max ${maxBytes} bytes.`, 413)
-      if (!output.write(chunk)) await once(output, "drain")
-    }
-    output.end()
-    await once(output, "finish")
-    return total
-  } catch (error) {
-    output.destroy()
-    await fsp.rm(localPath, { force: true })
-    throw error
-  }
-}
-
-async function cleanupPayloadSpool(payload) {
-  if (!payload?._stream || !payload.file?.localPath) return
-  await fsp.rm(payload.file.localPath, { force: true })
-  if (payload.file.localDir) {
-    await fsp.rm(payload.file.localDir, { recursive: true, force: true })
-  }
-}
-
 function sendJson(response, status, payload) {
   response.writeHead(status, { "content-type": "application/json" })
   response.end(JSON.stringify(payload))
@@ -344,32 +186,4 @@ function requestPathname(request) {
   } catch {
     return request.url || "/"
   }
-}
-
-function statusForError(error) {
-  return error.statusCode || 500
-}
-
-function publicError(publicCode, publicMessage, statusCode) {
-  const error = new Error(publicMessage)
-  error.publicCode = publicCode
-  error.publicMessage = publicMessage
-  error.statusCode = statusCode
-  return error
-}
-
-function safeFilename(value) {
-  const name = displayPathInfo(value || "artifact.bin").basename.replace(/[\u0000-\u001f]/g, "").trim()
-  return name || "artifact.bin"
-}
-
-function safeContentType(value) {
-  const type = String(value || "application/octet-stream").trim().toLowerCase()
-  return /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(type) ? type : "application/octet-stream"
-}
-
-function clampText(text, maxChars) {
-  const value = String(text || "")
-  if (value.length <= maxChars) return value
-  return `${value.slice(0, Math.max(0, maxChars - 35)).trimEnd()}\n\n[trimmed for Telegram message limit]`
 }
