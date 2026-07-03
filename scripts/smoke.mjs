@@ -8,6 +8,7 @@ import { artifactTargetPath, handleArtifactUploadMessage, resolveUploadTarget } 
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
+import { OpencodebotArtifactsPlugin } from "../plugins/opencodebot-artifacts/src/index.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, "..")
@@ -21,6 +22,7 @@ async function smokeLocalInvariants() {
   smokeConfigExample()
   smokeSyntheticTextFilter()
   await smokeArtifactDropbox()
+  await smokeArtifactPluginBatchCaptions()
 }
 
 function smokeConfigExample() {
@@ -98,6 +100,32 @@ async function smokeArtifactDropbox() {
     assert.equal(downloadCalls, 0)
     assert.match(sent.at(-1).text, /Unknown artifact upload server/)
   } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+async function smokeArtifactPluginBatchCaptions() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-plugin-smoke-"))
+  const originalFetch = globalThis.fetch
+  try {
+    const first = path.join(root, "first.txt")
+    const second = path.join(root, "second.txt")
+    await writeFile(first, "first\n")
+    await writeFile(second, "second\n")
+    const metadata = []
+    globalThis.fetch = async (url, options = {}) => {
+      assert.match(String(url), /\/artifacts\/send-file$/)
+      const encoded = options.headers?.["x-opencodebot-artifact-meta"]
+      metadata.push(JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")))
+      for await (const _chunk of options.body) {}
+      return { ok: true, status: 200, async json() { return { ok: true, messages: [{ method: "sendDocument", messageId: metadata.length }] } } }
+    }
+    const plugin = await OpencodebotArtifactsPlugin({}, { gatewayUrl: "http://opencodebot.local:8788", token: "test-token" })
+    await plugin.tool.opencodebot_send_artifact.execute({ paths: [first, second], caption: "local/test/upload", mode: "document" }, { directory: root })
+    assert.deepEqual(metadata.map((item) => item.captionPaths), [[first], [second]])
+    assert.deepEqual(metadata.map((item) => item.file.filename), ["first.txt", "second.txt"])
+  } finally {
+    globalThis.fetch = originalFetch
     await rm(root, { recursive: true, force: true })
   }
 }

@@ -39,7 +39,7 @@ opencodebot_send_artifact({ path?, paths?, text?, caption, mode? })
 
 File sends use the gateway streaming endpoint. When opencodebot runs with its local Telegram Bot API sidecar, the gateway can hand the spooled file to Telegram by local path and use Telegram's higher local Bot API limits. Telegram-visible file names preserve the requested file basename; unique spool IDs live in parent directories, not in the uploaded filename.
 
-When `path` or `paths` is used, the gateway appends a quoted path block to the Telegram caption. One file is shown as a full absolute path. Multiple files in one directory are shown as the absolute directory plus comma-separated file names. Files from different directories are listed as absolute paths.
+When `path` or `paths` is used, the gateway appends a quoted path block to the Telegram caption. Each streamed file message shows the path for that file only. If `text` is sent alongside a batch, the separate text message may include the full batch path list as context.
 
 Example batch send:
 

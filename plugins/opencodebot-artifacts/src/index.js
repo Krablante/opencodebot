@@ -51,7 +51,7 @@ Use this only when the user explicitly asks to send, upload, share, or forward s
             responses.push(await sendPayload({ gatewayUrl, token, payload }))
           } else {
             for (const filePath of filePaths) {
-              responses.push(await sendFileStream({ gatewayUrl, token, payload: commonPayload, file: await fileMetadata(filePath, args, Number(args.maxBytes || DEFAULT_MAX_BYTES)) }))
+              responses.push(await sendFileStream({ gatewayUrl, token, payload: { ...commonPayload, captionPaths: [filePath] }, file: await fileMetadata(filePath, args, Number(args.maxBytes || DEFAULT_MAX_BYTES)) }))
             }
           }
         }
