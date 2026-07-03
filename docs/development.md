@@ -12,13 +12,15 @@ Run syntax checks:
 npm run check
 ```
 
-Run local contract smoke checks:
+Run the short smoke check:
 
 ```bash
 npm run smoke
 ```
 
-`npm run check` is implemented as a Node script so it works on Linux, macOS, and Windows without relying on shell glob expansion. `npm run smoke` without arguments is a local contract smoke and uses `config.example.json`. It checks local logic for `/new` parsing, tool formatting, final-notification todo summaries, prompt queue behavior, multipart prompt buffering, and attachment buffering, then loads the selected config, checks Telegram `getMe`, probes OpenCodez servers, and verifies chat-template selection with a temporary session when the selected server is not marked `offline_ok`. It should not send prompts or print tokens.
+`npm run check` is implemented as a Node script so it works on Linux, macOS, and Windows without relying on shell glob expansion. `npm run smoke` is intentionally small: it checks that the example config still parses, synthetic file text is not mirrored as a prompt, artifact-topic uploads reject unknown hosts before downloading, and artifact upload paths stay stable across POSIX and Windows hosts. When a valid runtime config is available, it also checks Telegram `getMe` and probes configured OpenCodez servers with `GET /session`. It should not create sessions, send prompts, or print tokens.
+
+Do not turn smoke into a broad unit test suite. This is a small operated bot, so checks should protect painful production regressions rather than every formatter branch and helper function.
 
 On Windows, use PowerShell and the same npm commands:
 
@@ -41,7 +43,7 @@ Run live Compose smoke against the running service:
 npm run smoke:live
 ```
 
-`smoke:live` executes `npm run smoke -- /app/config.local.json` inside the running Compose container, so it checks the live runtime config instead of `config.example.json`.
+`smoke:live` executes `npm run smoke -- /app/config.local.json` inside the running Compose container, so it checks the live runtime config with the same lightweight smoke contract.
 
 ## Service
 
@@ -61,7 +63,7 @@ Prefer small modules with clear ownership over broad rewrites. Good extraction t
 
 Do not introduce TypeScript as a build pipeline by default. A useful future step would be lightweight JSDoc or `tsc --checkJs` style checking if it can run without changing the Compose runtime shape.
 
-Tests should stay proportional. Add focused checks when behavior is clean and easy to break, such as queue ordering, attachment flushing, `/new` parsing, or tool formatting. Avoid pretending this is an enterprise test suite.
+Tests should stay proportional. Add or keep checks only when a regression is expensive to catch manually or has already caused production pain. Avoid pretending this is an enterprise test suite.
 
 ## Git
 
