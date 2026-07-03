@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -129,6 +129,27 @@ async function smokeRuntimeHealth(runtimeConfig, { explicit }) {
       console.log(`${server.id}: offline (${compactError(error)})`)
     }
   }
+  if (explicit) await smokeArtifactRootWritable(runtimeConfig, opencode)
+}
+
+async function smokeArtifactRootWritable(runtimeConfig, opencode) {
+  if (!runtimeConfig.artifactUploads?.enabled) return
+  const serverID = runtimeConfig.artifactUploads.defaultServerId || runtimeConfig.defaultPrompt?.serverID
+  if (!serverID) return
+  let server
+  try {
+    server = opencode.server(serverID)
+  } catch {
+    return
+  }
+  if (server.transfer?.type !== "local") return
+  const filename = `.opencodebot-smoke-${Date.now()}.txt`
+  const targetPath = artifactTargetPath({ config: runtimeConfig, server, filename })
+  const targetDir = server.pathStyle === "windows" ? path.win32.dirname(targetPath) : path.posix.dirname(targetPath)
+  await mkdir(targetDir, { recursive: true })
+  await writeFile(targetPath, "opencodebot smoke\n")
+  await rm(targetPath, { force: true })
+  console.log(`artifact uploads: writable (${targetDir})`)
 }
 
 function compactError(error) {

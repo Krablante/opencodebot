@@ -15,6 +15,7 @@ services:
       - ${OPENCODEBOT_STATE_DIR:-./state}:/app/state
       - ${OPENCODEBOT_STATE_DIR:-./state}/telegram-bot-api:/var/lib/telegram-bot-api
       - ${OPENCODEBOT_UPLOAD_ROOT:-./uploads}:${OPENCODEBOT_UPLOAD_ROOT:-/app/uploads}
+      - ${OPENCODEBOT_ARTIFACT_UPLOAD_ROOT:-./trash}:${OPENCODEBOT_ARTIFACT_UPLOAD_ROOT:-/app/artifact-uploads}
       - ${OPENCODEBOT_SSH_DIR:-./ssh}:/home/node/.ssh:ro
       - ${OPENCODEBOT_SSH_IDENTITY_DIR:-./ssh}:${OPENCODEBOT_SSH_IDENTITY_DIR:-/home/node/.ssh}:ro
     ports:

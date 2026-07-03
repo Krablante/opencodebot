@@ -59,6 +59,8 @@ The artifacts topic also works as a small file dropbox. When a user attaches a f
 
 Files are saved under `artifactUploads.root`, then a daily `YYYY-MM-DD` folder, then a sanitized filename. The default root is `~/trash`, expanded from the target server's `home`, so Linux/macOS and Windows hosts can use the same config shape. A server can override the root with `artifactUploadRoot` in `servers.json`.
 
+Docker deployments must also mount that folder into the bot container. When `~/trash` expands to `/home/alice/trash` on a local server, set `OPENCODEBOT_ARTIFACT_UPLOAD_ROOT=/home/alice/trash` in the ignored `.env` file before starting Compose.
+
 Cloud Bot API deployments still have Telegram's cloud download limit. Local Bot API deployments can accept larger files when `attachments` limits are raised and the local Bot API file root is shared with the bot container.
 
 ```text

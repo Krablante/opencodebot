@@ -48,6 +48,7 @@ By default Compose reads these host paths:
 ./token.env
 ./state
 ./uploads
+./trash
 ./ssh
 ```
 
@@ -59,8 +60,11 @@ OPENCODEBOT_SERVERS_FILE=/path/to/servers.json
 OPENCODEBOT_TOKEN_ENV_FILE=/path/to/token.env
 OPENCODEBOT_STATE_DIR=/path/to/state
 OPENCODEBOT_UPLOAD_ROOT=/home/alice/.opencodebot/uploads
+OPENCODEBOT_ARTIFACT_UPLOAD_ROOT=/home/alice/trash
 OPENCODEBOT_SSH_DIR=/home/alice/.ssh
 ```
+
+`OPENCODEBOT_ARTIFACT_UPLOAD_ROOT` is the host path used for files dropped by users in the `/artifacts_here` topic. If `artifactUploads.root` is `~/trash`, set this variable to the same absolute path that `~` expands to on the local server, such as `/home/alice/trash`, so the container can write the folder and the bot can report the real host path.
 
 ## OpenCodez URL
 
@@ -179,6 +183,6 @@ Use full `docker compose up -d --build` when Compose services or the Telegram Bo
 
 Docker runs opencodebot and, only when the `telegram-local` profile is enabled, the optional Telegram Bot API sidecar. It does not run OpenCodez or WireGuard.
 
-Without the artifact gateway, the bot only makes outgoing requests to Telegram and OpenCodez, and writes state/uploads to the mounted `state/` directory. When the artifact gateway is enabled, Compose publishes the token-protected gateway on `OPENCODEBOT_ARTIFACT_PORT` or `8788` by default so OpenCodez plugins can upload files to Telegram. Keep that port private to hosts that should be allowed to send artifacts.
+Without the artifact gateway, the bot only makes outgoing requests to Telegram and OpenCodez, and writes state/uploads to the mounted `state/` directory. When the artifact gateway is enabled, Compose publishes the token-protected gateway on `OPENCODEBOT_ARTIFACT_PORT` or `8788` by default so OpenCodez plugins can upload files to Telegram. User-dropped files in the artifacts topic use the mounted `OPENCODEBOT_ARTIFACT_UPLOAD_ROOT`. Keep the gateway port private to hosts that should be allowed to send artifacts.
 
 WireGuard remains a host-level optional helper. If you want remote private access to the OpenCodez web UI, set up WireGuard on the host and keep using the same OpenCodez URL pattern in `servers.json`.

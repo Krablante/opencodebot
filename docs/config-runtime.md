@@ -160,6 +160,8 @@ The active target is chosen from Telegram with `/artifacts_here`. Running that c
 
 The same Telegram artifacts topic can receive files from users. A dropped file is saved on the configured default server when its caption is empty. When the caption starts with a server id, that server is used instead. Unknown server ids are rejected before the bot downloads the file. Saved files go under `artifactUploads.root`, then an optional `YYYY-MM-DD` folder, then a sanitized filename. The default root is `~/trash`, expanded from the target server's `home`; on Windows this can become `C:\Users\name\trash` when that is the server home.
 
+Docker deployments must expose that root as a writable bind mount. If the local server uses `home: /home/alice` and `artifactUploads.root: ~/trash`, set `OPENCODEBOT_ARTIFACT_UPLOAD_ROOT=/home/alice/trash` in Compose's ignored `.env` file. Without that mount, the bot may build the correct host path but fail to create it from inside the container.
+
 Cloud Bot API deployments are still limited by Telegram's cloud file download limit. Local Bot API deployments can accept larger files if `attachments` is raised and the local Bot API sidecar has access to the downloaded file root.
 
 ```json
