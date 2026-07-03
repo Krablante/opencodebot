@@ -41,6 +41,14 @@ export class MultipartPromptBuffer {
     return true
   }
 
+  discardKey(key) {
+    const entry = this.pending.get(key)
+    if (!entry) return false
+    if (entry.timer) clearTimeout(entry.timer)
+    this.pending.delete(key)
+    return true
+  }
+
   has(key) {
     return this.pending.has(key)
   }

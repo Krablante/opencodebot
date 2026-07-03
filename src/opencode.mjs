@@ -37,6 +37,13 @@ export class OpenCodeClient {
     })
   }
 
+  async abortSession(serverID, sessionID, options = {}) {
+    return this.request(this.server(serverID), `/session/${encodeURIComponent(sessionID)}/abort`, {
+      ...options,
+      method: "POST",
+    })
+  }
+
   async selectPromptTemplate(serverID, sessionID, name, model, options = {}) {
     const body = { sessionID, kind: "template", name }
     const normalizedModel = promptModel(model)

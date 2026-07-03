@@ -6,6 +6,7 @@ export const telegramBotCommands = [
   { command: "session", description: "Show current topic and OpenCodez session info" },
   { command: "artifacts_here", description: "Use this topic for agent artifact uploads" },
   { command: "q", description: "Queue prompts for the current session" },
+  { command: "kill", description: "Stop the current run and clear queued prompts" },
   { command: "notify_on", description: "Enable final-answer DMs" },
   { command: "notify_off", description: "Disable final-answer DMs" },
   { command: "notify_status", description: "Show final-answer DM status" },
@@ -31,6 +32,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
     help: sendHelp,
     start: sendHelp,
     q: handleQueueCommand,
+    kill: handleKillCommand,
     notify_on: handleNotifyOn,
     notify_off: handleNotifyOff,
     notify_status: handleNotifyStatus,
@@ -40,7 +42,8 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
     async handle(message, command, promptKey) {
       const handler = handlers[command.name]
       if (!handler) return false
-      await multipartPrompts.flushKey(promptKey)
+      if (command.name === "kill") multipartPrompts.discardKey(promptKey)
+      else await multipartPrompts.flushKey(promptKey)
       await handler(message, command.args)
       return true
     },
@@ -82,6 +85,28 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
         text: `Queued prompt #${result.position}: <code>${escapeHtml(summarizeWords(input, 10))}</code>`,
       })
     }
+  }
+
+  async function handleKillCommand(message) {
+    const currentTopicId = topicId(message)
+    const binding = state.findBindingByTopic(message.chat.id, currentTopicId)
+    if (!binding) {
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: "No OpenCodez session is bound to this topic. Use /new to create a topic, or run /kill inside an existing OpenCodez topic." })
+      return
+    }
+    if (!opencode?.abortSession) {
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: "OpenCodez abort API is not available." })
+      return
+    }
+
+    const wasBusy = promptQueue.isBusy(binding)
+    await opencode.abortSession(binding.serverID, binding.sessionID, { directory: binding.directory })
+    const cleared = promptQueue.clear(binding, "Killed by /kill")
+    const lines = [
+      wasBusy ? "Stop signal sent to the current OpenCodez run." : "Stop signal sent to OpenCodez.",
+      cleared.length ? `Cleared ${cleared.length} queued prompt(s).` : "No queued prompts were pending.",
+    ]
+    await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: lines.join("\n") })
   }
 
   async function handleNotifyOn(message) {
@@ -257,6 +282,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
       "<code>/q &lt;prompt&gt;</code> - queue a prompt for this topic/session.",
       "<code>/q status</code> - show queued prompts.",
       "<code>/q delete &lt;number&gt;</code> - remove a queued prompt.",
+      "<code>/kill</code> - stop the current run and clear queued prompts.",
       "<code>/artifacts_here</code> - make this topic the artifact target and file dropbox.",
       "Drop files there with an optional server id caption; no caption uses the default server.",
       "<code>/notify_on</code> / <code>/notify_off</code> - toggle final-answer DMs for configured recipients.",

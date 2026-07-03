@@ -16,6 +16,7 @@ The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/eve
 - `/new [server] [template] [dir:<path>] [title]` for explicit server/profile/directory/topic setup.
 - User-provided topic titles stay user-owned; placeholder titles can be renamed from OpenCodez session titles.
 - `/q` in-memory per-session prompt queue, with status/delete commands.
+- `/kill` to stop the current OpenCodez run for a topic and clear queued prompts.
 - Rich assistant messages sent as completed blocks instead of noisy token streaming.
 - Expandable tool quotes with configurable hidden tools.
 - Attachments and Telegram media groups attached to the next prompt; large files are copied to the target server's configured upload root and referenced by server-local path.
@@ -132,6 +133,8 @@ Use `/new` when you want a fresh Telegram topic and a new OpenCodez session. You
 
 Use `/q` inside an existing OpenCodez topic when you want to queue another prompt for the same session. `/q status` shows the queue, and `/q delete 2` removes a queued item by number.
 
+Use `/kill` inside an existing OpenCodez topic when you want to stop the current run. It sends OpenCodez's session abort request and clears that topic's queued prompts, but it does not delete the session or the Telegram topic.
+
 Use `/session` inside a topic when you want to see what Telegram topic is bound to which OpenCodez server/session. It also shows the web session URL and whether the current topic is the artifacts target.
 
 Use `/artifacts_here` inside a forum topic when you want that topic to become the single Telegram target for agent-sent artifacts. After that, `opencodebot_send_artifact` sends files, screenshots, logs, or text to that topic. Files dropped by a user in the same topic are saved under `artifactUploads.root` on the default server, or on the server named by the file caption. Docker deployments must also mount that local artifact root; see [Docker](docs/docker.md#artifact-dropbox-paths).
@@ -144,7 +147,7 @@ Default chat templates are `d4flash`, `d4pro`, and `gpt55p`. Public defaults use
 
 ## Docs
 
-- [Telegram Workflow](docs/telegram-workflow.md) covers topics, `/new`, `/q`, attachments, multipart prompts, rich messages, tools, user-prompt pins, final notifications, and reconcile.
+- [Telegram Workflow](docs/telegram-workflow.md) covers topics, `/new`, `/q`, `/kill`, attachments, multipart prompts, rich messages, tools, user-prompt pins, final notifications, and reconcile.
 - [Config And Runtime](docs/config-runtime.md) covers config loading, token handling, templates, mirror settings, attachments, and state.
 - [Artifact Gateway](docs/artifact-gateway.md) covers `/artifacts_here`, the LAN gateway, user-dropped artifact uploads, the OpenCodez plugin, and the bundled skill.
 - [Docker](docs/docker.md) covers the recommended Compose deployment path.

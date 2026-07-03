@@ -5,6 +5,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { artifactTargetPath, handleArtifactUploadMessage, resolveUploadTarget } from "../src/artifact-uploads.mjs"
+import { createTelegramCommandHandlers, telegramBotCommands } from "../src/commands.mjs"
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
@@ -23,6 +24,8 @@ async function smokeLocalInvariants() {
   smokeSyntheticTextFilter()
   await smokeArtifactDropbox()
   await smokeArtifactPluginBatchCaptions()
+  await smokeOpenCodeAbortClient()
+  await smokeKillCommand()
 }
 
 function smokeConfigExample() {
@@ -128,6 +131,94 @@ async function smokeArtifactPluginBatchCaptions() {
     globalThis.fetch = originalFetch
     await rm(root, { recursive: true, force: true })
   }
+}
+
+async function smokeKillCommand() {
+  assert.ok(telegramBotCommands.some((command) => command.command === "kill"))
+
+  const binding = { serverID: "nuc", sessionID: "ses_kill", directory: "/home/bloob/politia/projects/tg/opencodebot" }
+  const sent = []
+  const aborted = []
+  const cleared = []
+  const discarded = []
+  const handlers = createTelegramCommandHandlers({
+    config: { chatTemplates: {} },
+    state: {
+      findBindingByTopic(chatId, threadId) {
+        assert.equal(chatId, 123)
+        assert.equal(threadId, 456)
+        return binding
+      },
+    },
+    telegram: {
+      async sendMessage(message) {
+        sent.push(message)
+      },
+    },
+    opencode: {
+      async abortSession(serverID, sessionID, options) {
+        aborted.push({ serverID, sessionID, options })
+      },
+    },
+    promptQueue: {
+      isBusy(receivedBinding) {
+        assert.equal(receivedBinding, binding)
+        return true
+      },
+      clear(receivedBinding, reason) {
+        assert.equal(receivedBinding, binding)
+        cleared.push({ reason })
+        return [{ index: 1, summary: "queued prompt" }]
+      },
+    },
+    multipartPrompts: {
+      discardKey(promptKey) {
+        discarded.push(promptKey)
+      },
+    },
+    createPendingTopic: async () => {},
+  })
+
+  const handled = await handlers.handle({ chat: { id: 123 }, message_thread_id: 456, message_id: 789 }, { name: "kill", args: "" }, "123:456")
+  assert.equal(handled, true)
+  assert.deepEqual(discarded, ["123:456"])
+  assert.deepEqual(aborted, [{ serverID: "nuc", sessionID: "ses_kill", options: { directory: binding.directory } }])
+  assert.deepEqual(cleared, [{ reason: "Killed by /kill" }])
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0].chatId, 123)
+  assert.equal(sent[0].topicId, 456)
+  assert.match(sent[0].text, /Stop signal sent/)
+  assert.match(sent[0].text, /Cleared 1 queued prompt/)
+}
+
+async function smokeOpenCodeAbortClient() {
+  const originalFetch = globalThis.fetch
+  const requests = []
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url: String(url), options })
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => "application/json" },
+      async json() {
+        return true
+      },
+      async text() {
+        return "true"
+      },
+    }
+  }
+  try {
+    const client = new OpenCodeClient({ opencode: { password: "", servers: [{ id: "nuc", url: "http://127.0.0.1:4096" }] } })
+    const result = await client.abortSession("nuc", "ses kill", { directory: "/tmp/work dir" })
+    assert.equal(result, true)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].options.method, "POST")
+  assert.equal(requests[0].url, "http://127.0.0.1:4096/session/ses%20kill/abort?directory=%2Ftmp%2Fwork+dir")
 }
 
 async function smokeRuntimeHealth(runtimeConfig, { explicit }) {
