@@ -42,7 +42,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
     async handle(message, command, promptKey) {
       const handler = handlers[command.name]
       if (!handler) return false
-      if (command.name === "kill") multipartPrompts.discardKey(promptKey)
+      if (command.name === "kill") multipartPrompts.discardKey?.(promptKey)
       else await multipartPrompts.flushKey(promptKey)
       await handler(message, command.args)
       return true
@@ -100,7 +100,16 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
     }
 
     const wasBusy = promptQueue.isBusy(binding)
-    await opencode.abortSession(binding.serverID, binding.sessionID, { directory: binding.directory })
+    try {
+      await opencode.abortSession(binding.serverID, binding.sessionID, { directory: binding.directory })
+    } catch (error) {
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: currentTopicId,
+        text: `Failed to stop the current OpenCodez run.\n<code>${escapeHtml(error.message)}</code>`,
+      })
+      return
+    }
     const cleared = promptQueue.clear(binding, "Killed by /kill")
     const lines = [
       wasBusy ? "Stop signal sent to the current OpenCodez run." : "Stop signal sent to OpenCodez.",

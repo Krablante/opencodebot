@@ -12,6 +12,10 @@ export class PromptQueue {
     this.state(binding).busy = false
   }
 
+  isBusy(binding) {
+    return this.state(binding).busy
+  }
+
   async enqueue(binding, text, metadata = {}) {
     const value = String(text || "").trim()
     if (!value) return { status: "empty" }

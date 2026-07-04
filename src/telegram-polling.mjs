@@ -47,7 +47,11 @@ export function createTelegramPolling({
       try {
         const updates = await telegram.getUpdates(offset, 25)
         for (const update of updates) {
-          if (update.message) await handleTelegramMessage(update.message)
+          try {
+            if (update.message) await handleTelegramMessage(update.message)
+          } catch (error) {
+            logError(error)
+          }
           offset = update.update_id + 1
           await state.update((data) => {
             data.runtime.telegramUpdateOffset = offset

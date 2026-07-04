@@ -8,6 +8,7 @@ import { artifactTargetPath, handleArtifactUploadMessage, resolveUploadTarget } 
 import { createTelegramCommandHandlers, telegramBotCommands } from "../src/commands.mjs"
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
+import { PromptQueue } from "../src/prompt-queue.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
 import { OpencodebotArtifactsPlugin } from "../plugins/opencodebot-artifacts/src/index.js"
 
@@ -26,6 +27,7 @@ async function smokeLocalInvariants() {
   await smokeArtifactPluginBatchCaptions()
   await smokeOpenCodeAbortClient()
   await smokeKillCommand()
+  await smokeKillCommandAbortFailure()
 }
 
 function smokeConfigExample() {
@@ -139,8 +141,14 @@ async function smokeKillCommand() {
   const binding = { serverID: "nuc", sessionID: "ses_kill", directory: "/home/bloob/politia/projects/tg/opencodebot" }
   const sent = []
   const aborted = []
-  const cleared = []
   const discarded = []
+  const promptQueue = new PromptQueue({
+    onPrompt: async () => {},
+    onQueued: async () => {},
+    onQueueCleared: async () => {},
+  })
+  promptQueue.markBusy(binding)
+  await promptQueue.enqueue(binding, "queued prompt")
   const handlers = createTelegramCommandHandlers({
     config: { chatTemplates: {} },
     state: {
@@ -160,17 +168,7 @@ async function smokeKillCommand() {
         aborted.push({ serverID, sessionID, options })
       },
     },
-    promptQueue: {
-      isBusy(receivedBinding) {
-        assert.equal(receivedBinding, binding)
-        return true
-      },
-      clear(receivedBinding, reason) {
-        assert.equal(receivedBinding, binding)
-        cleared.push({ reason })
-        return [{ index: 1, summary: "queued prompt" }]
-      },
-    },
+    promptQueue,
     multipartPrompts: {
       discardKey(promptKey) {
         discarded.push(promptKey)
@@ -183,12 +181,42 @@ async function smokeKillCommand() {
   assert.equal(handled, true)
   assert.deepEqual(discarded, ["123:456"])
   assert.deepEqual(aborted, [{ serverID: "nuc", sessionID: "ses_kill", options: { directory: binding.directory } }])
-  assert.deepEqual(cleared, [{ reason: "Killed by /kill" }])
+  assert.equal(promptQueue.status(binding).length, 0)
+  assert.equal(promptQueue.isBusy(binding), false)
   assert.equal(sent.length, 1)
   assert.equal(sent[0].chatId, 123)
   assert.equal(sent[0].topicId, 456)
   assert.match(sent[0].text, /Stop signal sent/)
   assert.match(sent[0].text, /Cleared 1 queued prompt/)
+}
+
+async function smokeKillCommandAbortFailure() {
+  const binding = { serverID: "nuc", sessionID: "ses_kill", directory: "/home/bloob/politia/projects/tg/opencodebot" }
+  const sent = []
+  const promptQueue = new PromptQueue({
+    onPrompt: async () => {},
+    onQueued: async () => {},
+    onQueueCleared: async () => {},
+  })
+  promptQueue.markBusy(binding)
+  await promptQueue.enqueue(binding, "queued prompt")
+  const handlers = createTelegramCommandHandlers({
+    config: { chatTemplates: {} },
+    state: { findBindingByTopic: () => binding },
+    telegram: { async sendMessage(message) { sent.push(message) } },
+    opencode: { async abortSession() { throw new Error("abort failed") } },
+    promptQueue,
+    multipartPrompts: { discardKey() {} },
+    createPendingTopic: async () => {},
+  })
+
+  const handled = await handlers.handle({ chat: { id: 123 }, message_thread_id: 456 }, { name: "kill", args: "" }, "123:456")
+  assert.equal(handled, true)
+  assert.equal(sent.length, 1)
+  assert.match(sent[0].text, /Failed to stop/)
+  assert.match(sent[0].text, /abort failed/)
+  assert.equal(promptQueue.status(binding).length, 1)
+  assert.equal(promptQueue.isBusy(binding), true)
 }
 
 async function smokeOpenCodeAbortClient() {
