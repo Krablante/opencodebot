@@ -100,9 +100,11 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
     }
 
     const wasBusy = promptQueue.isBusy(binding)
+    promptQueue.markExpectedStop(binding)
     try {
       await opencode.abortSession(binding.serverID, binding.sessionID, { directory: binding.directory })
     } catch (error) {
+      promptQueue.clearExpectedStop(binding)
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,

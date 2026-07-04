@@ -9,6 +9,7 @@ import { createTelegramCommandHandlers, telegramBotCommands } from "../src/comma
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
+import { createSessionReconciler } from "../src/session-reconcile.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
 import { OpencodebotArtifactsPlugin } from "../plugins/opencodebot-artifacts/src/index.js"
 
@@ -28,6 +29,7 @@ async function smokeLocalInvariants() {
   await smokeOpenCodeAbortClient()
   await smokeKillCommand()
   await smokeKillCommandAbortFailure()
+  await smokeKillSuppressesAbortFallout()
 }
 
 function smokeConfigExample() {
@@ -217,6 +219,41 @@ async function smokeKillCommandAbortFailure() {
   assert.match(sent[0].text, /abort failed/)
   assert.equal(promptQueue.status(binding).length, 1)
   assert.equal(promptQueue.isBusy(binding), true)
+}
+
+async function smokeKillSuppressesAbortFallout() {
+  const binding = { chatId: 123, topicId: 456, serverID: "nuc", sessionID: "ses_kill", directory: "/tmp/work" }
+  const sent = []
+  const promptQueue = new PromptQueue(async () => {})
+  const reconciler = createSessionReconciler({
+    config: { telegram: { autocreateTopics: false }, reconcile: {} },
+    state: {
+      mirrorEnabled: () => true,
+      findBinding: (serverID, sessionID) => (serverID === binding.serverID && sessionID === binding.sessionID ? binding : null),
+      markAssistantMirrored: async () => {},
+    },
+    telegram: { async sendMessage(message) { sent.push(message) } },
+    opencode: {},
+    renderer: {},
+    promptQueue,
+    backendRequest: async () => {},
+    skippedBackendRequest: async () => {},
+    createTopicForSession: async () => null,
+    createTopicForWebSession: async () => null,
+    isInternalSession: () => false,
+    activateBindingForPrompt: async () => {},
+    maybeExtendBindingActivity: async () => {},
+    logError: () => {},
+    shouldStop: () => false,
+  })
+
+  promptQueue.markExpectedStop(binding)
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.error", properties: { sessionID: "ses_kill", error: "aborted" } })
+  assert.equal(sent.length, 0)
+
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.error", properties: { sessionID: "ses_kill", error: "real failure" } })
+  assert.equal(sent.length, 1)
+  assert.match(sent[0].text, /OpenCodez session error/)
 }
 
 async function smokeOpenCodeAbortClient() {

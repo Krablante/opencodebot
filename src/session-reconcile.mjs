@@ -46,6 +46,7 @@ export function createSessionReconciler({
     try {
       switch (event.type) {
         case "session.next.prompted": {
+          promptQueue.clearExpectedStop(binding)
           promptQueue.markBusy(binding)
           const text = textFromPrompt(properties.prompt)
           if (!text) {
@@ -73,9 +74,11 @@ export function createSessionReconciler({
           break
         case "session.next.step.failed":
           await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
+          if (promptQueue.consumeExpectedStop(binding)) break
           await notifyRunFailed(binding, properties, promptQueue.clear(binding))
           break
         case "session.error":
+          if (promptQueue.consumeExpectedStop(binding)) break
           await notifySessionError(binding, properties)
           break
         case "session.next.tool.called":

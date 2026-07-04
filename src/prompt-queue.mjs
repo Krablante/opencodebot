@@ -16,6 +16,21 @@ export class PromptQueue {
     return this.state(binding).busy
   }
 
+  markExpectedStop(binding, ttlMs = 15000) {
+    this.state(binding).expectedStopUntil = Date.now() + ttlMs
+  }
+
+  clearExpectedStop(binding) {
+    delete this.state(binding).expectedStopUntil
+  }
+
+  consumeExpectedStop(binding) {
+    const state = this.state(binding)
+    const until = state.expectedStopUntil
+    delete state.expectedStopUntil
+    return Number.isFinite(until) && until >= Date.now()
+  }
+
   async enqueue(binding, text, metadata = {}) {
     const value = String(text || "").trim()
     if (!value) return { status: "empty" }
