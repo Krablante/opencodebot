@@ -250,7 +250,10 @@ async function smokeKillSuppressesAbortFallout() {
   promptQueue.markExpectedStop(binding)
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.error", properties: { sessionID: "ses_kill", error: "aborted" } })
   assert.equal(sent.length, 0)
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.error", properties: { sessionID: "ses_kill", error: "abort cleanup" } })
+  assert.equal(sent.length, 0)
 
+  promptQueue.clearExpectedStop(binding)
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.error", properties: { sessionID: "ses_kill", error: "real failure" } })
   assert.equal(sent.length, 1)
   assert.match(sent[0].text, /OpenCodez session error/)

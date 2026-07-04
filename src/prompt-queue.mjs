@@ -24,11 +24,13 @@ export class PromptQueue {
     delete this.state(binding).expectedStopUntil
   }
 
-  consumeExpectedStop(binding) {
+  hasExpectedStop(binding) {
     const state = this.state(binding)
     const until = state.expectedStopUntil
+    if (!Number.isFinite(until)) return false
+    if (until >= Date.now()) return true
     delete state.expectedStopUntil
-    return Number.isFinite(until) && until >= Date.now()
+    return false
   }
 
   async enqueue(binding, text, metadata = {}) {

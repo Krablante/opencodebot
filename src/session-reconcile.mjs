@@ -74,11 +74,11 @@ export function createSessionReconciler({
           break
         case "session.next.step.failed":
           await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
-          if (promptQueue.consumeExpectedStop(binding)) break
+          if (promptQueue.hasExpectedStop(binding)) break
           await notifyRunFailed(binding, properties, promptQueue.clear(binding))
           break
         case "session.error":
-          if (promptQueue.consumeExpectedStop(binding)) break
+          if (promptQueue.hasExpectedStop(binding)) break
           await notifySessionError(binding, properties)
           break
         case "session.next.tool.called":
