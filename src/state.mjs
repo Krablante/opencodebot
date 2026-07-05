@@ -23,6 +23,7 @@ export class StateStore {
       this.data.seenSessions ||= []
       this.data.telegram ||= {}
       this.data.telegram.artifactsTopic ||= null
+      this.data.telegram.soundsTopic ||= null
       this.data.runtime ||= {}
     } catch (error) {
       if (error.code !== "ENOENT") throw error
@@ -80,6 +81,44 @@ export class StateStore {
       }
       delete data.pendingTopics[String(topicId ?? 0)]
       return data.telegram.artifactsTopic
+    })
+  }
+
+  soundsTopic() {
+    return this.data.telegram.soundsTopic || null
+  }
+
+  isSoundsTopic(chatId, topicId) {
+    const topic = this.soundsTopic()
+    return Boolean(topic && String(topic.chatId) === String(chatId) && Number(topic.topicId || 0) === Number(topicId || 0))
+  }
+
+  async setSoundsTopic({ chatId, topicId, title, setBy }) {
+    return this.update((data) => {
+      const now = new Date().toISOString()
+      data.telegram.soundsTopic = {
+        chatId,
+        topicId,
+        title: title || `Topic ${topicId}`,
+        setBy,
+        setAt: now,
+      }
+      for (const binding of data.bindings.filter((item) => String(item.chatId) === String(chatId) && Number(item.topicId || 0) === Number(topicId || 0))) {
+        binding.disabled = true
+        binding.disabledReason = "sounds-topic"
+        binding.disabledAt = now
+      }
+      delete data.pendingTopics[String(topicId ?? 0)]
+      return data.telegram.soundsTopic
+    })
+  }
+
+  async clearSoundsTopic(chatId, topicId) {
+    return this.update((data) => {
+      const topic = data.telegram.soundsTopic
+      if (!topic || String(topic.chatId) !== String(chatId) || Number(topic.topicId || 0) !== Number(topicId || 0)) return false
+      data.telegram.soundsTopic = null
+      return true
     })
   }
 
@@ -382,9 +421,9 @@ export function promptHash(text) {
 }
 
 function defaultState() {
-  return {
-    version: 1,
-    telegram: { artifactsTopic: null },
+    return {
+      version: 1,
+    telegram: { artifactsTopic: null, soundsTopic: null },
     bindings: [],
     pendingTopics: {},
     pendingPrompts: [],

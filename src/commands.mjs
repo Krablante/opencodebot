@@ -5,6 +5,9 @@ export const telegramBotCommands = [
   { command: "new", description: "Create a new OpenCodez session topic" },
   { command: "session", description: "Show current topic and OpenCodez session info" },
   { command: "artifacts_here", description: "Use this topic for agent artifact uploads" },
+  { command: "sounds_here", description: "Use this topic for voice transcription" },
+  { command: "sounds_off", description: "Disable voice transcription for this topic" },
+  { command: "sounds_status", description: "Show voice transcription status" },
   { command: "q", description: "Queue prompts for the current session" },
   { command: "kill", description: "Stop the current run and clear queued prompts" },
   { command: "notify_on", description: "Enable final-answer DMs" },
@@ -16,7 +19,7 @@ export const telegramBotCommands = [
   { command: "start", description: "Show help" },
 ]
 
-export function createTelegramCommandHandlers({ config, state, telegram, opencode, promptQueue, multipartPrompts, createPendingTopic }) {
+export function createTelegramCommandHandlers({ config, state, telegram, opencode, promptQueue, multipartPrompts, createPendingTopic, speech }) {
   const handlers = {
     mirror_on: async (message) => {
       await state.setMirrorEnabled(true)
@@ -27,6 +30,9 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Mirror disabled." })
     },
     artifacts_here: handleArtifactsHere,
+    sounds_here: handleSoundsHere,
+    sounds_off: handleSoundsOff,
+    sounds_status: handleSoundsStatus,
     session: handleSessionInfo,
     new: createPendingTopic,
     help: sendHelp,
@@ -118,6 +124,53 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
       cleared.length ? `Cleared ${cleared.length} queued prompt(s).` : "No queued prompts were pending.",
     ]
     await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: lines.join("\n") })
+  }
+
+  async function handleSoundsHere(message) {
+    if (!speech?.enabled()) {
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Speech transcription is disabled in config." })
+      return
+    }
+    const target = await speech.setCurrentTopic(message)
+    const status = speech.status()
+    await telegram.sendMessage({
+      chatId: message.chat.id,
+      topicId: topicId(message),
+      text: [
+        "Voice transcription enabled for this topic.",
+        `topic_id: <code>${escapeHtml(String(target.topicId || 0))}</code>`,
+        `model: <code>${escapeHtml(status.model)}</code>`,
+        status.configured ? "api_key: configured" : `api_key: missing <code>${escapeHtml(status.apiKeyEnv)}</code>`,
+        "Send voice or audio messages here to receive transcripts in this topic.",
+      ].join("\n"),
+    })
+  }
+
+  async function handleSoundsOff(message) {
+    const cleared = speech ? await speech.clearCurrentTopic(message) : false
+    await telegram.sendMessage({
+      chatId: message.chat.id,
+      topicId: topicId(message),
+      text: cleared ? "Voice transcription disabled for this topic." : "This topic is not the voice transcription topic.",
+    })
+  }
+
+  async function handleSoundsStatus(message) {
+    const status = speech?.status?.() || { enabled: false, configured: false, topic: null, queueDepth: 0, active: 0 }
+    await telegram.sendMessage({
+      chatId: message.chat.id,
+      topicId: topicId(message),
+      text: [
+        "<b>Voice transcription</b>",
+        `enabled: ${status.enabled ? "yes" : "no"}`,
+        `api_key: ${status.configured ? "configured" : status.apiKeyEnv ? `missing <code>${escapeHtml(status.apiKeyEnv)}</code>` : "not configured"}`,
+        status.model ? `model: <code>${escapeHtml(status.model)}</code>` : null,
+        status.language ? `language: <code>${escapeHtml(status.language)}</code>` : null,
+        status.topic ? `topic_id: <code>${escapeHtml(String(status.topic.topicId || 0))}</code>` : "topic_id: none",
+        `active: <code>${escapeHtml(String(status.active || 0))}</code>`,
+        `queue: <code>${escapeHtml(String(status.queueDepth || 0))}</code>`,
+      ].filter(Boolean).join("\n"),
+    })
   }
 
   async function handleNotifyOn(message) {
@@ -216,6 +269,8 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
     const server = storedBinding ? config.opencode.servers.find((item) => item.id === storedBinding.serverID) : null
     const artifactsTopic = state.artifactsTopic()
     const thisIsArtifactsTopic = state.isArtifactsTopic(message.chat.id, currentTopicId)
+    const soundsTopic = state.soundsTopic()
+    const thisIsSoundsTopic = state.isSoundsTopic(message.chat.id, currentTopicId)
     let session = null
     let sessionError = ""
     if (storedBinding?.serverID && storedBinding?.sessionID && opencode?.getSession) {
@@ -266,6 +321,11 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
       `this_topic: ${thisIsArtifactsTopic ? "🟢 yes" : "⚪ no"}`,
       artifactsTopic ? `current_topic_id: <code>${escapeHtml(String(artifactsTopic.topicId || 0))}</code>` : "current_topic_id: none",
       artifactsTopic?.title ? `current_title: <code>${escapeHtml(artifactsTopic.title)}</code>` : null,
+      "",
+      "🎙 <b>Sounds</b>",
+      `this_topic: ${thisIsSoundsTopic ? "🟢 yes" : "⚪ no"}`,
+      soundsTopic ? `current_topic_id: <code>${escapeHtml(String(soundsTopic.topicId || 0))}</code>` : "current_topic_id: none",
+      soundsTopic?.title ? `current_title: <code>${escapeHtml(soundsTopic.title)}</code>` : null,
     )
     await telegram.sendMessage({
       chatId: message.chat.id,
@@ -296,6 +356,8 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
       "<code>/kill</code> - stop the current run and clear queued prompts.",
       "<code>/artifacts_here</code> - make this topic the artifact target and file dropbox.",
       "Drop files there with an optional server id caption; no caption uses the default server.",
+      "<code>/sounds_here</code> - make this topic the voice transcription inbox.",
+      "<code>/sounds_off</code> / <code>/sounds_status</code> - manage voice transcription.",
       "<code>/notify_on</code> / <code>/notify_off</code> - toggle final-answer DMs for configured recipients.",
       "<code>/notify_status</code> - show configured final-answer DM status.",
       "<code>/mirror_on</code> / <code>/mirror_off</code> - toggle web-to-Telegram mirroring.",

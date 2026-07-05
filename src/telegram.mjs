@@ -134,6 +134,18 @@ export class TelegramClient {
     return this.request("sendMessage", payload)
   }
 
+  async replyMessage({ chatId, topicId, replyToMessageId, text, disablePreview = true, format = "html", replyMarkup }) {
+    const payload = {
+      chat_id: chatId,
+      disable_web_page_preview: disablePreview,
+    }
+    applyTextFormat(payload, text, format)
+    if (topicId) payload.message_thread_id = topicId
+    if (replyToMessageId) payload.reply_to_message_id = replyToMessageId
+    if (replyMarkup) payload.reply_markup = replyMarkup
+    return this.request("sendMessage", payload)
+  }
+
   async sendPhoto({ chatId, topicId, file, caption, captionFormat }) {
     return this.sendMultipartFile("sendPhoto", "photo", { chatId, topicId, file, caption, captionFormat })
   }

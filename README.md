@@ -1,6 +1,6 @@
 # opencodebot
 
-opencodebot is a small Telegram mirror and companion for [OpenCodez](https://github.com/Krablante/opencodez). OpenCodez stays the main interface and source of truth; the bot adds Telegram forum topics, prompts, progress, compact tool status, attachments, user-prompt pins, final notifications, artifact delivery, and a memory-only prompt queue.
+opencodebot is a small Telegram mirror and companion for [OpenCodez](https://github.com/Krablante/opencodez). OpenCodez stays the main interface and source of truth; the bot adds Telegram forum topics, prompts, progress, compact tool status, attachments, user-prompt pins, final notifications, artifact delivery, optional voice transcription, and a memory-only prompt queue.
 
 It is built as a practical single-operator tool that is still clean enough to share. The code favors readable modules, plain JSON config, and boring runtime state over a large framework.
 
@@ -21,6 +21,7 @@ The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/eve
 - Expandable tool quotes with configurable hidden tools.
 - Attachments and Telegram media groups attached to the next prompt; large files are copied to the target server's configured upload root and referenced by server-local path.
 - Optional Telegram artifact gateway for sending agent-created files, screenshots, logs, and text into one dedicated artifacts topic; the same topic can accept user-dropped files and save them to a configured server folder.
+- Optional OpenRouter speech transcription for one dedicated `/sounds_here` topic; voice and audio messages receive transcripts in the same topic.
 - Optional local Telegram Bot API sidecar for higher file limits and streaming artifact delivery without a separate project.
 - Multipart prompt buffering for Telegram clients that split long messages.
 - Optional WireGuard helper for private off-LAN access to the existing OpenCodez web UI.
@@ -79,6 +80,8 @@ Secrets belong in `token.env`, not in git. Use your BotFather token, your numeri
 TELEGRAM_BOT_TOKEN=123456:telegram-token
 TELEGRAM_ALLOWED_USER_IDS=123456789
 OPENCODEZ_SERVER_PASSWORD=your-opencodez-password
+# Optional, only when speech.enabled is true:
+OPENROUTER_API_KEY=sk-or-...
 ```
 
 Edit `servers.json` so the bot can reach OpenCodez. If OpenCodez is on your LAN, use its LAN URL. If Docker and OpenCodez are on the same host, `http://host.docker.internal:4096` is usually the right URL.
@@ -123,6 +126,8 @@ Your `config.local.json`, `servers.json`, `token.env`, and `state/` directory st
 
 The artifact gateway and OpenCodez plugin are optional. Start without them first unless you specifically want agents to send files, screenshots, logs, or text to a Telegram artifacts topic. Enable that later with [Artifact Gateway](docs/artifact-gateway.md).
 
+The speech transcription module is optional. Enable it with `speech.enabled=true` and `OPENROUTER_API_KEY` in `token.env`, then run `/sounds_here` in a Telegram forum topic. It uses OpenRouter's `openai/whisper-large-v3-turbo` by default and does not run local Whisper, CUDA, or fallback workers.
+
 The local Telegram Bot API sidecar is also optional. Add `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` to `token.env`, set `telegram.botApi.mode` to `local`, start Compose with the `telegram-local` profile, then run `docker compose exec -T opencodebot npm run telegram-local -- doctor`. Details are in [Docker](docs/docker.md) and [Config And Runtime](docs/config-runtime.md).
 
 ## Commands
@@ -138,6 +143,8 @@ Use `/kill` inside an existing OpenCodez topic when you want to stop the current
 Use `/session` inside a topic when you want to see what Telegram topic is bound to which OpenCodez server/session. It also shows the web session URL and whether the current topic is the artifacts target.
 
 Use `/artifacts_here` inside a forum topic when you want that topic to become the single Telegram target for agent-sent artifacts. After that, `opencodebot_send_artifact` sends files, screenshots, logs, or text to that topic. Files dropped by a user in the same topic are saved under `artifactUploads.root` on the default server, or on the server named by the file caption. Docker deployments must also mount that local artifact root; see [Docker](docs/docker.md#artifact-dropbox-paths).
+
+Use `/sounds_here` inside a forum topic when you want that topic to become the voice transcription inbox. Voice and audio messages in that topic are transcribed through OpenRouter and answered in the same topic. `/sounds_off` clears the binding for the current topic, and `/sounds_status` shows whether speech is enabled, configured, and busy.
 
 Use `/notify_on`, `/notify_off`, and `/notify_status` to manage private final-answer notifications for the configured recipients. Those DMs include the source topic, an `Open topic` button, context quotes, and a completed task list when the agent closed one.
 

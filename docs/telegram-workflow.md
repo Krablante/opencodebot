@@ -2,7 +2,7 @@
 
 Telegram is the companion surface, not a second OpenCodez backend. The bot binds Telegram forum topics to OpenCodez sessions, sends prompts through the normal OpenCodez API, and mirrors visible progress from OpenCodez events and history. If OpenCodez says something happened, Telegram can show it; if a browser dropdown changed but no prompt was sent, the bot does not invent that local browser state.
 
-The useful shape is deliberately narrow. A topic is a working thread, `/new` creates a session-backed topic, `/q` keeps the next prompt ready while a run is busy, `/kill` stops the current run, and attachments travel with the prompt text. The mirror should feel like the visible web UI in Telegram, not like raw backend JSON.
+The useful shape is deliberately narrow. A topic is a working thread, `/new` creates a session-backed topic, `/q` keeps the next prompt ready while a run is busy, `/kill` stops the current run, attachments travel with the prompt text, and optional `/sounds_here` topics transcribe voice without creating OpenCodez prompts. The mirror should feel like the visible web UI in Telegram, not like raw backend JSON.
 
 ## Topics
 
@@ -24,6 +24,9 @@ When OpenCodez later updates a session title, the linked Telegram topic is renam
 /q delete <number>                remove a queued prompt by status number
 /kill                             stop the current run and clear queued prompts
 /artifacts_here                   make this topic the artifact target and file dropbox
+/sounds_here                      make this topic the voice transcription inbox
+/sounds_off                       disable voice transcription for this topic
+/sounds_status                    show voice transcription status
 /notify_on                       enable final-answer DMs for configured recipients
 /notify_off                      disable final-answer DMs for configured recipients
 /notify_status                   show configured final-answer DM status
@@ -36,7 +39,9 @@ The bot syncs this slash-command menu on startup through Bot API `setMyCommands`
 
 `/artifacts_here` marks the current forum topic as the only artifact target for agent uploads. If another topic later runs `/artifacts_here`, the new topic replaces the old one. Artifact topics do not mirror OpenCodez sessions. Ordinary text there is ignored as a prompt, while user-dropped files are saved to the configured artifact upload folder. See [Artifact Gateway](artifact-gateway.md) for plugin, gateway, and file dropbox setup.
 
-`/session` is a small operator command for the current topic. It shows Telegram chat/topic/message ids, the active or last stored binding, OpenCodez server/session details, a web session URL when the backend session can be read, and artifact target status. It works in normal mirror topics and artifact topics, and it does not print secrets or runtime tokens.
+`/sounds_here` marks the current forum topic as the voice transcription inbox when `speech.enabled` is configured. If another topic later runs `/sounds_here`, the new topic replaces the old one. Sounds topics do not mirror OpenCodez sessions: ordinary text is kept out of the prompt flow, while voice and audio messages are downloaded, transcribed through OpenRouter, and answered in the same topic. `/sounds_off` clears the binding for the current topic, and `/sounds_status` shows whether the module is enabled, whether the API key is present, the configured model, and queue activity.
+
+`/session` is a small operator command for the current topic. It shows Telegram chat/topic/message ids, the active or last stored binding, OpenCodez server/session details, a web session URL when the backend session can be read, and artifact/sounds target status. It works in normal mirror topics and special topics, and it does not print secrets or runtime tokens.
 
 `/kill` is a topic-scoped stop command. It calls OpenCodez `POST /session/:sessionID/abort` for the bound session, then clears that topic's in-memory queued prompts so a stopped run does not immediately advance into the next queued prompt. It does not delete the OpenCodez session, remove the Telegram topic, or restart the backend service.
 

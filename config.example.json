@@ -24,6 +24,20 @@
     "maxFileBytes": 20000000,
     "maxTotalBytes": 60000000
   },
+  "speech": {
+    "enabled": false,
+    "maxFileBytes": 25000000,
+    "queueConcurrency": 1,
+    "statusMessage": "Transcribing voice...",
+    "openrouter": {
+      "apiKeyEnv": "OPENROUTER_API_KEY",
+      "model": "openai/whisper-large-v3-turbo",
+      "language": "ru",
+      "temperature": 0,
+      "responseFormat": "json",
+      "prompt": "Русская голосовая заметка. Сохраняй технические названия, команды, пути и сокращения латиницей."
+    }
+  },
   "artifactUploads": {
     "enabled": true,
     "root": "~/trash",

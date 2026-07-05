@@ -232,7 +232,7 @@ export function normalizeAttachmentSettings(settings = {}) {
   }
 }
 
-async function cleanupFiles(files) {
+export async function cleanupFiles(files) {
   await Promise.all(files.map((file) => (file.localPath ? fs.rm(file.localPath, { force: true }) : Promise.resolve())))
 }
 

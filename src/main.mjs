@@ -10,6 +10,7 @@ import { OpenCodeClient } from "./opencode.mjs"
 import { createPromptRouter } from "./prompt-routing.mjs"
 import { MirrorRenderer } from "./render.mjs"
 import { createSessionReconciler } from "./session-reconcile.mjs"
+import { SpeechModule } from "./speech/index.mjs"
 import { StateStore } from "./state.mjs"
 import { escapeHtml, TelegramClient } from "./telegram.mjs"
 import { createTelegramPolling } from "./telegram-polling.mjs"
@@ -58,7 +59,8 @@ let shutdownRequested = false
 const backendRequester = createBackendRequester()
 const skippedBackendRequest = backendRequester.skipped
 const backendRequest = backendRequester.request
-const commandHandlers = createTelegramCommandHandlers({ config, state, telegram, opencode, promptQueue, multipartPrompts, createPendingTopic })
+const speech = new SpeechModule({ config: config.speech, telegram, state, uploadDir: config.paths.uploadsDir, attachmentSettings: config.attachments })
+const commandHandlers = createTelegramCommandHandlers({ config, state, telegram, opencode, promptQueue, multipartPrompts, createPendingTopic, speech })
 const artifactUploads = new ArtifactUploadBuffer({
   settings: config.artifactUploads,
   flushUpload: ({ message, files }) => handleArtifactUploadMessage({ telegram, config, opencode, message, files }),
@@ -88,6 +90,7 @@ const telegramPolling = createTelegramPolling({
   state,
   telegram,
   commandHandlers,
+  handleSpeechMessage: (message) => speech.handleMessage(null, message),
   handleTopicLifecycleMessage,
   handleAttachmentMessage,
   handleArtifactUploadMessage: ({ message, files }) => artifactUploads.add({ message, files }),

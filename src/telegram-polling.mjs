@@ -7,6 +7,7 @@ export function createTelegramPolling({
   state,
   telegram,
   commandHandlers,
+  handleSpeechMessage,
   handleTopicLifecycleMessage,
   handleAttachmentMessage,
   handleArtifactUploadMessage,
@@ -101,6 +102,23 @@ export function createTelegramPolling({
       })
       return
     }
+    if (state.isSoundsTopic(message.chat.id, topicId(message))) {
+      if (text) {
+        const command = parseCommand(text)
+        if (soundsTopicCommandAllowed(command.name) && await commandHandlers.handle(message, command, promptKey)) return
+        if (text.startsWith("/")) {
+          await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "This topic is reserved for voice transcription. Use another topic for OpenCodez sessions." })
+          return
+        }
+      }
+      if (await handleSpeechMessage?.(message)) return
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: topicId(message),
+        text: "This topic is reserved for voice transcription. Send voice or audio messages here.",
+      })
+      return
+    }
     if (files.length) {
       await handleAttachmentMessage(message, promptKey, files, caption)
       return
@@ -160,6 +178,10 @@ function parseCommand(text) {
 
 function artifactTopicCommandAllowed(commandName) {
   return ["artifacts_here", "session", "help", "start", "notify_on", "notify_off", "notify_status"].includes(commandName)
+}
+
+function soundsTopicCommandAllowed(commandName) {
+  return ["sounds_here", "sounds_off", "sounds_status", "session", "help", "start", "notify_on", "notify_off", "notify_status"].includes(commandName)
 }
 
 function delay(ms) {

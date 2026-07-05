@@ -10,6 +10,8 @@ import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { createSessionReconciler } from "../src/session-reconcile.mjs"
+import { normalizeSpeechConfig } from "../src/config/speech.mjs"
+import { OpenRouterSpeechClient, audioFormat } from "../src/speech/openrouter-client.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
 import { OpencodebotArtifactsPlugin } from "../plugins/opencodebot-artifacts/src/index.js"
 
@@ -26,6 +28,7 @@ async function smokeLocalInvariants() {
   smokeSyntheticTextFilter()
   await smokeArtifactDropbox()
   await smokeArtifactPluginBatchCaptions()
+  await smokeSpeechOpenRouterRequest()
   await smokeOpenCodeAbortClient()
   await smokeKillCommand()
   await smokeKillCommandAbortFailure()
@@ -38,7 +41,57 @@ function smokeConfigExample() {
   assert.equal(example.artifactUploads.root, "~/trash")
   assert.equal(example.attachments.maxFileBytes, 20000000)
   assert.equal(example.attachments.maxTotalBytes, 60000000)
+  assert.equal(example.speech.enabled, false)
+  assert.equal(example.speech.openrouter.model, "openai/whisper-large-v3-turbo")
+  assert.equal(example.speech.openrouter.language, "ru")
   assert.ok(example.opencode.servers.length > 0)
+}
+
+async function smokeSpeechOpenRouterRequest() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-speech-smoke-"))
+  const audioPath = path.join(root, "voice.oga")
+  await writeFile(audioPath, "fake audio bytes")
+  const requests = []
+  const normalized = normalizeSpeechConfig({ enabled: true }, { OPENROUTER_API_KEY: "test-key" })
+  assert.equal(normalized.openrouter.apiKey, "test-key")
+  const fetchImpl = async (url, options) => {
+    requests.push({ url: String(url), options, body: JSON.parse(options.body) })
+    return {
+      ok: true,
+      status: 200,
+      async text() {
+        return JSON.stringify({ text: "готовый transcript" })
+      },
+    }
+  }
+  try {
+    const client = new OpenRouterSpeechClient({
+      apiKeyEnv: "OPENROUTER_API_KEY",
+      url: "https://openrouter.ai/api/v1/audio/transcriptions",
+      model: "openai/whisper-large-v3-turbo",
+      language: "ru",
+      temperature: 0,
+      responseFormat: "json",
+      prompt: "short prompt",
+      referer: "https://example.test/opencodebot",
+      title: "opencodebot smoke",
+      timeoutMs: 5000,
+    }, { OPENROUTER_API_KEY: "test-key" }, fetchImpl)
+    const result = await client.transcribeFile({ localPath: audioPath, filename: "voice.oga", mime: "audio/ogg" })
+    assert.equal(result.text, "готовый transcript")
+    assert.equal(audioFormat({ filename: "voice.oga" }), "ogg")
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0].url, "https://openrouter.ai/api/v1/audio/transcriptions")
+    assert.equal(requests[0].options.method, "POST")
+    assert.match(requests[0].options.headers.Authorization, /^Bearer /)
+    assert.equal(requests[0].body.model, "openai/whisper-large-v3-turbo")
+    assert.equal(requests[0].body.input_audio.format, "ogg")
+    assert.equal(requests[0].body.language, "ru")
+    assert.equal(requests[0].body.temperature, 0)
+    assert.equal(requests[0].body.provider.options.groq.prompt, "short prompt")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 }
 
 function smokeSyntheticTextFilter() {

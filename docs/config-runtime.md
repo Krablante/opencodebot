@@ -30,11 +30,11 @@ OpenCodez servers come from `paths.serversJson`, not from the main config body. 
 
 ## Secrets
 
-`token.env` is read by local scripts and the Compose runtime. It holds values such as the Telegram bot token, allowed user ids, the OpenCodez password, the optional artifact gateway token, and optional `TELEGRAM_API_ID`/`TELEGRAM_API_HASH` credentials for the local Telegram Bot API sidecar. Do not print it, paste it into docs, or commit it.
+`token.env` is read by local scripts and the Compose runtime. It holds values such as the Telegram bot token, allowed user ids, the OpenCodez password, the optional artifact gateway token, optional `OPENROUTER_API_KEY` for speech transcription, and optional `TELEGRAM_API_ID`/`TELEGRAM_API_HASH` credentials for the local Telegram Bot API sidecar. Do not print it, paste it into docs, or commit it.
 
 The config names the environment variables to try. `telegram.tokenEnvNames` is checked first, but the loader can also recognize a Telegram-looking token from the env file. `telegram.allowedUserEnvNames` is checked first for user ids; if none are found, the loader falls back to env names that look like owner/user/allowed id variables. `opencode.passwordEnvNames` works the same simple way for the OpenCodez password.
 
-Non-secret config is intentionally small. It covers deployment identity and ownership: chat id, allowed user ids, OpenCodez servers, default prompt profile, chat templates, attachment limits, artifact upload folders, final-notification recipients, artifact gateway address, paths, and optional web/WireGuard helpers. Mirror policy, prompt pinning, reconcile windows, multipart buffering, and tool compaction are fixed defaults in code.
+Non-secret config is intentionally small. It covers deployment identity and ownership: chat id, allowed user ids, OpenCodez servers, default prompt profile, chat templates, attachment limits, speech transcription settings, artifact upload folders, final-notification recipients, artifact gateway address, paths, and optional web/WireGuard helpers. Mirror policy, prompt pinning, reconcile windows, multipart buffering, and tool compaction are fixed defaults in code.
 
 ## Telegram
 
@@ -78,6 +78,33 @@ Older local configs that copied `telegram.attachments` from a previous example s
   }
 }
 ```
+
+## Speech Transcription
+
+`speech` is an optional OpenRouter-backed voice transcription module. It is disabled by default and has no local model, GPU, or worker dependency. To enable it, set `speech.enabled` to `true` and provide `OPENROUTER_API_KEY` in `token.env` or the process environment.
+
+```json
+{
+  "speech": {
+    "enabled": true,
+    "maxFileBytes": 25000000,
+    "queueConcurrency": 1,
+    "statusMessage": "Transcribing voice...",
+    "openrouter": {
+      "apiKeyEnv": "OPENROUTER_API_KEY",
+      "model": "openai/whisper-large-v3-turbo",
+      "language": "ru",
+      "temperature": 0,
+      "responseFormat": "json",
+      "prompt": "Русская голосовая заметка. Сохраняй технические названия, команды, пути и сокращения латиницей."
+    }
+  }
+}
+```
+
+Run `/sounds_here` in a Telegram forum topic to make that topic the speech inbox. Voice and audio messages in that topic are downloaded, sent to OpenRouter's audio transcription endpoint, and answered with the transcript in the same topic. Text in the speech topic is not forwarded to OpenCodez sessions.
+
+The prompt is deliberately short and configurable. Leave it blank if generic transcription is better for your group, or replace it with a small vocabulary hint. Do not put secrets in it.
 
 ## OpenCodez
 
@@ -196,7 +223,7 @@ Per-server roots belong in `servers.json` when one host needs a different dropbo
 
 ## Paths And State
 
-`paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, the current artifacts topic, mirror enabled state, pending Telegram-origin prompt ids, known sessions, per-session mirror markers, bounded reconcile windows, and final-notification opt-ins/dedupe markers. It should not contain full prompt queue text. The `/q` queue is memory-only and disappears on service restart by design.
+`paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, the current artifacts topic, the current sounds topic, mirror enabled state, pending Telegram-origin prompt ids, known sessions, per-session mirror markers, bounded reconcile windows, and final-notification opt-ins/dedupe markers. It should not contain full prompt queue text. The `/q` queue is memory-only and disappears on service restart by design.
 
 If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. Reconnects, progress events, and tool-only events do not release or clear the queue.
 
