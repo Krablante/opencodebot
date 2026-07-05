@@ -90,7 +90,7 @@ const telegramPolling = createTelegramPolling({
   state,
   telegram,
   commandHandlers,
-  handleSpeechMessage: (message) => speech.handleMessage(null, message),
+  handleSpeechMessage: (message) => speech.handleMessage(message),
   handleTopicLifecycleMessage,
   handleAttachmentMessage,
   handleArtifactUploadMessage: ({ message, files }) => artifactUploads.add({ message, files }),

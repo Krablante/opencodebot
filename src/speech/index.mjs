@@ -27,11 +27,11 @@ export class SpeechModule {
     return this.state.isSoundsTopic(message.chat.id, topicId(message))
   }
 
-  async handleMessage(context, message) {
+  async handleMessage(message) {
     if (!this.enabled() || !this.isSoundsTopic(message)) return false
     const files = audioDescriptors(message)
-    if (!files.length) return true
-    const job = { context, message, descriptors: files }
+    if (!files.length) return false
+    const job = { message, descriptors: files }
     this.queue.push(job)
     this.drain()
     return true

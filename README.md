@@ -126,7 +126,7 @@ Your `config.local.json`, `servers.json`, `token.env`, and `state/` directory st
 
 The artifact gateway and OpenCodez plugin are optional. Start without them first unless you specifically want agents to send files, screenshots, logs, or text to a Telegram artifacts topic. Enable that later with [Artifact Gateway](docs/artifact-gateway.md).
 
-The speech transcription module is optional. Enable it with `speech.enabled=true` and `OPENROUTER_API_KEY` in `token.env`, then run `/sounds_here` in a Telegram forum topic. It uses OpenRouter's `openai/whisper-large-v3-turbo` by default and does not run local Whisper, CUDA, or fallback workers.
+The speech transcription module is optional. Enable it with `speech.enabled=true` and `OPENROUTER_API_KEY` in `token.env`, then run `/sounds_here` in a Telegram forum topic. It uses OpenRouter's `openai/whisper-large-v3-turbo` by default, so no separate speech service is required.
 
 The local Telegram Bot API sidecar is also optional. Add `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` to `token.env`, set `telegram.botApi.mode` to `local`, start Compose with the `telegram-local` profile, then run `docker compose exec -T opencodebot npm run telegram-local -- doctor`. Details are in [Docker](docs/docker.md) and [Config And Runtime](docs/config-runtime.md).
 

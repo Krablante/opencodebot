@@ -11,6 +11,7 @@ import { OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { createSessionReconciler } from "../src/session-reconcile.mjs"
 import { normalizeSpeechConfig } from "../src/config/speech.mjs"
+import { SpeechModule } from "../src/speech/index.mjs"
 import { OpenRouterSpeechClient, audioFormat } from "../src/speech/openrouter-client.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
 import { OpencodebotArtifactsPlugin } from "../plugins/opencodebot-artifacts/src/index.js"
@@ -29,6 +30,7 @@ async function smokeLocalInvariants() {
   await smokeArtifactDropbox()
   await smokeArtifactPluginBatchCaptions()
   await smokeSpeechOpenRouterRequest()
+  await smokeSpeechTopicRouting()
   await smokeOpenCodeAbortClient()
   await smokeKillCommand()
   await smokeKillCommandAbortFailure()
@@ -92,6 +94,41 @@ async function smokeSpeechOpenRouterRequest() {
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+}
+
+async function smokeSpeechTopicRouting() {
+  const jobs = []
+  const speech = new SpeechModule({
+    config: {
+      enabled: true,
+      maxFileBytes: 25_000_000,
+      queueConcurrency: 1,
+      statusMessage: "Transcribing voice...",
+      openrouter: {
+        apiKeyEnv: "OPENROUTER_API_KEY",
+        apiKey: "test-key",
+        model: "openai/whisper-large-v3-turbo",
+        language: "ru",
+        temperature: 0,
+        responseFormat: "json",
+        prompt: "",
+        timeoutMs: 5000,
+      },
+    },
+    telegram: {},
+    state: {
+      isSoundsTopic: (chatId, topicID) => String(chatId) === "100" && Number(topicID || 0) === 7,
+      soundsTopic: () => ({ chatId: 100, topicId: 7 }),
+    },
+    uploadDir: "/tmp",
+    attachmentSettings: {},
+  })
+  speech.drain = () => jobs.push(speech.queue.shift())
+  assert.equal(await speech.handleMessage({ chat: { id: 100 }, message_thread_id: 7, text: "hello" }), false)
+  assert.equal(await speech.handleMessage({ chat: { id: 100 }, message_thread_id: 7, photo: [{ file_id: "p1" }] }), false)
+  assert.equal(await speech.handleMessage({ chat: { id: 100 }, message_thread_id: 7, voice: { file_id: "v1", file_unique_id: "uv1" } }), true)
+  assert.equal(jobs.length, 1)
+  assert.equal(jobs[0].descriptors[0].kind, "voice")
 }
 
 function smokeSyntheticTextFilter() {

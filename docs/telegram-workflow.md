@@ -18,13 +18,13 @@ When OpenCodez later updates a session title, the linked Telegram topic is renam
 
 ```text
 /new [server] [template] [dir:<path>] [title]  create a topic and wait for the first prompt
-/session                           show topic, binding, session URL, and artifact target info
+/session                           show topic, binding, session URL, and special topic status
 /q <prompt>                       queue or send a prompt in this topic/session
 /q status                         show queued prompts
 /q delete <number>                remove a queued prompt by status number
 /kill                             stop the current run and clear queued prompts
 /artifacts_here                   make this topic the artifact target and file dropbox
-/sounds_here                      make this topic the voice transcription inbox
+/sounds_here                      transcribe voice/audio messages in this topic
 /sounds_off                       disable voice transcription for this topic
 /sounds_status                    show voice transcription status
 /notify_on                       enable final-answer DMs for configured recipients
