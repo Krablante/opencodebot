@@ -138,5 +138,5 @@ function isAudioDocument(file) {
 
 function transcriptMessage(text, model, elapsedMs) {
   const body = clampTelegram(escapeHtml(text), 3600)
-  return `<b>Transcript</b>\n${body}\n\n<code>${escapeHtml(model)}</code> · <code>${Math.round(elapsedMs)}ms</code>`
+  return `${body}\n\n<code>${escapeHtml(model)}</code> · <code>${Math.round(elapsedMs)}ms</code>`
 }
