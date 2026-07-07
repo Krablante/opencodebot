@@ -5,6 +5,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { artifactTargetPath, handleArtifactUploadMessage, resolveUploadTarget } from "../src/artifact-uploads.mjs"
+import { AttachmentBuffer } from "../src/attachments.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "../src/commands.mjs"
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
@@ -33,6 +34,7 @@ async function smokeLocalInvariants() {
   await smokeSpeechTopicRouting()
   await smokeOpenCodeAbortClient()
   await smokeQueuedAttachmentPayload()
+  await smokeQueuedMediaGroupAttachmentPayload()
   await smokeKillCommand()
   await smokeKillCommandAbortFailure()
   await smokeKillSuppressesAbortFallout()
@@ -313,6 +315,28 @@ async function smokeQueuedAttachmentPayload() {
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+}
+
+async function smokeQueuedMediaGroupAttachmentPayload() {
+  const flushed = []
+  const buffer = new AttachmentBuffer({
+    settings: { mediaGroupIdleMs: 100, promptIdleMs: 1000 },
+    uploadDir: "/tmp",
+    flushPrompt: async () => { throw new Error("default flush should not run") },
+    onExpire: async () => { throw new Error("media group should flush before prompt expiry") },
+    onError: (error) => { throw error },
+  })
+  const context = { message: { chat: { id: 1 }, message_thread_id: 2, message_id: 10 }, binding: { serverID: "nuc", sessionID: "ses" } }
+  await buffer.addFiles("1:2:3", context, [{ filename: "one.png" }], {
+    text: "compare both screenshots",
+    mediaGroupID: "album-1",
+    flushPrompt: async (actualContext, text, files) => flushed.push({ actualContext, text, files }),
+  })
+  await buffer.addFiles("1:2:3", context, [{ filename: "two.png" }], { mediaGroupID: "album-1" })
+  await new Promise((resolve) => setTimeout(resolve, 160))
+  assert.equal(flushed.length, 1)
+  assert.equal(flushed[0].text, "compare both screenshots")
+  assert.deepEqual(flushed[0].files.map((file) => file.filename), ["one.png", "two.png"])
 }
 
 async function smokeKillCommandAbortFailure() {

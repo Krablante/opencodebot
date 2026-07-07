@@ -12,11 +12,12 @@ export class AttachmentBuffer {
     this.pending = new Map()
   }
 
-  async addFiles(key, context, files, { text = "", mediaGroupID = "" } = {}) {
+  async addFiles(key, context, files, { text = "", mediaGroupID = "", flushPrompt } = {}) {
     if (!this.settings.enabled) return { status: "disabled" }
     if (!files.length) return { status: "empty" }
     const entry = this.entry(key, context)
     entry.context = context
+    if (flushPrompt) entry.flushPrompt = flushPrompt
     entry.files.push(...files)
     if (mediaGroupID) entry.mediaGroupID = mediaGroupID
     const cleanText = String(text || "").trim()
@@ -60,14 +61,14 @@ export class AttachmentBuffer {
       await this.expireEntry(entry)
       return false
     }
-    await this.flushPrompt(entry.context, text, entry.files)
+    await (entry.flushPrompt || this.flushPrompt)(entry.context, text, entry.files)
     return true
   }
 
   entry(key, context) {
     let entry = this.pending.get(key)
     if (!entry) {
-      entry = { context, files: [], textParts: [], mediaGroupID: "", mediaTimer: null, promptTimer: null }
+      entry = { context, files: [], textParts: [], mediaGroupID: "", mediaTimer: null, promptTimer: null, flushPrompt: null }
       this.pending.set(key, entry)
     }
     return entry

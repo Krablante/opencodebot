@@ -79,8 +79,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     try {
       const downloads = await downloadTelegramFiles(telegram, files, config.paths.uploadsDir, config.attachments)
       if (queued) {
-        const result = await promptQueue.enqueue(context.binding, queued.text, downloads, { sourceMessageId: message.message_id })
-        await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: queueAttachmentFeedback(result, downloads.length) })
+        await attachmentBuffer.addFiles(promptKey, context, downloads, { text: queued.text, mediaGroupID: message.media_group_id || "", flushPrompt: queueAttachmentPrompt })
         return
       }
       await attachmentBuffer.addFiles(promptKey, context, downloads, { text: caption, mediaGroupID: message.media_group_id || "" })
@@ -108,6 +107,11 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       topicId: topicId(context.message),
       text: `Attachment batch expired: no prompt text arrived within ${formatDuration(config.attachments.promptIdleMs)} (${files.length} file${files.length === 1 ? "" : "s"}).`,
     })
+  }
+
+  async function queueAttachmentPrompt(context, text, files = []) {
+    const result = await promptQueue.enqueue(context.binding, text, files, { sourceMessageId: context.message?.message_id })
+    await telegram.sendMessage({ chatId: context.message.chat.id, topicId: topicId(context.message), text: queueAttachmentFeedback(result, files.length) })
   }
 
   function promptContext(message) {
