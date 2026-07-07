@@ -1,5 +1,5 @@
 import { formatDuration } from "./backend-backoff.mjs"
-import { AttachmentBuffer, downloadTelegramFiles } from "./attachments.mjs"
+import { AttachmentBuffer, cleanupFiles, downloadTelegramFiles } from "./attachments.mjs"
 import { applyChatTemplate } from "./chat-templates.mjs"
 import { logErrorEvent, logInfo } from "./logger.mjs"
 import { MultipartPromptBuffer } from "./multipart-prompts.mjs"
@@ -20,7 +20,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     onExpire: notifyAttachmentExpired,
     onError: logError,
   })
-  const promptQueue = new PromptQueue(sendTelegramPrompt)
+  const promptQueue = new PromptQueue(sendTelegramPrompt, { onDrop: cleanupFiles })
 
   async function queueTelegramPrompt(key, text, context) {
     await multipartPrompts.push(key, text, context)
@@ -67,8 +67,22 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "No OpenCodez session is bound to this topic. Create one with /new, then send files here." })
       return
     }
+    const queued = parseQueueCaption(caption)
+    if (queued && !context.binding) {
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "No bound OpenCodez session is active yet, so attachments cannot be queued here. Create one with /new first." })
+      return
+    }
+    if (queued && !queued.text) {
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Usage: <code>/q prompt text</code> as the file caption." })
+      return
+    }
     try {
       const downloads = await downloadTelegramFiles(telegram, files, config.paths.uploadsDir, config.attachments)
+      if (queued) {
+        const result = await promptQueue.enqueue(context.binding, queued.text, downloads, { sourceMessageId: message.message_id })
+        await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: queueAttachmentFeedback(result, downloads.length) })
+        return
+      }
       await attachmentBuffer.addFiles(promptKey, context, downloads, { text: caption, mediaGroupID: message.media_group_id || "" })
     } catch (error) {
       await telegram.sendMessage({
@@ -253,4 +267,19 @@ function promptFeedbackStartingText() {
 
 function promptFeedbackAcceptedText() {
   return "🟢 Accepted by OpenCodez\n🧠 Waiting for the first events"
+}
+
+function parseQueueCaption(caption) {
+  const value = String(caption || "").trim()
+  if (!value) return null
+  const match = value.match(/^\/q(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/)
+  if (!match) return null
+  return { text: String(match[1] || "").trim() }
+}
+
+function queueAttachmentFeedback(result, fileCount) {
+  const files = `${fileCount} file${fileCount === 1 ? "" : "s"}`
+  if (result.status === "sent") return `No active run; sent immediately with ${files}.`
+  if (result.status === "queued") return `Queued prompt #${result.position} with ${files}.`
+  return `Could not queue attachment prompt with ${files}.`
 }

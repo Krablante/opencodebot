@@ -32,6 +32,7 @@ async function smokeLocalInvariants() {
   await smokeSpeechOpenRouterRequest()
   await smokeSpeechTopicRouting()
   await smokeOpenCodeAbortClient()
+  await smokeQueuedAttachmentPayload()
   await smokeKillCommand()
   await smokeKillCommandAbortFailure()
   await smokeKillSuppressesAbortFallout()
@@ -280,6 +281,38 @@ async function smokeKillCommand() {
   assert.equal(sent[0].topicId, 456)
   assert.match(sent[0].text, /Stop signal sent/)
   assert.match(sent[0].text, /Cleared 1 queued prompt/)
+}
+
+async function smokeQueuedAttachmentPayload() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-queued-attachment-"))
+  const localPath = path.join(root, "queued.txt")
+  await writeFile(localPath, "queued file")
+  const binding = { serverID: "nuc", sessionID: "ses_queue", directory: root }
+  const sent = []
+  const dropped = []
+  const queue = new PromptQueue(async (actualBinding, text, files, metadata) => {
+    sent.push({ actualBinding, text, files, metadata })
+  }, { onDrop: async (files) => dropped.push(...files.map((file) => file.filename)) })
+  try {
+    queue.markBusy(binding)
+    await queue.enqueue(binding, "queued with attachment", [{ filename: "queued.txt", localPath }], { sourceMessageId: 123 })
+    assert.equal(queue.status(binding)[0].fileCount, 1)
+    assert.match(queue.status(binding)[0].summary, /\(\+1 file\)$/)
+    const removed = queue.delete(binding, 1)
+    assert.equal(removed.fileCount, 1)
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.deepEqual(dropped, ["queued.txt"])
+
+    await queue.enqueue(binding, "queued again", [{ filename: "queued.txt", localPath }], { sourceMessageId: 456 })
+    const flushed = await queue.complete(binding)
+    assert.equal(flushed.status, "sent")
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0].text, "queued again")
+    assert.equal(sent[0].files.length, 1)
+    assert.equal(sent[0].metadata.sourceMessageId, 456)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 }
 
 async function smokeKillCommandAbortFailure() {

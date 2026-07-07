@@ -1,6 +1,7 @@
 export class PromptQueue {
-  constructor(sendPrompt) {
+  constructor(sendPrompt, { onDrop } = {}) {
     this.sendPrompt = sendPrompt
+    this.onDrop = onDrop || (async () => {})
     this.sessions = new Map()
   }
 
@@ -33,15 +34,19 @@ export class PromptQueue {
     return false
   }
 
-  async enqueue(binding, text, metadata = {}) {
+  async enqueue(binding, text, files = [], metadata = {}) {
+    if (!Array.isArray(files)) {
+      metadata = files || {}
+      files = []
+    }
     const value = String(text || "").trim()
     if (!value) return { status: "empty" }
     const state = this.state(binding)
     if (!state.busy) {
-      await this.sendNow(binding, value, metadata)
+      await this.sendNow(binding, value, files, metadata)
       return { status: "sent" }
     }
-    state.items.push({ text: value, createdAt: Date.now(), sourceMessageId: metadata?.sourceMessageId })
+    state.items.push({ text: value, files, createdAt: Date.now(), sourceMessageId: metadata?.sourceMessageId })
     return { status: "queued", position: state.items.length }
   }
 
@@ -49,7 +54,8 @@ export class PromptQueue {
     return this.state(binding).items.map((item, index) => ({
       index: index + 1,
       text: item.text,
-      summary: summarizeWords(item.text, 10),
+      summary: summarizeQueueItem(item),
+      fileCount: item.files?.length || 0,
       createdAt: item.createdAt,
     }))
   }
@@ -59,19 +65,23 @@ export class PromptQueue {
     const offset = Number(index) - 1
     if (!Number.isSafeInteger(offset) || offset < 0 || offset >= state.items.length) return null
     const [removed] = state.items.splice(offset, 1)
-    return { index: offset + 1, text: removed.text, summary: summarizeWords(removed.text, 10) }
+    this.dropItem(removed)
+    return { index: offset + 1, text: removed.text, summary: summarizeQueueItem(removed), fileCount: removed.files?.length || 0 }
   }
 
   clear(binding) {
     const state = this.state(binding)
+    const items = state.items
     const cleared = state.items.map((item, index) => ({
       index: index + 1,
       text: item.text,
-      summary: summarizeWords(item.text, 10),
+      summary: summarizeQueueItem(item),
+      fileCount: item.files?.length || 0,
       createdAt: item.createdAt,
     }))
     state.busy = false
     state.items = []
+    items.forEach((item) => this.dropItem(item))
     return cleared
   }
 
@@ -85,15 +95,15 @@ export class PromptQueue {
     const state = this.state(binding)
     if (state.busy || !state.items.length) return { status: "idle" }
     const item = state.items.shift()
-    await this.sendNow(binding, item.text, item)
+    await this.sendNow(binding, item.text, item.files || [], item)
     return { status: "sent", text: item.text }
   }
 
-  async sendNow(binding, text, metadata = {}) {
+  async sendNow(binding, text, files = [], metadata = {}) {
     const state = this.state(binding)
     state.busy = true
     try {
-      await this.sendPrompt(binding, text, [], metadata)
+      await this.sendPrompt(binding, text, files, metadata)
     } catch (error) {
       state.busy = false
       throw error
@@ -109,12 +119,24 @@ export class PromptQueue {
     }
     return state
   }
+
+  dropItem(item) {
+    if (!item?.files?.length) return
+    Promise.resolve(this.onDrop(item.files)).catch(() => {})
+  }
 }
 
 export function summarizeWords(text, maxWords = 10) {
   const words = String(text || "").trim().split(/\s+/).filter(Boolean)
   if (words.length <= maxWords) return words.join(" ")
   return `${words.slice(0, maxWords).join(" ")}...`
+}
+
+export function summarizeQueueItem(item, maxWords = 10) {
+  const text = typeof item === "string" ? item : item?.text
+  const summary = summarizeWords(text, maxWords)
+  const fileCount = typeof item === "string" ? 0 : item?.files?.length || 0
+  return fileCount ? `${summary} (+${fileCount} file${fileCount === 1 ? "" : "s"})` : summary
 }
 
 function queueKey(binding) {
