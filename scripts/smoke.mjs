@@ -12,7 +12,7 @@ import { OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { createSessionReconciler } from "../src/session-reconcile.mjs"
 import { normalizeSpeechConfig } from "../src/config/speech.mjs"
-import { SpeechModule } from "../src/speech/index.mjs"
+import { SpeechModule, transcriptMessage } from "../src/speech/index.mjs"
 import { OpenRouterSpeechClient, audioFormat } from "../src/speech/openrouter-client.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
 import { OpencodebotArtifactsPlugin } from "../plugins/opencodebot-artifacts/src/index.js"
@@ -32,6 +32,7 @@ async function smokeLocalInvariants() {
   await smokeArtifactPluginBatchCaptions()
   await smokeSpeechOpenRouterRequest()
   await smokeSpeechTopicRouting()
+  smokeSpeechTranscriptMessage()
   await smokeOpenCodeAbortClient()
   await smokeQueuedAttachmentPayload()
   await smokeQueuedMediaGroupAttachmentPayload()
@@ -143,6 +144,15 @@ async function smokeSpeechTopicRouting() {
   assert.equal(speech.status().language, "ru")
   speech.config.openrouter.language = null
   assert.equal(speech.status().language, "auto")
+}
+
+function smokeSpeechTranscriptMessage() {
+  const message = transcriptMessage("строка <admin> & /q", "model/test", 1234)
+  assert.match(message, /^<pre>[\s\S]+<\/pre>\n\n<code>model\/test<\/code> · <code>1234ms<\/code>$/)
+  const transcriptBlock = /^<pre>([\s\S]+)<\/pre>\n\n/.exec(message)?.[1]
+  assert.equal(transcriptBlock, "строка &lt;admin&gt; &amp; /q")
+  assert.equal(transcriptBlock.includes("model/test"), false)
+  assert.ok(transcriptMessage("<".repeat(5000), "model/test", 1).length <= 4096)
 }
 
 function smokeSyntheticTextFilter() {

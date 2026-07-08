@@ -136,7 +136,18 @@ function isAudioDocument(file) {
   return file.kind === "document" && String(file.mime || "").toLowerCase().startsWith("audio/")
 }
 
-function transcriptMessage(text, model, elapsedMs) {
-  const body = clampTelegram(escapeHtml(text), 3600)
-  return `${body}\n\n<code>${escapeHtml(model)}</code> · <code>${Math.round(elapsedMs)}ms</code>`
+export function transcriptMessage(text, model, elapsedMs) {
+  const body = escapeHtml(fitTranscriptBlock(text))
+  return `<pre>${body}</pre>\n\n<code>${escapeHtml(model)}</code> · <code>${Math.round(elapsedMs)}ms</code>`
+}
+
+function fitTranscriptBlock(text) {
+  const raw = String(text || "")
+  let limit = 3400
+  let body = clampTelegram(raw, limit)
+  while (escapeHtml(body).length > 3700 && limit > 200) {
+    limit = Math.max(200, Math.floor(limit * 0.8))
+    body = clampTelegram(raw, limit)
+  }
+  return body
 }
