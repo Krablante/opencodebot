@@ -60,6 +60,11 @@ async function smokeSpeechOpenRouterRequest() {
   const requests = []
   const normalized = normalizeSpeechConfig({ enabled: true }, { OPENROUTER_API_KEY: "test-key" })
   assert.equal(normalized.openrouter.apiKey, "test-key")
+  assert.equal(normalized.openrouter.language, "ru")
+  assert.equal(normalizeSpeechConfig({ enabled: true, openrouter: { language: "EN" } }).openrouter.language, "en")
+  assert.equal(normalizeSpeechConfig({ enabled: true, language: "uk" }).openrouter.language, "uk")
+  assert.equal(normalizeSpeechConfig({ enabled: true, openrouter: { language: null } }).openrouter.language, null)
+  assert.equal(normalizeSpeechConfig({ enabled: true, openrouter: { language: "auto" } }).openrouter.language, null)
   const fetchImpl = async (url, options) => {
     requests.push({ url: String(url), options, body: JSON.parse(options.body) })
     return {
@@ -95,6 +100,8 @@ async function smokeSpeechOpenRouterRequest() {
     assert.equal(requests[0].body.language, "ru")
     assert.equal(requests[0].body.temperature, 0)
     assert.equal(requests[0].body.provider.options.groq.prompt, "short prompt")
+    const autoBody = new OpenRouterSpeechClient({ ...client.config, language: null }, {}, fetchImpl).requestBody(Buffer.from("audio"), "ogg")
+    assert.equal(Object.hasOwn(autoBody, "language"), false)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -133,6 +140,9 @@ async function smokeSpeechTopicRouting() {
   assert.equal(await speech.handleMessage({ chat: { id: 100 }, message_thread_id: 7, voice: { file_id: "v1", file_unique_id: "uv1" } }), true)
   assert.equal(jobs.length, 1)
   assert.equal(jobs[0].descriptors[0].kind, "voice")
+  assert.equal(speech.status().language, "ru")
+  speech.config.openrouter.language = null
+  assert.equal(speech.status().language, "auto")
 }
 
 function smokeSyntheticTextFilter() {

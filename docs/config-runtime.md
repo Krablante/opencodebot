@@ -106,6 +106,18 @@ Run `/sounds_here` in a Telegram forum topic to make that topic the speech inbox
 
 The prompt is deliberately short and configurable. Leave it blank if generic transcription is better for your group, or replace it with a small vocabulary hint. Do not put secrets in it.
 
+`openrouter.language` defaults to `"ru"` and is sent to OpenRouter as a transcription hint. Set it to another ISO-639-1 code such as `"en"` when the speech topic is mostly another language. Set it to `null` or `"auto"` to omit the `language` field and let OpenRouter auto-detect the audio language.
+
+```json
+{
+  "speech": {
+    "openrouter": {
+      "language": "auto"
+    }
+  }
+}
+```
+
 ## OpenCodez
 
 `opencode.baseUrl` is the local/default API origin used when a server-specific URL is not involved. `opencode.passwordEnvNames` lists env var names that may contain the OpenCodez password.

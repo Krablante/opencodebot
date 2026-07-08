@@ -62,10 +62,10 @@ export class OpenRouterSpeechClient {
         data: audio.toString("base64"),
         format,
       },
-      language: this.config.language,
       temperature: this.config.temperature,
       response_format: this.config.responseFormat,
     }
+    if (this.config.language) body.language = this.config.language
     if (this.config.prompt) {
       body.provider = { options: { groq: { prompt: this.config.prompt } } }
     }

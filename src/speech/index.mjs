@@ -58,7 +58,7 @@ export class SpeechModule {
       queueDepth: this.queue.length,
       active: this.active,
       model: this.config.openrouter.model,
-      language: this.config.openrouter.language,
+      language: this.config.openrouter.language ?? "auto",
       apiKeyEnv: this.config.openrouter.apiKeyEnv,
     }
   }
