@@ -68,9 +68,14 @@ export function createSessionReconciler({
         case "session.next.step.ended":
           if (properties.finish === "stop") {
             await renderer.finalAssistantMessageReady(binding, properties.assistantMessageID)
-            await promptQueue.complete(binding)
           }
           await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
+          break
+        case "session.status":
+          if (properties.status?.type === "idle") await promptQueue.complete(binding)
+          break
+        case "session.idle":
+          await promptQueue.complete(binding)
           break
         case "session.next.step.failed":
           await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
@@ -204,7 +209,6 @@ export function createSessionReconciler({
       await renderStoredAssistantMessage(binding, message)
       await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
       mirroredAssistants += 1
-      if (info.finish === "stop") await promptQueue.complete(binding)
     }
     const elapsedMs = durationMs(startedAt)
     if (mirroredUsers || mirroredAssistants || shouldLogSlow(elapsedMs)) {
@@ -316,7 +320,7 @@ function compactStoredToolLine(part, renderer) {
 }
 
 function isMirrorMilestone(type) {
-  return type === "session.next.step.ended" || type === "session.next.step.failed" || type === "session.idle"
+  return type === "session.next.step.ended" || type === "session.next.step.failed" || type === "session.status" || type === "session.idle"
 }
 
 function reconcileWindow(binding) {

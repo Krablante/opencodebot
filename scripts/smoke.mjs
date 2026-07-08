@@ -38,6 +38,7 @@ async function smokeLocalInvariants() {
   await smokeKillCommand()
   await smokeKillCommandAbortFailure()
   await smokeKillSuppressesAbortFallout()
+  await smokeQueueDrainsOnSessionIdle()
 }
 
 function smokeConfigExample() {
@@ -404,6 +405,58 @@ async function smokeKillSuppressesAbortFallout() {
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.error", properties: { sessionID: "ses_kill", error: "real failure" } })
   assert.equal(sent.length, 1)
   assert.match(sent[0].text, /OpenCodez session error/)
+}
+
+async function smokeQueueDrainsOnSessionIdle() {
+  const binding = { chatId: 123, topicId: 456, serverID: "nuc", sessionID: "ses_queue_idle", directory: "/tmp/work" }
+  const sent = []
+  const rendered = []
+  const mirrored = []
+  const promptQueue = new PromptQueue(async (actualBinding, text) => sent.push({ actualBinding, text }))
+  const reconciler = createSessionReconciler({
+    config: { telegram: { autocreateTopics: false }, reconcile: {} },
+    state: {
+      mirrorEnabled: () => true,
+      findBinding: (serverID, sessionID) => (serverID === binding.serverID && sessionID === binding.sessionID ? binding : null),
+      markAssistantMirrored: async (serverID, sessionID, messageID) => mirrored.push({ serverID, sessionID, messageID }),
+    },
+    telegram: { async sendMessage() {} },
+    opencode: {},
+    renderer: {
+      finalAssistantMessageReady: async (actualBinding, messageID) => rendered.push({ actualBinding, messageID }),
+    },
+    promptQueue,
+    backendRequest: async () => {},
+    skippedBackendRequest: async () => {},
+    createTopicForSession: async () => null,
+    createTopicForWebSession: async () => null,
+    isInternalSession: () => false,
+    activateBindingForPrompt: async () => {},
+    maybeExtendBindingActivity: async () => {},
+    logError: () => {},
+    shouldStop: () => false,
+  })
+
+  promptQueue.markBusy(binding)
+  await promptQueue.enqueue(binding, "queued until idle")
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, {
+    type: "session.next.step.ended",
+    properties: { sessionID: binding.sessionID, assistantMessageID: "msg_done", finish: "stop" },
+  })
+  assert.equal(sent.length, 0)
+  assert.equal(promptQueue.status(binding).length, 1)
+  assert.equal(promptQueue.isBusy(binding), true)
+  assert.deepEqual(rendered.map((item) => item.messageID), ["msg_done"])
+  assert.deepEqual(mirrored.map((item) => item.messageID), ["msg_done"])
+
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, {
+    type: "session.status",
+    properties: { sessionID: binding.sessionID, status: { type: "idle" } },
+  })
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0].text, "queued until idle")
+  assert.equal(promptQueue.status(binding).length, 0)
+  assert.equal(promptQueue.isBusy(binding), true)
 }
 
 async function smokeOpenCodeAbortClient() {

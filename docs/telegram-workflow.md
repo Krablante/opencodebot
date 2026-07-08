@@ -80,7 +80,7 @@ Supported attachment inputs include documents, photos, videos, animations, audio
 
 `/q <prompt>` sends immediately when the bound OpenCodez session is idle. If the session is busy, the prompt is kept in memory for that session. The same rule applies to a file or media group whose caption starts with `/q`: the prompt text and downloaded attachments stay together in the queue and are sent as one prompt when the session becomes idle.
 
-The queue advances only after the same final-answer path used for `🏁`, where OpenCodez reports `finish === stop`. Progress notes, reconnects, and tool-only steps do not release the next queued prompt. If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. A service restart drops queued prompts instead of writing full user prompts into `state.json`.
+The queue advances only after OpenCodez reports the session idle. Assistant step completion, progress notes, reconnects, and tool-only steps do not release the next queued prompt. If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. A service restart drops queued prompts instead of writing full user prompts into `state.json`.
 
 `/kill` also clears the queue for the current topic after sending the OpenCodez abort request, and it discards any pending multipart prompt buffer instead of flushing that text as a new prompt. This keeps the command's meaning simple: stop the active run and do not launch another queued prompt automatically.
 

@@ -225,7 +225,7 @@ Per-server roots belong in `servers.json` when one host needs a different dropbo
 
 `paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, the current artifacts topic, the current sounds topic, mirror enabled state, pending Telegram-origin prompt ids, known sessions, per-session mirror markers, bounded reconcile windows, and final-notification opt-ins/dedupe markers. It should not contain full prompt queue text. The `/q` queue is memory-only and disappears on service restart by design.
 
-If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. Reconnects, progress events, and tool-only events do not release or clear the queue.
+If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. The queue releases the next prompt only after OpenCodez reports the session idle; reconnects, progress events, assistant step completion, and tool-only events do not release or clear the queue.
 
 `paths.uploadsDir` stores downloaded Telegram files as local staging. Uploaded files are runtime material and should stay out of git. Small files are inlined into OpenCodez prompts as data URLs. Larger accepted files are copied to the selected server's `uploadRoot`, and the prompt describes the server-local path, size, and MIME metadata. This keeps multihost and Windows setups usable because the path shown to the model belongs to the selected OpenCodez host, not to the bot container.
 
