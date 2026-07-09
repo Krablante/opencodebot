@@ -31,14 +31,21 @@ export class MirrorRenderer {
   }
 
   async userPrompt(binding, text, origin = "web") {
-    const message = await this.telegram.sendMessage({
-      chatId: binding.chatId,
-      topicId: binding.topicId,
-      text: clampTelegram(`💬 ${escapeHtml(text)}`, this.config.mirror.maxTelegramChars),
-    })
-    await this.notifyMirrorMessage(binding, message)
-    if (this.shouldPinUserPrompts()) await this.pinMessage(binding, message.message_id, { origin: "web-prompt" })
-    return message
+    const messages = webPromptMessages(text, this.config.mirror.maxTelegramChars)
+    let firstMessage = null
+    let lastMessage = null
+    for (const item of messages) {
+      const message = await this.telegram.sendMessage({
+        chatId: binding.chatId,
+        topicId: binding.topicId,
+        text: item,
+      })
+      firstMessage ||= message
+      lastMessage = message
+      await this.notifyMirrorMessage(binding, message)
+    }
+    if (firstMessage && this.shouldPinUserPrompts()) await this.pinMessage(binding, firstMessage.message_id, { origin: "web-prompt" })
+    return lastMessage
   }
 
   async assistantMessage(binding, text, { final = true, assistantMessageID } = {}) {
@@ -383,6 +390,43 @@ export class MirrorRenderer {
   key(binding) {
     return `${binding.serverID}:${binding.sessionID}`
   }
+}
+
+export function webPromptMessages(text, maxTelegramChars = 3900) {
+  const value = String(text ?? "")
+  const single = `💬 ${escapeHtml(value)}`
+  if (single.length <= maxTelegramChars) return [single]
+  const chunks = splitEscapedText(value, Math.max(1, maxTelegramChars - 120))
+  return chunks.map((chunk, index) => `💬 Web prompt ${index + 1}/${chunks.length}\n\n${escapeHtml(chunk)}`)
+}
+
+function splitEscapedText(text, maxEscapedChars) {
+  const value = String(text ?? "")
+  if (!value) return [""]
+  const chunks = []
+  let current = ""
+  let currentEscapedLength = 0
+  let lastBreakIndex = -1
+  for (const char of value) {
+    const charEscapedLength = escapeHtml(char).length
+    if (current && currentEscapedLength + charEscapedLength > maxEscapedChars) {
+      let chunk = current
+      let carry = ""
+      if (lastBreakIndex > Math.floor(current.length * 0.45)) {
+        chunk = current.slice(0, lastBreakIndex).trimEnd()
+        carry = current.slice(lastBreakIndex).trimStart()
+      }
+      chunks.push(chunk || current)
+      current = carry
+      currentEscapedLength = escapeHtml(current).length
+      lastBreakIndex = -1
+    }
+    current += char
+    currentEscapedLength += charEscapedLength
+    if (/\s/.test(char)) lastBreakIndex = current.length
+  }
+  if (current || !chunks.length) chunks.push(current)
+  return chunks
 }
 
 function newToolBatch() {

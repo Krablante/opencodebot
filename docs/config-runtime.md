@@ -175,7 +175,7 @@ Then start a topic with:
 
 ## Fixed Mirror Policy
 
-The mirror policy is deliberately not a public matrix of modes. The bot mirrors user-facing OpenCodez activity, hides internal helper tools such as `todo`/`todowrite`, keeps reasoning summaries out of Telegram, compacts tool status into expandable quotes, and uses fixed Telegram-safe message limits.
+The mirror policy is deliberately not a public matrix of modes. The bot mirrors user-facing OpenCodez activity, hides internal helper tools such as `todo`/`todowrite`, keeps reasoning summaries out of Telegram, compacts tool status into expandable quotes, and uses fixed Telegram-safe message limits. Oversized web-origin user prompts are split into numbered Telegram messages instead of being truncated.
 
 User prompts are always pinned. Telegram-origin runs pin the original user message after OpenCodez accepts the prompt; web-origin runs pin the mirrored user-prompt message. Telegram pin service messages are cleaned up when possible. Final assistant answers are marked with `🏁` but are not pinned.
 

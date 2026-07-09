@@ -90,7 +90,7 @@ The queue advances only after OpenCodez reports the session idle. Assistant step
 
 ## Mirror
 
-Web-origin text prompts are mirrored into Telegram with a small `💬` marker. Telegram-origin prompts are suppressed when the bot can match them to its own pending send.
+Web-origin text prompts are mirrored into Telegram with a small `💬` marker. Oversized web prompts are split into numbered Telegram messages instead of being truncated, so the topic keeps the full prompt text in order. Telegram-origin prompts are suppressed when the bot can match them to its own pending send.
 
 Assistant text is accumulated until OpenCodez completes the text block. The bot does not edit Telegram token-by-token. Completed assistant text is sent as Telegram Rich Message markdown when the Bot API accepts it, with fallback for local Markdown links and formatting errors. Real final answers are marked with `🏁 `. The bot pins the user prompt that started the run: the original Telegram message for Telegram-origin prompts, or the mirrored user message for web-origin prompts.
 

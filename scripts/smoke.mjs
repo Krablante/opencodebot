@@ -10,6 +10,7 @@ import { createTelegramCommandHandlers, telegramBotCommands } from "../src/comma
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
+import { MirrorRenderer, webPromptMessages } from "../src/render.mjs"
 import { bindingSessionReconcileRefresh, createSessionReconciler, shouldSkipAssistantForCatchup } from "../src/session-reconcile.mjs"
 import { normalizeSpeechConfig } from "../src/config/speech.mjs"
 import { SpeechModule, transcriptMessage } from "../src/speech/index.mjs"
@@ -39,6 +40,7 @@ async function smokeLocalInvariants() {
   await smokeAttachmentTextChunksWaitForIdle()
   smokeExpiredBindingReconcileRefresh()
   smokeCatchupAssistantGate()
+  await smokeChunkedWebPromptMirror()
   await smokeKillCommand()
   await smokeKillCommandAbortFailure()
   await smokeKillSuppressesAbortFallout()
@@ -406,6 +408,33 @@ function smokeCatchupAssistantGate() {
   assert.equal(shouldSkipAssistantForCatchup(false, false), false)
   assert.equal(shouldSkipAssistantForCatchup(true, false), true)
   assert.equal(shouldSkipAssistantForCatchup(true, true), false)
+}
+
+async function smokeChunkedWebPromptMirror() {
+  const raw = `${"alpha beta gamma ".repeat(40)}<unsafe>& tail`
+  const messages = webPromptMessages(raw, 240)
+  assert.ok(messages.length > 1)
+  assert.equal(messages.some((message) => message.includes("truncated in Telegram mirror")), false)
+  assert.ok(messages.every((message) => message.length <= 240))
+  assert.match(messages[0], /^💬 Web prompt 1\/\d+\n\n/)
+  assert.match(messages.at(-1), new RegExp(`^💬 Web prompt ${messages.length}\\/${messages.length}\\n\\n`))
+  assert.ok(messages.join("\n").includes("&lt;unsafe&gt;&amp; tail"))
+
+  const sent = []
+  const renderer = new MirrorRenderer({
+    config: { mirror: { maxTelegramChars: 240, pinUserPrompts: false } },
+    telegram: {
+      async sendMessage(message) {
+        const sentMessage = { ...message, message_id: sent.length + 1 }
+        sent.push(sentMessage)
+        return sentMessage
+      },
+    },
+  })
+  const returned = await renderer.userPrompt({ chatId: 1, topicId: 2, serverID: "nuc", sessionID: "ses_chunk" }, raw, "web")
+  assert.equal(sent.length, messages.length)
+  assert.deepEqual(sent.map((message) => message.text), messages)
+  assert.equal(returned.message_id, sent.length)
 }
 
 async function smokeKillCommandAbortFailure() {
