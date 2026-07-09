@@ -10,7 +10,7 @@ import { createTelegramCommandHandlers, telegramBotCommands } from "../src/comma
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
-import { bindingSessionReconcileRefresh, createSessionReconciler } from "../src/session-reconcile.mjs"
+import { bindingSessionReconcileRefresh, createSessionReconciler, shouldSkipAssistantForCatchup } from "../src/session-reconcile.mjs"
 import { normalizeSpeechConfig } from "../src/config/speech.mjs"
 import { SpeechModule, transcriptMessage } from "../src/speech/index.mjs"
 import { OpenRouterSpeechClient, audioFormat } from "../src/speech/openrouter-client.mjs"
@@ -38,6 +38,7 @@ async function smokeLocalInvariants() {
   await smokeQueuedMediaGroupAttachmentPayload()
   await smokeAttachmentTextChunksWaitForIdle()
   smokeExpiredBindingReconcileRefresh()
+  smokeCatchupAssistantGate()
   await smokeKillCommand()
   await smokeKillCommandAbortFailure()
   await smokeKillSuppressesAbortFallout()
@@ -398,6 +399,12 @@ function smokeExpiredBindingReconcileRefresh() {
     updatedMs: Date.parse("2026-07-09T16:40:47.000Z"),
     untilMs: Date.parse("2026-07-09T16:40:20.000Z"),
   })
+}
+
+function smokeCatchupAssistantGate() {
+  assert.equal(shouldSkipAssistantForCatchup(false, false), false)
+  assert.equal(shouldSkipAssistantForCatchup(true, false), true)
+  assert.equal(shouldSkipAssistantForCatchup(true, true), false)
 }
 
 async function smokeKillCommandAbortFailure() {

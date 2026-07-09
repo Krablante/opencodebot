@@ -205,6 +205,7 @@ export function createSessionReconciler({
     let mirroredAssistants = 0
     let skippedAssistants = 0
     const usersOnlyCatchup = Date.parse(binding.reconcileUsersOnlyUntil || "") > Date.now()
+    let catchupUserSeen = !usersOnlyCatchup
     const messages = await backendRequest(binding.serverID, "session messages", () => opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory }))
     if (messages === skippedBackendRequest) return
     for (const message of messages) {
@@ -221,13 +222,14 @@ export function createSessionReconciler({
           if (!consumed) await renderer.userPrompt(binding, text, "web")
           await state.markUserMirrored(binding.serverID, binding.sessionID, info.id)
           mirroredUsers += 1
+          catchupUserSeen = true
         }
         continue
       }
       if (info.role !== "assistant" || !info.id) continue
       if (!isCompleted(info)) continue
       if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) continue
-      if (usersOnlyCatchup) {
+      if (shouldSkipAssistantForCatchup(usersOnlyCatchup, catchupUserSeen)) {
         await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
         skippedAssistants += 1
         continue
@@ -380,6 +382,10 @@ export function bindingSessionReconcileRefresh(binding, session, nowMs = Date.no
   const untilMs = Date.parse(binding?.reconcileUntil || "")
   if (!Number.isFinite(untilMs) || updatedMs <= untilMs) return null
   return { updatedMs, untilMs }
+}
+
+export function shouldSkipAssistantForCatchup(usersOnlyCatchup, catchupUserSeen) {
+  return usersOnlyCatchup && !catchupUserSeen
 }
 
 function sessionUpdatedMs(session) {
