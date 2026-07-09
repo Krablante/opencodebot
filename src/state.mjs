@@ -269,13 +269,16 @@ export class StateStore {
     })
   }
 
-  async extendBindingActivity(serverID, sessionID, { reconcileUntil, reason } = {}) {
+  async extendBindingActivity(serverID, sessionID, { reconcileUntil, reconcileUsersOnlyUntil, reason } = {}) {
     return this.update((data) => {
       const binding = data.bindings.find((item) => item.serverID === serverID && item.sessionID === sessionID)
       if (!binding) return false
       const nextUntil = toMillis(reconcileUntil)
       const currentUntil = toMillis(binding.reconcileUntil)
       if (nextUntil && nextUntil > currentUntil) binding.reconcileUntil = toIso(nextUntil)
+      const nextUsersOnlyUntil = toMillis(reconcileUsersOnlyUntil)
+      const currentUsersOnlyUntil = toMillis(binding.reconcileUsersOnlyUntil)
+      if (nextUsersOnlyUntil && nextUsersOnlyUntil > currentUsersOnlyUntil) binding.reconcileUsersOnlyUntil = toIso(nextUsersOnlyUntil)
       binding.lastActiveAt = new Date().toISOString()
       if (reason) binding.lastActiveReason = reason
       return true

@@ -10,7 +10,7 @@ import { createTelegramCommandHandlers, telegramBotCommands } from "../src/comma
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
-import { createSessionReconciler } from "../src/session-reconcile.mjs"
+import { bindingSessionReconcileRefresh, createSessionReconciler } from "../src/session-reconcile.mjs"
 import { normalizeSpeechConfig } from "../src/config/speech.mjs"
 import { SpeechModule, transcriptMessage } from "../src/speech/index.mjs"
 import { OpenRouterSpeechClient, audioFormat } from "../src/speech/openrouter-client.mjs"
@@ -37,6 +37,7 @@ async function smokeLocalInvariants() {
   await smokeQueuedAttachmentPayload()
   await smokeQueuedMediaGroupAttachmentPayload()
   await smokeAttachmentTextChunksWaitForIdle()
+  smokeExpiredBindingReconcileRefresh()
   await smokeKillCommand()
   await smokeKillCommandAbortFailure()
   await smokeKillSuppressesAbortFallout()
@@ -382,6 +383,21 @@ async function smokeAttachmentTextChunksWaitForIdle() {
   assert.equal(flushed.length, 1)
   assert.equal(flushed[0].text, "first large prompt chunk\n\nsecond large prompt chunk")
   assert.deepEqual(flushed[0].files.map((file) => file.filename), ["screenshot.png"])
+}
+
+function smokeExpiredBindingReconcileRefresh() {
+  const binding = {
+    serverID: "dima",
+    sessionID: "ses_expired",
+    reconcileUntil: "2026-07-09T16:40:20.000Z",
+  }
+  const nowMs = Date.parse("2026-07-09T17:00:00.000Z")
+  assert.equal(bindingSessionReconcileRefresh(binding, { time: { updated: Date.parse("2026-07-09T16:40:19.999Z") } }, nowMs, 2 * 60 * 60 * 1000), null)
+  assert.equal(bindingSessionReconcileRefresh(binding, { time: { updated: Date.parse("2026-07-08T16:40:47.000Z") } }, nowMs, 2 * 60 * 60 * 1000), null)
+  assert.deepEqual(bindingSessionReconcileRefresh(binding, { time: { updated: Date.parse("2026-07-09T16:40:47.000Z") } }, nowMs, 2 * 60 * 60 * 1000), {
+    updatedMs: Date.parse("2026-07-09T16:40:47.000Z"),
+    untilMs: Date.parse("2026-07-09T16:40:20.000Z"),
+  })
 }
 
 async function smokeKillCommandAbortFailure() {

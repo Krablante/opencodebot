@@ -157,6 +157,7 @@ export function createSessionReconciler({
         }
         if (binding) {
           await maybeSyncTopicTitle(binding, session.title)
+          await maybeExtendExpiredBindingFromSession(binding, session)
           continue
         }
         if (state.hasSeenSession(server.id, session.id)) continue
@@ -164,6 +165,24 @@ export function createSessionReconciler({
         await createTopicForSession(server.id, session)
       }
     }
+  }
+
+  async function maybeExtendExpiredBindingFromSession(binding, session) {
+    const refresh = bindingSessionReconcileRefresh(binding, session, Date.now(), config.reconcile.activeWindowMs)
+    if (!refresh) return
+    const now = Date.now()
+    await state.extendBindingActivity(binding.serverID, binding.sessionID, {
+      reconcileUntil: now + config.reconcile.activeWindowMs,
+      reconcileUsersOnlyUntil: now + config.reconcile.activeWindowMs,
+      reason: "session-list-update",
+    })
+    logInfo("reconcile.binding.reactivated", {
+      serverID: binding.serverID,
+      sessionID: binding.sessionID,
+      topicId: binding.topicId,
+      sessionUpdatedAt: new Date(refresh.updatedMs).toISOString(),
+      previousUntil: new Date(refresh.untilMs).toISOString(),
+    })
   }
 
   async function maybeSyncTopicTitle(binding, title) {
@@ -184,6 +203,8 @@ export function createSessionReconciler({
     const startedAt = Date.now()
     let mirroredUsers = 0
     let mirroredAssistants = 0
+    let skippedAssistants = 0
+    const usersOnlyCatchup = Date.parse(binding.reconcileUsersOnlyUntil || "") > Date.now()
     const messages = await backendRequest(binding.serverID, "session messages", () => opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory }))
     if (messages === skippedBackendRequest) return
     for (const message of messages) {
@@ -206,12 +227,17 @@ export function createSessionReconciler({
       if (info.role !== "assistant" || !info.id) continue
       if (!isCompleted(info)) continue
       if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) continue
+      if (usersOnlyCatchup) {
+        await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
+        skippedAssistants += 1
+        continue
+      }
       await renderStoredAssistantMessage(binding, message)
       await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
       mirroredAssistants += 1
     }
     const elapsedMs = durationMs(startedAt)
-    if (mirroredUsers || mirroredAssistants || shouldLogSlow(elapsedMs)) {
+    if (mirroredUsers || mirroredAssistants || skippedAssistants || shouldLogSlow(elapsedMs)) {
       logInfo("reconcile.binding.done", {
         serverID: binding.serverID,
         sessionID: binding.sessionID,
@@ -219,6 +245,7 @@ export function createSessionReconciler({
         messages: messages.length,
         mirroredUsers,
         mirroredAssistants,
+        skippedAssistants,
         reconcileAfter: new Date(window.afterMs).toISOString(),
         durationMs: elapsedMs,
       })
@@ -340,6 +367,25 @@ function messageTimeMs(info) {
   const direct = info?.time?.created || info?.time?.completed
   if (Number.isFinite(direct)) return direct
   for (const value of [info?.createdAt, info?.created, info?.updatedAt]) {
+    const parsed = Date.parse(value || "")
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return 0
+}
+
+export function bindingSessionReconcileRefresh(binding, session, nowMs = Date.now(), maxAgeMs = 0) {
+  const updatedMs = sessionUpdatedMs(session)
+  if (!updatedMs) return null
+  if (maxAgeMs > 0 && Number.isFinite(nowMs) && nowMs - updatedMs > maxAgeMs) return null
+  const untilMs = Date.parse(binding?.reconcileUntil || "")
+  if (!Number.isFinite(untilMs) || updatedMs <= untilMs) return null
+  return { updatedMs, untilMs }
+}
+
+function sessionUpdatedMs(session) {
+  const direct = session?.time?.updated || session?.time?.created
+  if (Number.isFinite(direct)) return direct
+  for (const value of [session?.updatedAt, session?.updated, session?.createdAt, session?.created]) {
     const parsed = Date.parse(value || "")
     if (Number.isFinite(parsed)) return parsed
   }
