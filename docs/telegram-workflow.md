@@ -68,7 +68,7 @@ Long Telegram-origin prompts can arrive as multiple Telegram messages. Near-limi
 
 After a Telegram prompt is handed to OpenCodez, the bot sends a short acknowledgement in the same topic. If the topic is not bound, the backend rejects the prompt, or OpenCodez later emits a session error, the bot reports that in Telegram instead of dropping the message silently.
 
-Telegram-origin prompts can include attachments. The bot downloads supported files into its local staging uploads directory. Small files are sent to OpenCodez as data URL file parts next to the prompt text. Larger accepted files are copied to the selected server's configured `uploadRoot`, and the prompt receives that server-local path. Files with captions flush as one prompt after media groups settle. Files without captions wait for the next plain text message from the same user/topic.
+Telegram-origin prompts can include attachments. The bot downloads supported files into its local staging uploads directory. Small files are sent to OpenCodez as data URL file parts next to the prompt text. Larger accepted files are copied to the selected server's configured `uploadRoot`, and the prompt receives that server-local path. Files with captions flush as one prompt after media groups settle. Files without captions wait for plain text from the same user/topic; if Telegram splits that text into near-limit chunks, those chunks are collected until the short attachment-text idle window settles and then sent with the files as one prompt.
 
 ```text
 dima upload root: /home/dima/.opencodebot/uploads

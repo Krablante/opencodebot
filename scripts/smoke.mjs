@@ -36,6 +36,7 @@ async function smokeLocalInvariants() {
   await smokeOpenCodeAbortClient()
   await smokeQueuedAttachmentPayload()
   await smokeQueuedMediaGroupAttachmentPayload()
+  await smokeAttachmentTextChunksWaitForIdle()
   await smokeKillCommand()
   await smokeKillCommandAbortFailure()
   await smokeKillSuppressesAbortFallout()
@@ -358,6 +359,29 @@ async function smokeQueuedMediaGroupAttachmentPayload() {
   assert.equal(flushed.length, 1)
   assert.equal(flushed[0].text, "compare both screenshots")
   assert.deepEqual(flushed[0].files.map((file) => file.filename), ["one.png", "two.png"])
+}
+
+async function smokeAttachmentTextChunksWaitForIdle() {
+  const flushed = []
+  const expired = []
+  const buffer = new AttachmentBuffer({
+    settings: { mediaGroupIdleMs: 100, promptIdleMs: 1000 },
+    uploadDir: "/tmp",
+    flushPrompt: async (actualContext, text, files) => flushed.push({ actualContext, text, files }),
+    onExpire: async (actualContext, files) => expired.push({ actualContext, files }),
+    onError: (error) => { throw error },
+  })
+  const context = { message: { chat: { id: 1 }, message_thread_id: 2, message_id: 10 }, binding: { serverID: "nuc", sessionID: "ses" } }
+  await buffer.addFiles("1:2:3", context, [{ filename: "screenshot.png" }])
+  assert.equal(await buffer.addText("1:2:3", context, "first large prompt chunk"), true)
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(flushed.length, 0)
+  assert.equal(await buffer.addText("1:2:3", context, "second large prompt chunk"), true)
+  await new Promise((resolve) => setTimeout(resolve, 130))
+  assert.equal(expired.length, 0)
+  assert.equal(flushed.length, 1)
+  assert.equal(flushed[0].text, "first large prompt chunk\n\nsecond large prompt chunk")
+  assert.deepEqual(flushed[0].files.map((file) => file.filename), ["screenshot.png"])
 }
 
 async function smokeKillCommandAbortFailure() {

@@ -43,7 +43,7 @@ export class AttachmentBuffer {
     if (!cleanText) return false
     entry.context = context
     entry.textParts.push(cleanText)
-    await this.flushKey(key)
+    this.scheduleTextFlush(key, entry)
     return true
   }
 
@@ -68,7 +68,7 @@ export class AttachmentBuffer {
   entry(key, context) {
     let entry = this.pending.get(key)
     if (!entry) {
-      entry = { context, files: [], textParts: [], mediaGroupID: "", mediaTimer: null, promptTimer: null, flushPrompt: null }
+      entry = { context, files: [], textParts: [], mediaGroupID: "", mediaTimer: null, promptTimer: null, textTimer: null, flushPrompt: null }
       this.pending.set(key, entry)
     }
     return entry
@@ -95,6 +95,19 @@ export class AttachmentBuffer {
     entry.mediaTimer.unref?.()
   }
 
+  scheduleTextFlush(key, entry) {
+    if (entry.mediaTimer) {
+      clearTimeout(entry.mediaTimer)
+      entry.mediaTimer = null
+    }
+    if (entry.textTimer) clearTimeout(entry.textTimer)
+    entry.textTimer = setTimeout(() => {
+      entry.textTimer = null
+      this.flushKey(key).catch(this.onError)
+    }, this.settings.mediaGroupIdleMs)
+    entry.textTimer.unref?.()
+  }
+
   schedulePromptTimeout(key, entry) {
     if (entry.promptTimer) clearTimeout(entry.promptTimer)
     entry.promptTimer = setTimeout(() => {
@@ -109,6 +122,7 @@ export class AttachmentBuffer {
   clearTimers(entry) {
     if (entry.mediaTimer) clearTimeout(entry.mediaTimer)
     if (entry.promptTimer) clearTimeout(entry.promptTimer)
+    if (entry.textTimer) clearTimeout(entry.textTimer)
   }
 
   async expireEntry(entry) {
