@@ -111,7 +111,7 @@ function formatToolSummaryMarkdown(tools, patchedFiles) {
     tools.map((tool) => `${tool.name} × ${tool.count}${tool.failed ? ` (${tool.failed} failed)` : ""}`),
     900,
   )
-  const patchedText = summarizeItems(patchedFiles, 2200)
+  const patchedText = summarizeItems(patchedFileDisplayNames(patchedFiles), 2200)
   if (toolText) lines.push(`🔧 *Tools:* ${escapeMarkdownV2(toolText)}`)
   if (patchedText) lines.push(`🩹 *Patched:* ${escapeMarkdownV2(patchedText)}`)
   return lines
@@ -123,7 +123,7 @@ function formatToolSummaryHtml(tools, patchedFiles) {
     tools.map((tool) => `${tool.name} × ${tool.count}${tool.failed ? ` (${tool.failed} failed)` : ""}`),
     900,
   )
-  const patchedText = summarizeItems(patchedFiles, 2200)
+  const patchedText = summarizeItems(patchedFileDisplayNames(patchedFiles), 2200)
   if (toolText) lines.push(`🔧 <b>Tools:</b> ${escapeHtml(toolText)}`)
   if (patchedText) lines.push(`🩹 <b>Patched:</b> ${escapeHtml(patchedText)}`)
   return lines
@@ -141,6 +141,17 @@ function summarizeItems(values, maxChars) {
   }
   if (visible.length === items.length) return visible.join("; ")
   return `${visible.join("; ")}; +${items.length - visible.length} more`
+}
+
+function patchedFileDisplayNames(values) {
+  return [...new Set(values.map(fileDisplayName).filter(Boolean))]
+}
+
+function fileDisplayName(value) {
+  const text = String(value || "").trim().replace(/\\/g, "/").replace(/\/+$/, "")
+  if (!text) return ""
+  const parts = text.split("/").filter(Boolean)
+  return parts.length ? parts[parts.length - 1] : text
 }
 
 function truncateNotificationText(value, maxChars) {

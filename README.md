@@ -147,7 +147,7 @@ Use `/artifacts_here` inside a forum topic when you want that topic to become th
 
 Use `/sounds_here` inside a forum topic when you want that topic to become the voice transcription inbox. Voice and audio messages in that topic are transcribed through OpenRouter and answered in the same topic, with only the transcript formatted as Telegram Mono text and service metadata left outside that formatting. The OpenRouter language hint defaults to `ru`, can be changed to another ISO-639-1 code, or can be set to `null` / `"auto"` for auto-detect. `/sounds_off` clears the binding for the current topic, and `/sounds_status` shows whether speech is enabled, configured, and busy.
 
-Use `/notify_on`, `/notify_off`, and `/notify_status` to manage private final-answer notifications for the configured recipients. Those DMs include the source topic, an `Open topic` button, context quotes, a completed task list when the agent closed one, compact tool counts, and a semicolon-separated `Patched` list for successful structured file mutations.
+Use `/notify_on`, `/notify_off`, and `/notify_status` to manage private final-answer notifications for the configured recipients. Those DMs include the source topic, an `Open topic` button, context quotes, a completed task list when the agent closed one, compact tool counts, and a semicolon-separated `Patched` list of file names for successful structured file mutations.
 
 Use `/mode`, `/mode full`, or `/mode economy` to inspect or change the persistent global mirror mode. Both modes keep short subagent spawn notices. Full mode keeps normal compact tool reporting. Economy mode still mirrors assistant progress notes, final answers, and run failures, but suppresses ordinary tool Telegram messages across all topics.
 

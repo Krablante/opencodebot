@@ -128,8 +128,8 @@ function smokeFinalToolSummary() {
     { info: { id: "assistant", role: "assistant" }, parts: [
       { id: "read-1", type: "tool", tool: "read", state: { status: "completed", input: { filePath: "src/a.mjs" } } },
       { id: "read-2", type: "tool", tool: "read", state: { status: "completed", input: { filePath: "src/b.mjs" } } },
-      { id: "patch-1", type: "tool", tool: "apply_patch", state: { status: "completed", input: { patchText: "*** Begin Patch\n*** Update File: src/a.mjs\n*** Move to: src/moved.mjs\n*** Add File: src/new.mjs\n*** End Patch" } } },
-      { id: "edit-1", type: "tool", tool: "edit", state: { status: "completed", input: { filePath: "src/edit.mjs" } } },
+      { id: "patch-1", type: "tool", tool: "apply_patch", state: { status: "completed", input: { patchText: "*** Begin Patch\n*** Update File: /home/bloob/repo/src/a.mjs\n*** Move to: /home/bloob/repo/src/moved.mjs\n*** Add File: /home/bloob/repo/src/new.mjs\n*** End Patch" } } },
+      { id: "edit-1", type: "tool", tool: "edit", state: { status: "completed", input: { filePath: "C:\\repo\\src\\edit.mjs" } } },
       { id: "write-1", type: "tool", tool: "write", state: { status: "error", input: { filePath: "src/failed.mjs" } } },
       { id: "task-1", type: "tool", tool: "task", state: { status: "completed", input: { subagent_type: "explore", prompt: "inspect" } } },
       { id: "todo-1", type: "tool", tool: "todowrite", state: { status: "completed", input: {} } },
@@ -142,11 +142,11 @@ function smokeFinalToolSummary() {
     { name: "Edit", count: 1, failed: 0 },
     { name: "Write", count: 1, failed: 1 },
   ])
-  assert.deepEqual(summary.patchedFiles, ["src/a.mjs", "src/moved.mjs", "src/new.mjs", "src/edit.mjs"])
+  assert.deepEqual(summary.patchedFiles, ["/home/bloob/repo/src/a.mjs", "/home/bloob/repo/src/moved.mjs", "/home/bloob/repo/src/new.mjs", "C:\\repo\\src\\edit.mjs"])
   const notification = finalNotificationMarkdown({ topicSource: { title: "topic" }, serverID: "nuc", promptText: "change files", ...summary })
   assert.match(notification, /Tools:.*Read × 2; Patch × 1; Edit × 1; Write × 1/)
-  assert.ok(notification.includes("Patched:* src/a\\.mjs; src/moved\\.mjs; src/new\\.mjs; src/edit\\.mjs"))
-  assert.doesNotMatch(notification, /old\.txt|failed\.mjs|Explore|Todo/)
+  assert.ok(notification.includes("Patched:* a\\.mjs; moved\\.mjs; new\\.mjs; edit\\.mjs"))
+  assert.doesNotMatch(notification, /\/home\/bloob|C:\\repo|old\.txt|failed\.mjs|Explore|Todo/)
 }
 
 function smokeConfigExample() {
