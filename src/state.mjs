@@ -22,6 +22,7 @@ export class StateStore {
       this.data.finalNotifications.sentMessages ||= []
       this.data.seenSessions ||= []
       this.data.telegram ||= {}
+      this.data.telegram.mirrorMode = normalizeMirrorMode(this.data.telegram.mirrorMode)
       this.data.telegram.artifactsTopic ||= null
       this.data.telegram.soundsTopic ||= null
       this.data.runtime ||= {}
@@ -158,6 +159,19 @@ export class StateStore {
 
   mirrorEnabled(config) {
     return this.data.telegram.mirrorEnabled ?? config.telegram.mirrorEnabled ?? true
+  }
+
+  mirrorMode() {
+    return normalizeMirrorMode(this.data.telegram?.mirrorMode)
+  }
+
+  async setMirrorMode(mode) {
+    const normalized = normalizeMirrorMode(mode)
+    await this.update((data) => {
+      data.telegram ||= {}
+      data.telegram.mirrorMode = normalized
+    })
+    return normalized
   }
 
   async bindTopic(binding) {
@@ -426,7 +440,7 @@ export function promptHash(text) {
 function defaultState() {
     return {
       version: 1,
-    telegram: { artifactsTopic: null, soundsTopic: null },
+    telegram: { mirrorMode: "full", artifactsTopic: null, soundsTopic: null },
     bindings: [],
     pendingTopics: {},
     pendingPrompts: [],
@@ -436,6 +450,10 @@ function defaultState() {
     seenSessions: [],
     runtime: {},
   }
+}
+
+function normalizeMirrorMode(value) {
+  return String(value || "").trim().toLowerCase() === "economy" ? "economy" : "full"
 }
 
 function sessionKey(serverID, sessionID) {

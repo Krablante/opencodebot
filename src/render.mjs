@@ -61,6 +61,7 @@ export class MirrorRenderer {
   }
 
   async compactTools(binding, lines) {
+    if (this.mirrorMode() !== "full") return
     for (const line of lines.filter(Boolean)) await this.appendToolLine(binding, line)
   }
 
@@ -107,17 +108,15 @@ export class MirrorRenderer {
     if (session.tools.closed) session.tools = newToolBatch()
     const input = properties.input || {}
     const tool = properties.tool || "tool"
-    if (!this.shouldMirrorTool(tool)) {
+    if (!this.shouldMirrorTool(tool, input)) {
       if (properties.callID) session.hiddenToolCalls.add(properties.callID)
       return
     }
-    const reportedOnStart = isTaskTool(tool, input)
     session.tools.calls.set(properties.callID, {
       tool,
       input,
-      reportedOnStart,
+      reportedOnStart: false,
     })
-    if (reportedOnStart) await this.appendToolLine(binding, formatToolLine(tool, input, true, ""))
   }
 
   async toolResult(binding, properties, ok) {
@@ -126,9 +125,9 @@ export class MirrorRenderer {
       session.hiddenToolCalls.delete(properties.callID)
       return
     }
-    if (!this.shouldMirrorTool(properties.tool)) return
     const call = session.tools.calls.get(properties.callID) || { tool: properties.tool || "tool", input: properties.input || {} }
-    if (!this.shouldMirrorTool(call.tool)) return
+    session.tools.calls.delete(properties.callID)
+    if (!this.shouldMirrorTool(call.tool, call.input)) return
     if (call.reportedOnStart && ok) return
     const suffix = ok ? shortUsefulResult(properties) : shortError(properties)
     await this.appendToolLine(binding, formatToolLine(call.tool, call.input, ok, suffix))
@@ -383,8 +382,14 @@ export class MirrorRenderer {
     await this.effects.notifyFinalMessage(binding, details)
   }
 
-  shouldMirrorTool(tool) {
+  shouldMirrorTool(tool, input = {}) {
+    if (this.mirrorMode() !== "full") return false
+    if (isTaskTool(tool, input)) return false
     return !isHiddenTool(tool, this.hiddenTools)
+  }
+
+  mirrorMode() {
+    return this.state?.mirrorMode?.() === "economy" ? "economy" : "full"
   }
 
   key(binding) {

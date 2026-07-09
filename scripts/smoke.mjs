@@ -8,6 +8,7 @@ import { artifactTargetPath, handleArtifactUploadMessage, resolveUploadTarget } 
 import { AttachmentBuffer } from "../src/attachments.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "../src/commands.mjs"
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
+import { finalNotificationMarkdown, toolSummaryBeforeAssistant } from "../src/final-notifications.mjs"
 import { OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { MirrorRenderer, webPromptMessages } from "../src/render.mjs"
@@ -15,6 +16,7 @@ import { bindingSessionReconcileRefresh, createSessionReconciler, shouldSkipAssi
 import { normalizeSpeechConfig } from "../src/config/speech.mjs"
 import { SpeechModule, transcriptMessage } from "../src/speech/index.mjs"
 import { OpenRouterSpeechClient, audioFormat } from "../src/speech/openrouter-client.mjs"
+import { StateStore } from "../src/state.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
 import { OpencodebotArtifactsPlugin } from "../plugins/opencodebot-artifacts/src/index.js"
 
@@ -40,11 +42,106 @@ async function smokeLocalInvariants() {
   await smokeAttachmentTextChunksWaitForIdle()
   smokeExpiredBindingReconcileRefresh()
   smokeCatchupAssistantGate()
+  await smokeMirrorModeCommands()
+  await smokeMirrorModeRendering()
+  smokeFinalToolSummary()
   await smokeChunkedWebPromptMirror()
   await smokeKillCommand()
   await smokeKillCommandAbortFailure()
   await smokeKillSuppressesAbortFallout()
   await smokeQueueDrainsOnSessionIdle()
+}
+
+async function smokeMirrorModeCommands() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-mode-smoke-"))
+  const statePath = path.join(root, "state.json")
+  const sent = []
+  try {
+    const state = new StateStore(statePath)
+    await state.load()
+    assert.equal(state.mirrorMode(), "full")
+    const handlers = createTelegramCommandHandlers({
+      config: { chatTemplates: {} },
+      state,
+      telegram: { async sendMessage(message) { sent.push(message) } },
+      opencode: {},
+      promptQueue: {},
+      multipartPrompts: { async flushKey() {} },
+      createPendingTopic: async () => {},
+    })
+    const message = { chat: { id: 123 }, message_thread_id: 456 }
+    assert.equal(await handlers.handle(message, { name: "mode", args: "economy" }, "123:456"), true)
+    assert.equal(state.mirrorMode(), "economy")
+    assert.match(sent.at(-1).text, /Mode: <b>ECONOMY<\/b>/)
+    const reloaded = new StateStore(statePath)
+    await reloaded.load()
+    assert.equal(reloaded.mirrorMode(), "economy")
+    assert.equal(await handlers.handle(message, { name: "mode", args: "full" }, "123:456"), true)
+    assert.equal(state.mirrorMode(), "full")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+async function smokeMirrorModeRendering() {
+  let mode = "full"
+  const sent = []
+  const renderer = new MirrorRenderer({
+    config: {
+      mirror: { hiddenTools: ["todowrite"], toolBatchMaxLines: 50, toolBatchMaxChars: 3000, maxTelegramChars: 3900 },
+      telegram: { pinUserPrompts: false },
+    },
+    state: { mirrorMode: () => mode },
+    telegram: {
+      async sendMessage(message) {
+        sent.push(message)
+        return { message_id: sent.length }
+      },
+      async editMessageText() {},
+    },
+  })
+  const binding = { serverID: "nuc", sessionID: "ses_mode", chatId: "123", topicId: 456 }
+  await renderer.toolCalled(binding, { callID: "read-full", tool: "read", input: { filePath: "/tmp/a" } })
+  await renderer.toolResult(binding, { callID: "read-full", tool: "read", output: "ok", ok: true })
+  assert.equal(sent.length, 1)
+  await renderer.toolCalled(binding, { callID: "task-full", tool: "task", input: { subagent_type: "explore", prompt: "inspect" } })
+  await renderer.toolResult(binding, { callID: "task-full", tool: "task", output: "done", ok: true })
+  assert.equal(sent.length, 1)
+  mode = "economy"
+  await renderer.toolCalled(binding, { callID: "read-economy", tool: "read", input: { filePath: "/tmp/b" } })
+  await renderer.toolResult(binding, { callID: "read-economy", tool: "read", output: "ok", ok: true })
+  assert.equal(sent.length, 1)
+  await renderer.compactTools(binding, ["📄 Read /tmp/c"])
+  assert.equal(sent.length, 1)
+}
+
+function smokeFinalToolSummary() {
+  const messages = [
+    { info: { id: "old-user", role: "user" }, parts: [{ type: "text", text: "old" }] },
+    { info: { id: "old-assistant", role: "assistant" }, parts: [{ id: "old-read", type: "tool", tool: "read", state: { status: "completed", input: { filePath: "old.txt" } } }] },
+    { info: { id: "user", role: "user" }, parts: [{ type: "text", text: "change files" }] },
+    { info: { id: "assistant", role: "assistant" }, parts: [
+      { id: "read-1", type: "tool", tool: "read", state: { status: "completed", input: { filePath: "src/a.mjs" } } },
+      { id: "read-2", type: "tool", tool: "read", state: { status: "completed", input: { filePath: "src/b.mjs" } } },
+      { id: "patch-1", type: "tool", tool: "apply_patch", state: { status: "completed", input: { patchText: "*** Begin Patch\n*** Update File: src/a.mjs\n*** Move to: src/moved.mjs\n*** Add File: src/new.mjs\n*** End Patch" } } },
+      { id: "edit-1", type: "tool", tool: "edit", state: { status: "completed", input: { filePath: "src/edit.mjs" } } },
+      { id: "write-1", type: "tool", tool: "write", state: { status: "error", input: { filePath: "src/failed.mjs" } } },
+      { id: "task-1", type: "tool", tool: "task", state: { status: "completed", input: { subagent_type: "explore", prompt: "inspect" } } },
+      { id: "todo-1", type: "tool", tool: "todowrite", state: { status: "completed", input: {} } },
+    ] },
+  ]
+  const summary = toolSummaryBeforeAssistant(messages, "assistant", ["todowrite"])
+  assert.deepEqual(summary.tools, [
+    { name: "Read", count: 2, failed: 0 },
+    { name: "Patch", count: 1, failed: 0 },
+    { name: "Edit", count: 1, failed: 0 },
+    { name: "Write", count: 1, failed: 1 },
+  ])
+  assert.deepEqual(summary.patchedFiles, ["src/a.mjs", "src/moved.mjs", "src/new.mjs", "src/edit.mjs"])
+  const notification = finalNotificationMarkdown({ topicSource: { title: "topic" }, serverID: "nuc", promptText: "change files", ...summary })
+  assert.match(notification, /Tools:.*Read × 2; Patch × 1; Edit × 1; Write × 1/)
+  assert.ok(notification.includes("Patched:* src/a\\.mjs; src/moved\\.mjs; src/new\\.mjs; src/edit\\.mjs"))
+  assert.doesNotMatch(notification, /old\.txt|failed\.mjs|Explore|Todo/)
 }
 
 function smokeConfigExample() {

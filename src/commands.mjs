@@ -13,6 +13,7 @@ export const telegramBotCommands = [
   { command: "notify_on", description: "Enable final-answer DMs" },
   { command: "notify_off", description: "Disable final-answer DMs" },
   { command: "notify_status", description: "Show final-answer DM status" },
+  { command: "mode", description: "Show or set full/economy mirror mode" },
   { command: "mirror_on", description: "Enable web-to-Telegram mirroring" },
   { command: "mirror_off", description: "Disable web-to-Telegram mirroring" },
   { command: "help", description: "Show commands and templates" },
@@ -42,6 +43,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
     notify_on: handleNotifyOn,
     notify_off: handleNotifyOff,
     notify_status: handleNotifyStatus,
+    mode: handleMirrorMode,
   }
 
   return {
@@ -53,6 +55,24 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
       await handler(message, command.args)
       return true
     },
+  }
+
+  async function handleMirrorMode(message, args) {
+    const requested = String(args || "").trim().toLowerCase()
+    if (requested && requested !== "status" && requested !== "full" && requested !== "economy") {
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: topicId(message),
+        text: "Usage: <code>/mode</code>, <code>/mode full</code>, or <code>/mode economy</code>",
+      })
+      return
+    }
+    const mode = requested === "full" || requested === "economy" ? await state.setMirrorMode(requested) : state.mirrorMode()
+    await telegram.sendMessage({
+      chatId: message.chat.id,
+      topicId: topicId(message),
+      text: `🎛️ Mode: <b>${escapeHtml(mode.toUpperCase())}</b>\nScope: all mirrored topics`,
+    })
   }
 
   async function handleQueueCommand(message, args) {
@@ -360,6 +380,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
       "<code>/sounds_off</code> / <code>/sounds_status</code> - manage the speech topic.",
       "<code>/notify_on</code> / <code>/notify_off</code> - toggle final-answer DMs for configured recipients.",
       "<code>/notify_status</code> - show configured final-answer DM status.",
+      "<code>/mode [full|economy]</code> - show or set the global mirror mode.",
       "<code>/mirror_on</code> / <code>/mirror_off</code> - toggle web-to-Telegram mirroring.",
       "",
       `Templates: <code>${escapeHtml(templates)}</code>`,

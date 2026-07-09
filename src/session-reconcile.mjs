@@ -340,12 +340,13 @@ function textFromStoredMessage(message) {
 function compactStoredToolLine(part, renderer) {
   if (!part || part.type !== "tool") return ""
   const tool = part.name || part.tool || "tool"
-  if (!renderer.shouldMirrorTool(tool)) return ""
+  const input = part.state?.input || part.input || {}
+  if (!renderer.shouldMirrorTool(tool, input)) return ""
   const status = part.state?.status || part.state
   const failed = status === "error" || status === "failed" || part.state?.error
   const ok = !failed && (status === "completed" || status === "success")
   if (!failed && !ok) return ""
-  return formatToolLine(tool, part.state?.input || part.input || {}, ok, failed ? part.state?.error?.message || "failed" : "")
+  return formatToolLine(tool, input, ok, failed ? part.state?.error?.message || "failed" : "")
 }
 
 function isMirrorMilestone(type) {

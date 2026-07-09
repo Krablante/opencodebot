@@ -18,7 +18,8 @@ The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/eve
 - `/q` in-memory per-session prompt queue, with status/delete commands.
 - `/kill` to stop the current OpenCodez run for a topic and clear queued prompts.
 - Rich assistant messages sent as completed blocks instead of noisy token streaming.
-- Expandable tool quotes with configurable hidden tools.
+- Global `/mode full|economy` mirror modes: full keeps compact expandable tool quotes, while economy shows assistant progress and final answers without Telegram tool traffic.
+- Internal task/subagent activity stays hidden in both mirror modes.
 - Attachments and Telegram media groups attached to the next prompt; large files are copied to the target server's configured upload root and referenced by server-local path.
 - Optional Telegram artifact gateway for sending agent-created files, screenshots, logs, and text into one dedicated artifacts topic; the same topic can accept user-dropped files and save them to a configured server folder.
 - Optional OpenRouter speech transcription for one dedicated `/sounds_here` topic; voice and audio messages receive transcripts in the same topic.
@@ -146,7 +147,9 @@ Use `/artifacts_here` inside a forum topic when you want that topic to become th
 
 Use `/sounds_here` inside a forum topic when you want that topic to become the voice transcription inbox. Voice and audio messages in that topic are transcribed through OpenRouter and answered in the same topic, with only the transcript formatted as Telegram Mono text and service metadata left outside that formatting. The OpenRouter language hint defaults to `ru`, can be changed to another ISO-639-1 code, or can be set to `null` / `"auto"` for auto-detect. `/sounds_off` clears the binding for the current topic, and `/sounds_status` shows whether speech is enabled, configured, and busy.
 
-Use `/notify_on`, `/notify_off`, and `/notify_status` to manage private final-answer notifications for the configured recipients. Those DMs include the source topic, an `Open topic` button, context quotes, and a completed task list when the agent closed one.
+Use `/notify_on`, `/notify_off`, and `/notify_status` to manage private final-answer notifications for the configured recipients. Those DMs include the source topic, an `Open topic` button, context quotes, a completed task list when the agent closed one, compact tool counts, and a semicolon-separated `Patched` list for successful structured file mutations.
+
+Use `/mode`, `/mode full`, or `/mode economy` to inspect or change the persistent global mirror mode. Full mode keeps normal compact tool reporting. Economy mode still mirrors assistant progress notes, final answers, and run failures, but suppresses tool and subagent Telegram messages across all topics.
 
 Use `/mirror_on` and `/mirror_off` when you need to pause or resume web-to-Telegram mirroring without stopping the bot.
 

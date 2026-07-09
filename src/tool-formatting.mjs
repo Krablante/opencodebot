@@ -38,6 +38,43 @@ export function isHiddenTool(tool, hiddenTools) {
   return hiddenTools.has(normalizeToolName(tool)) || hiddenTools.has(compactToolName(tool))
 }
 
+export function toolSummaryLabel(tool, input = {}) {
+  switch (inferTool(tool, input)) {
+    case "read":
+      return "Read"
+    case "grep":
+      return "Search"
+    case "glob":
+      return "Glob"
+    case "bash":
+      return "Shell"
+    case "skill":
+      return "Skill"
+    case "todowrite":
+      return "Todo"
+    case "apply_patch":
+      return "Patch"
+    case "edit":
+      return "Edit"
+    case "write":
+      return "Write"
+    default:
+      return titleCase(inferTool(tool, input) || tool || "tool")
+  }
+}
+
+export function changedFilesForTool(tool, input = {}) {
+  switch (inferTool(tool, input)) {
+    case "apply_patch":
+      return patchFiles(input.patchText)
+    case "edit":
+    case "write":
+      return uniqueStrings([input.filePath || input.path])
+    default:
+      return []
+  }
+}
+
 function toolAction(tool, input) {
   const inferred = inferTool(tool, input)
   switch (inferred) {

@@ -2,6 +2,7 @@ import { textFromPrompt } from "./opencode.mjs"
 import { escapeMarkdownV2, toolQuoteMarkdownV2 } from "./rich-markdown.mjs"
 import { escapeHtml, telegramMessageLink } from "./telegram.mjs"
 import { logErrorEvent, logInfo } from "./logger.mjs"
+import { changedFilesForTool, isHiddenTool, isTaskTool, toolNameSet, toolSummaryLabel } from "./tool-formatting.mjs"
 
 const FINAL_NOTIFICATION_SAFE_CHARS = 3800
 const FINAL_NOTIFICATION_PROMPT_CHARS = 1200
@@ -19,11 +20,11 @@ export function createFinalNotifier({ config, state, telegram, opencode }) {
       if (!userIds.length) return
       const link = telegramMessageLink(binding.chatId, messageId)
       const topicSource = finalNotificationTopicSource(binding)
-      const summary = await finalSessionSummary({ opencode, binding, assistantMessageID })
+      const summary = await finalSessionSummary({ opencode, binding, assistantMessageID, hiddenTools: config.mirror?.hiddenTools })
       const replyMarkup = finalNotificationReplyMarkup(link)
-      const text = finalNotificationMarkdown({ topicSource, serverID: binding.serverID, promptText: summary.promptText, completedTodos: summary.completedTodos })
-      const fallbackText = finalNotificationFallbackHtml({ topicSource, serverID: binding.serverID, completedTodos: summary.completedTodos })
-      const compactText = finalNotificationCompactHtml({ topicSource, serverID: binding.serverID })
+      const text = finalNotificationMarkdown({ topicSource, serverID: binding.serverID, ...summary })
+      const fallbackText = finalNotificationFallbackHtml({ topicSource, serverID: binding.serverID, ...summary })
+      const compactText = finalNotificationCompactHtml({ topicSource, serverID: binding.serverID, ...summary })
       let sentCount = 0
       for (const userId of userIds) {
         try {
@@ -55,7 +56,7 @@ async function sendFinalNotificationMessage({ telegram, userId, text, fallbackTe
   }
 }
 
-export function finalNotificationMarkdown({ topicSource, serverID, promptText, completedTodos = [] }) {
+export function finalNotificationMarkdown({ topicSource, serverID, promptText, completedTodos = [], tools = [], patchedFiles = [] }) {
   const lines = [
     "🏁 *Final answer is ready*",
     finalNotificationTopicMarkdown(topicSource),
@@ -65,10 +66,12 @@ export function finalNotificationMarkdown({ topicSource, serverID, promptText, c
   if (prompt) lines.push("", toolQuoteMarkdownV2(prompt))
   const todoLines = formatCompletedTodoMarkdown(completedTodos, { maxItems: FINAL_NOTIFICATION_TODO_ITEMS, maxItemChars: FINAL_NOTIFICATION_TODO_CHARS })
   if (todoLines.length) lines.push("", ...todoLines)
-  return clampNotificationMarkdown(lines)
+  const toolLines = formatToolSummaryMarkdown(tools, patchedFiles)
+  if (toolLines.length) lines.push("", ...toolLines)
+  return clampNotificationMarkdown(lines, toolLines)
 }
 
-function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos = [] }) {
+function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos = [], tools = [], patchedFiles = [] }) {
   const lines = [
     "🏁 Final answer is ready",
     finalNotificationTopicHtml(topicSource),
@@ -76,24 +79,68 @@ function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos =
   ]
   const todoLines = formatCompletedTodoHtml(completedTodos, { maxItems: FINAL_NOTIFICATION_TODO_ITEMS, maxItemChars: FINAL_NOTIFICATION_TODO_CHARS })
   if (todoLines.length) lines.push("", ...todoLines)
+  const toolLines = formatToolSummaryHtml(tools, patchedFiles)
+  if (toolLines.length) lines.push("", ...toolLines)
   return lines.join("\n")
 }
 
-function finalNotificationCompactHtml({ topicSource, serverID }) {
-  return [
+function finalNotificationCompactHtml({ topicSource, serverID, tools = [], patchedFiles = [] }) {
+  const lines = [
     "🏁 Final answer is ready",
     finalNotificationTopicHtml(topicSource),
     `🖥️ Server: <code>${escapeHtml(serverID)}</code>`,
-  ].join("\n")
+  ]
+  const toolLines = formatToolSummaryHtml(tools, patchedFiles)
+  if (toolLines.length) lines.push("", ...toolLines)
+  return lines.join("\n")
 }
 
-function clampNotificationMarkdown(lines) {
+function clampNotificationMarkdown(lines, importantTail = []) {
   let text = lines.join("\n")
   if (text.length <= FINAL_NOTIFICATION_SAFE_CHARS) return text
   const compact = lines.slice(0, 3)
   compact.push("", toolQuoteMarkdownV2("Notification context was too long and was trimmed. Open the topic for full context."))
+  if (importantTail.length) compact.push("", ...importantTail)
   text = compact.join("\n")
   return text.length <= FINAL_NOTIFICATION_SAFE_CHARS ? text : text.slice(0, FINAL_NOTIFICATION_SAFE_CHARS - 3) + "..."
+}
+
+function formatToolSummaryMarkdown(tools, patchedFiles) {
+  const lines = []
+  const toolText = summarizeItems(
+    tools.map((tool) => `${tool.name} × ${tool.count}${tool.failed ? ` (${tool.failed} failed)` : ""}`),
+    900,
+  )
+  const patchedText = summarizeItems(patchedFiles, 2200)
+  if (toolText) lines.push(`🔧 *Tools:* ${escapeMarkdownV2(toolText)}`)
+  if (patchedText) lines.push(`🩹 *Patched:* ${escapeMarkdownV2(patchedText)}`)
+  return lines
+}
+
+function formatToolSummaryHtml(tools, patchedFiles) {
+  const lines = []
+  const toolText = summarizeItems(
+    tools.map((tool) => `${tool.name} × ${tool.count}${tool.failed ? ` (${tool.failed} failed)` : ""}`),
+    900,
+  )
+  const patchedText = summarizeItems(patchedFiles, 2200)
+  if (toolText) lines.push(`🔧 <b>Tools:</b> ${escapeHtml(toolText)}`)
+  if (patchedText) lines.push(`🩹 <b>Patched:</b> ${escapeHtml(patchedText)}`)
+  return lines
+}
+
+function summarizeItems(values, maxChars) {
+  const items = values.map((value) => String(value || "").trim()).filter(Boolean)
+  const visible = []
+  for (let index = 0; index < items.length; index += 1) {
+    const remaining = items.length - visible.length
+    const suffix = remaining > 1 ? `; +${remaining} more` : ""
+    const candidate = [...visible, items[index]].join("; ")
+    if (candidate.length + suffix.length > maxChars && visible.length) break
+    visible.push(items[index])
+  }
+  if (visible.length === items.length) return visible.join("; ")
+  return `${visible.join("; ")}; +${items.length - visible.length} more`
 }
 
 function truncateNotificationText(value, maxChars) {
@@ -137,12 +184,13 @@ function normalizeTopicIconEmoji(value) {
   return emoji.length <= 8 ? emoji : ""
 }
 
-async function finalSessionSummary({ opencode, binding, assistantMessageID }) {
+async function finalSessionSummary({ opencode, binding, assistantMessageID, hiddenTools }) {
   try {
     const messages = await opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory })
     return {
       promptText: promptTextBeforeAssistant(messages, assistantMessageID),
       completedTodos: completedTodosBeforeAssistant(messages, assistantMessageID),
+      ...toolSummaryBeforeAssistant(messages, assistantMessageID, hiddenTools),
     }
   } catch (error) {
     logErrorEvent("final_notification.session_summary_lookup_failed", error, {
@@ -150,8 +198,63 @@ async function finalSessionSummary({ opencode, binding, assistantMessageID }) {
       sessionID: binding.sessionID,
       assistantMessageID,
     })
-    return { promptText: "", completedTodos: [] }
+    return { promptText: "", completedTodos: [], tools: [], patchedFiles: [] }
   }
+}
+
+export function toolSummaryBeforeAssistant(messages, assistantMessageID, hiddenToolNames = []) {
+  if (!Array.isArray(messages) || !messages.length) return { tools: [], patchedFiles: [] }
+  const stopIndex = assistantMessageIndex(messages, assistantMessageID)
+  let startIndex = -1
+  for (let index = stopIndex - 1; index >= 0; index -= 1) {
+    if (messageRole(messages[index]) !== "user") continue
+    startIndex = index
+    break
+  }
+  const hiddenTools = toolNameSet(hiddenToolNames)
+  const counts = new Map()
+  const patchedFiles = []
+  const seenParts = new Set()
+  for (let messageIndex = startIndex + 1; messageIndex <= stopIndex; messageIndex += 1) {
+    const message = messages[messageIndex]
+    if (messageRole(message) !== "assistant") continue
+    for (const [partIndex, part] of (message.parts || []).entries()) {
+      if (part?.type !== "tool") continue
+      const partID = String(part.id || `${messageID(message)}:${partIndex}`)
+      if (seenParts.has(partID)) continue
+      seenParts.add(partID)
+      const input = normalizeToolInput(part.state?.input ?? part.input) || {}
+      const tool = part.tool || part.name || "tool"
+      if (isTaskTool(tool, input) || isHiddenTool(tool, hiddenTools)) continue
+      const label = toolSummaryLabel(tool, input)
+      const status = String(part.state?.status || part.status || "").toLowerCase()
+      const current = counts.get(label) || { name: label, count: 0, failed: 0, order: counts.size }
+      current.count += 1
+      if (status === "error" || status === "failed") current.failed += 1
+      counts.set(label, current)
+      if (status === "completed" || status === "success") patchedFiles.push(...changedFilesForTool(tool, input))
+    }
+  }
+  const tools = [...counts.values()]
+    .sort((left, right) => right.count - left.count || left.order - right.order)
+    .map(({ name, count, failed }) => ({ name, count, failed }))
+  return { tools, patchedFiles: [...new Set(patchedFiles)] }
+}
+
+function assistantMessageIndex(messages, assistantMessageID) {
+  if (assistantMessageID) {
+    const index = messages.findIndex((message) => messageID(message) === assistantMessageID)
+    if (index >= 0) return index
+  }
+  return messages.length - 1
+}
+
+function messageID(message) {
+  return String(message?.info?.id || message?.id || "")
+}
+
+function messageRole(message) {
+  return String(message?.info?.role || message?.role || "")
 }
 
 function promptTextBeforeAssistant(messages, assistantMessageID) {

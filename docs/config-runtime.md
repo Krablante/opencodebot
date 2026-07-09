@@ -173,9 +173,9 @@ Then start a topic with:
 /new fast work on the upload flow
 ```
 
-## Fixed Mirror Policy
+## Mirror Modes
 
-The mirror policy is deliberately not a public matrix of modes. The bot mirrors user-facing OpenCodez activity, hides internal helper tools such as `todo`/`todowrite`, keeps reasoning summaries out of Telegram, compacts tool status into expandable quotes, and uses fixed Telegram-safe message limits. Oversized web-origin user prompts are split into numbered Telegram messages instead of being truncated.
+The bot has two persistent global mirror modes controlled by `/mode full` and `/mode economy`. Full mode mirrors user-facing OpenCodez activity and compacts tool status into expandable quotes. Economy mode keeps assistant progress text, final answers, and failures while suppressing Telegram tool sends and edits across every topic. Both modes hide internal helper tools such as `todo`/`todowrite` and all task/subagent activity, keep reasoning summaries out of Telegram, and use fixed Telegram-safe message limits. Oversized web-origin user prompts are split into numbered Telegram messages instead of being truncated.
 
 User prompts are always pinned. Telegram-origin runs pin the original user message after OpenCodez accepts the prompt; web-origin runs pin the mirrored user-prompt message. Telegram pin service messages are cleaned up when possible. Final assistant answers are marked with `🏁` but are not pinned.
 
@@ -237,7 +237,7 @@ Per-server roots belong in `servers.json` when one host needs a different dropbo
 
 ## Paths And State
 
-`paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, the current artifacts topic, the current sounds topic, mirror enabled state, pending Telegram-origin prompt ids, known sessions, per-session mirror markers, bounded reconcile windows, and final-notification opt-ins/dedupe markers. It should not contain full prompt queue text. The `/q` queue is memory-only and disappears on service restart by design.
+`paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, the current artifacts topic, the current sounds topic, the global full/economy mirror mode, mirror enabled state, pending Telegram-origin prompt ids, known sessions, per-session mirror markers, bounded reconcile windows, and final-notification opt-ins/dedupe markers. It should not contain full prompt queue text. The `/q` queue is memory-only and disappears on service restart by design.
 
 If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. The queue releases the next prompt only after OpenCodez reports the session idle; reconnects, progress events, assistant step completion, and tool-only events do not release or clear the queue.
 

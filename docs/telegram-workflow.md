@@ -30,6 +30,7 @@ When OpenCodez later updates a session title, the linked Telegram topic is renam
 /notify_on                       enable final-answer DMs for configured recipients
 /notify_off                      disable final-answer DMs for configured recipients
 /notify_status                   show configured final-answer DM status
+/mode [full|economy]             show or set the global mirror mode
 /mirror_on                        enable web-to-Telegram mirroring
 /mirror_off                       disable web-to-Telegram mirroring
 /help                             show commands and configured templates
@@ -86,7 +87,7 @@ The queue advances only after OpenCodez reports the session idle. Assistant step
 
 ## Final Notifications
 
-`/notify_on`, `/notify_off`, and `/notify_status` control private DM notifications for `finalNotifications.userIds`. When enabled, the bot sends a short private message to each configured recipient when a final mirrored answer is ready. The DM includes a source `Topic:` line from Telegram topic metadata, with the Telegram topic name and topic custom emoji when Telegram provides it. It also includes an `Open topic` button for the final mirrored message, quotes the original user prompt in an expandable block for orientation, and includes a compact quoted `📋 Tasks [n/n]:` checklist when the agent closed a todo list for that run. It does not include the final answer text.
+`/notify_on`, `/notify_off`, and `/notify_status` control private DM notifications for `finalNotifications.userIds`. When enabled, the bot sends a short private message to each configured recipient when a final mirrored answer is ready. The DM includes a source `Topic:` line from Telegram topic metadata, with the Telegram topic name and topic custom emoji when Telegram provides it. It also includes an `Open topic` button for the final mirrored message, quotes the original user prompt in an expandable block for orientation, and includes a compact quoted `📋 Tasks [n/n]:` checklist when the agent closed a todo list for that run. A compact `Tools:` line counts non-hidden tools in the current user turn, and `Patched:` lists unique paths from successful `apply_patch`, `edit`, and `write` calls separated by semicolons. Task/subagent tools and configured hidden tools are omitted. Shell calls remain in `Tools`, but the bot does not guess changed paths from arbitrary shell command text. The DM does not include the final answer text.
 
 ## Mirror
 
@@ -94,9 +95,11 @@ Web-origin text prompts are mirrored into Telegram with a small `💬` marker. O
 
 Assistant text is accumulated until OpenCodez completes the text block. The bot does not edit Telegram token-by-token. Completed assistant text is sent as Telegram Rich Message markdown when the Bot API accepts it, with fallback for local Markdown links and formatting errors. Real final answers are marked with `🏁 `. The bot pins the user prompt that started the run: the original Telegram message for Telegram-origin prompts, or the mirrored user message for web-origin prompts.
 
-Tool calls are compact and expandable. Adjacent tool results update one Telegram message until assistant text starts a new block. Tool batches use Telegram MarkdownV2 expandable blockquotes, so details are one tap away without filling the topic with raw output.
+`/mode full` and `/mode economy` switch one persistent global mode for all mirrored topics; `/mode` reports the current value. Full mode keeps normal tool rendering. Economy mode mirrors assistant progress text, final answers, and failures, but suppresses all Telegram tool sends and edits. OpenCodez execution and final-notification tool accounting are unchanged.
 
-Internal helper tools such as todo-style task-list tools are suppressed from live mirror and reconcile so bookkeeping does not crowd Telegram. Closed task lists may still appear in private final-answer DMs as a compact quoted checked task list. Subagent sessions are also treated as implementation details: Telegram shows the parent-visible task tool line, not a separate child session log.
+In full mode, tool calls are compact and expandable. Adjacent tool results update one Telegram message until assistant text starts a new block. Tool batches use Telegram MarkdownV2 expandable blockquotes, so details are one tap away without filling the topic with raw output.
+
+Internal helper tools such as todo-style task-list tools are suppressed from live mirror and reconcile so bookkeeping does not crowd Telegram. Closed task lists may still appear in private final-answer DMs as a compact quoted checked task list. Task/subagent tools and child-session activity are implementation details and stay hidden in both mirror modes.
 
 ## Reconcile
 
