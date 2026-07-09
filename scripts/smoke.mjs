@@ -151,8 +151,9 @@ async function smokeSpeechTopicRouting() {
 
 function smokeSpeechTranscriptMessage() {
   const message = transcriptMessage("строка <admin> & /q", "model/test", 1234)
-  assert.match(message, /^<pre>[\s\S]+<\/pre>\n\n<code>model\/test<\/code> · <code>1234ms<\/code>$/)
-  const transcriptBlock = /^<pre>([\s\S]+)<\/pre>\n\n/.exec(message)?.[1]
+  assert.match(message, /^<code>[\s\S]+<\/code>\n\nmodel\/test · 1234ms$/)
+  assert.equal(message.includes("<pre>"), false)
+  const transcriptBlock = /^<code>([\s\S]+)<\/code>\n\n/.exec(message)?.[1]
   assert.equal(transcriptBlock, "строка &lt;admin&gt; &amp; /q")
   assert.equal(transcriptBlock.includes("model/test"), false)
   assert.ok(transcriptMessage("<".repeat(5000), "model/test", 1).length <= 4096)

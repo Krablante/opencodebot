@@ -138,7 +138,7 @@ function isAudioDocument(file) {
 
 export function transcriptMessage(text, model, elapsedMs) {
   const body = escapeHtml(fitTranscriptBlock(text))
-  return `<pre>${body}</pre>\n\n<code>${escapeHtml(model)}</code> · <code>${Math.round(elapsedMs)}ms</code>`
+  return `<code>${body}</code>\n\n${escapeHtml(model)} · ${Math.round(elapsedMs)}ms`
 }
 
 function fitTranscriptBlock(text) {

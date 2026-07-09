@@ -104,7 +104,7 @@ Older local configs that copied `telegram.attachments` from a previous example s
 }
 ```
 
-Run `/sounds_here` in a Telegram forum topic to make that topic the speech inbox. Voice and audio messages in that topic are downloaded, sent to OpenRouter's audio transcription endpoint, and answered with the transcript in the same topic. The transcript is wrapped in its own Telegram code block so it can be copied without also copying model or timing metadata. Text in the speech topic is not forwarded to OpenCodez sessions.
+Run `/sounds_here` in a Telegram forum topic to make that topic the speech inbox. Voice and audio messages in that topic are downloaded, sent to OpenRouter's audio transcription endpoint, and answered with the transcript in the same topic. Only the transcript is wrapped in Telegram Mono formatting so it can be selected/copied without also copying model or timing metadata. Text in the speech topic is not forwarded to OpenCodez sessions.
 
 The prompt is deliberately short and configurable. Leave it blank if generic transcription is better for your group, or replace it with a small vocabulary hint. Do not put secrets in it.
 
