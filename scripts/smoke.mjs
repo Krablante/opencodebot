@@ -106,13 +106,18 @@ async function smokeMirrorModeRendering() {
   assert.equal(sent.length, 1)
   await renderer.toolCalled(binding, { callID: "task-full", tool: "task", input: { subagent_type: "explore", prompt: "inspect" } })
   await renderer.toolResult(binding, { callID: "task-full", tool: "task", output: "done", ok: true })
-  assert.equal(sent.length, 1)
+  assert.equal(sent.length, 2)
+  assert.equal(sent.at(-1).text, "🤖 Subagent spawned: <code>explore</code>")
   mode = "economy"
   await renderer.toolCalled(binding, { callID: "read-economy", tool: "read", input: { filePath: "/tmp/b" } })
   await renderer.toolResult(binding, { callID: "read-economy", tool: "read", output: "ok", ok: true })
-  assert.equal(sent.length, 1)
+  assert.equal(sent.length, 2)
+  await renderer.toolCalled(binding, { callID: "task-economy", tool: "task", input: { subagent_type: "general", prompt: "inspect" } })
+  await renderer.toolResult(binding, { callID: "task-economy", tool: "task", output: "done", ok: true })
+  assert.equal(sent.length, 3)
+  assert.equal(sent.at(-1).text, "🤖 Subagent spawned: <code>general</code>")
   await renderer.compactTools(binding, ["📄 Read /tmp/c"])
-  assert.equal(sent.length, 1)
+  assert.equal(sent.length, 3)
 }
 
 function smokeFinalToolSummary() {

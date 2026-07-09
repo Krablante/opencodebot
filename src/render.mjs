@@ -108,6 +108,11 @@ export class MirrorRenderer {
     if (session.tools.closed) session.tools = newToolBatch()
     const input = properties.input || {}
     const tool = properties.tool || "tool"
+    if (isTaskTool(tool, input)) {
+      await this.announceSubagentSpawn(binding, input)
+      if (properties.callID) session.hiddenToolCalls.add(properties.callID)
+      return
+    }
     if (!this.shouldMirrorTool(tool, input)) {
       if (properties.callID) session.hiddenToolCalls.add(properties.callID)
       return
@@ -284,6 +289,15 @@ export class MirrorRenderer {
     }
   }
 
+  async announceSubagentSpawn(binding, input = {}) {
+    this.closeToolBatch(binding)
+    await this.telegram.sendMessage({
+      chatId: binding.chatId,
+      topicId: binding.topicId,
+      text: subagentSpawnMessage(input),
+    })
+  }
+
   closeToolBatch(binding) {
     const session = this.sessions.get(this.key(binding))
     if (session?.tools) session.tools.closed = true
@@ -436,6 +450,19 @@ function splitEscapedText(text, maxEscapedChars) {
 
 function newToolBatch() {
   return { calls: new Map(), lines: [], messageId: null, truncated: false, closed: false, formatFallback: false }
+}
+
+function subagentSpawnMessage(input = {}) {
+  const type = shortText(input.subagent_type || input.agent || "subagent", 80)
+  const description = shortText(input.description || "", 180)
+  const lines = [`🤖 Subagent spawned: <code>${escapeHtml(type)}</code>`]
+  if (description) lines.push(escapeHtml(description))
+  return lines.join("\n")
+}
+
+function shortText(value, maxChars) {
+  const text = String(value || "").replace(/\s+/g, " ").trim()
+  return text.length > maxChars ? `${text.slice(0, Math.max(0, maxChars - 3))}...` : text
 }
 
 function findAssistantBlock(session, assistantMessageID) {

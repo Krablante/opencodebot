@@ -34,7 +34,7 @@ OpenCodez servers come from `paths.serversJson`, not from the main config body. 
 
 The config names the environment variables to try. `telegram.tokenEnvNames` is checked first, but the loader can also recognize a Telegram-looking token from the env file. `telegram.allowedUserEnvNames` is checked first for user ids; if none are found, the loader falls back to env names that look like owner/user/allowed id variables. `opencode.passwordEnvNames` works the same simple way for the OpenCodez password.
 
-Non-secret config is intentionally small. It covers deployment identity and ownership: chat id, allowed user ids, OpenCodez servers, default prompt profile, chat templates, attachment limits, speech transcription settings, artifact upload folders, final-notification recipients, artifact gateway address, paths, and optional web/WireGuard helpers. Mirror policy, prompt pinning, reconcile windows, multipart buffering, and tool compaction are fixed defaults in code.
+Non-secret config is intentionally small. It covers deployment identity and ownership: chat id, allowed user ids, OpenCodez servers, default prompt profile, chat templates, attachment limits, speech transcription settings, artifact upload folders, final-notification recipients, artifact gateway address, paths, and optional web/WireGuard helpers. The global full/economy mirror mode is runtime state controlled by `/mode`; prompt pinning, reconcile windows, multipart buffering, and tool compaction limits are fixed defaults in code.
 
 ## Telegram
 
@@ -175,7 +175,7 @@ Then start a topic with:
 
 ## Mirror Modes
 
-The bot has two persistent global mirror modes controlled by `/mode full` and `/mode economy`. Full mode mirrors user-facing OpenCodez activity and compacts tool status into expandable quotes. Economy mode keeps assistant progress text, final answers, and failures while suppressing Telegram tool sends and edits across every topic. Both modes hide internal helper tools such as `todo`/`todowrite` and all task/subagent activity, keep reasoning summaries out of Telegram, and use fixed Telegram-safe message limits. Oversized web-origin user prompts are split into numbered Telegram messages instead of being truncated.
+The bot has two persistent global mirror modes controlled by `/mode full` and `/mode economy`. Both modes emit one short robot notice when a task/subagent is spawned. Full mode mirrors user-facing OpenCodez activity and compacts tool status into expandable quotes. Economy mode keeps assistant progress text, final answers, and failures while suppressing ordinary Telegram tool sends and edits across every topic. Both modes hide internal helper tools such as `todo`/`todowrite`, child-session logs/results, and reasoning summaries, and use fixed Telegram-safe message limits. Oversized web-origin user prompts are split into numbered Telegram messages instead of being truncated.
 
 User prompts are always pinned. Telegram-origin runs pin the original user message after OpenCodez accepts the prompt; web-origin runs pin the mirrored user-prompt message. Telegram pin service messages are cleaned up when possible. Final assistant answers are marked with `🏁` but are not pinned.
 
@@ -185,7 +185,7 @@ Long Telegram prompts and bounded missed-event recovery are always on with conse
 
 `finalNotifications` controls optional private DM notifications for final mirrored answers. `finalNotifications.userIds` is the configured recipient allowlist. `/notify_on` enables notifications for those configured ids after verifying that the bot can DM them; `/notify_off` disables those configured recipients again.
 
-The final DM is intentionally short: it includes a source `Topic:` line from Telegram topic metadata, with the Telegram topic name and topic custom emoji when Telegram provides it. It also provides an `Open topic` button for the final message in the Telegram topic, quotes the original user prompt in an expandable block for orientation, and includes a compact quoted `📋 Tasks [n/n]:` checklist when the agent closed a todo list for that run. It does not include the final answer text. Durable dedupe markers are capped internally so live events plus reconcile do not send the same final notification twice.
+The final DM is intentionally short and mode-neutral: it includes a source `Topic:` line from Telegram topic metadata, with the Telegram topic name and topic custom emoji when Telegram provides it. It also provides an `Open topic` button for the final message in the Telegram topic, quotes the original user prompt in an expandable block for orientation, includes a compact quoted `📋 Tasks [n/n]:` checklist when the agent closed a todo list for that run, adds compact `Tools:` counts, and lists unique paths from successful `apply_patch`, `edit`, and `write` calls under `Patched:`. It does not include the final answer text. Durable dedupe markers are capped internally so live events plus reconcile do not send the same final notification twice.
 
 ## Artifacts
 
