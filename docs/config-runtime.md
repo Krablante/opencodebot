@@ -175,7 +175,7 @@ Then start a topic with:
 
 ## Mirror Modes
 
-The bot has two persistent global mirror modes controlled by `/mode full` and `/mode economy`. Both modes emit one short robot notice when a task/subagent is spawned. Full mode mirrors user-facing OpenCodez activity and compacts tool status into expandable quotes. Economy mode keeps assistant progress text, final answers, and failures while suppressing ordinary Telegram tool sends and edits across every topic. Both modes hide internal helper tools such as `todo`/`todowrite`, child-session logs/results, and reasoning summaries, and use fixed Telegram-safe message limits. Oversized web-origin user prompts are split into numbered Telegram messages instead of being truncated.
+The bot has two persistent global mirror modes controlled by `/mode full` and `/mode economy`. Both modes emit one short robot notice with the web-visible task title when a task/subagent is spawned. Full mode mirrors user-facing OpenCodez activity and compacts tool status into expandable quotes. Economy mode keeps assistant progress text, final answers, and failures while suppressing ordinary Telegram tool sends and edits across every topic. Both modes hide internal helper tools such as `todo`/`todowrite`, child-session logs/results, and reasoning summaries, and use fixed Telegram-safe message limits. Oversized web-origin user prompts are split into numbered Telegram messages instead of being truncated.
 
 User prompts are always pinned. Telegram-origin runs pin the original user message after OpenCodez accepts the prompt; web-origin runs pin the mirrored user-prompt message. Telegram pin service messages are cleaned up when possible. Final assistant answers are marked with `🏁` but are not pinned.
 

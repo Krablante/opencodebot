@@ -19,7 +19,7 @@ The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/eve
 - `/kill` to stop the current OpenCodez run for a topic and clear queued prompts.
 - Rich assistant messages sent as completed blocks instead of noisy token streaming.
 - Global `/mode full|economy` mirror modes: full keeps compact expandable tool quotes, while economy shows assistant progress and final answers without Telegram tool traffic.
-- Both modes announce task/subagent spawns with a short robot notice; child-session prompts, tool logs, and results stay hidden.
+- Both modes announce task/subagent spawns with a short robot notice that uses the web-visible task title; child-session prompts, tool logs, and results stay hidden.
 - Attachments and Telegram media groups attached to the next prompt; large files are copied to the target server's configured upload root and referenced by server-local path.
 - Optional Telegram artifact gateway for sending agent-created files, screenshots, logs, and text into one dedicated artifacts topic; the same topic can accept user-dropped files and save them to a configured server folder.
 - Optional OpenRouter speech transcription for one dedicated `/sounds_here` topic; voice and audio messages receive transcripts in the same topic.

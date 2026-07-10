@@ -108,12 +108,16 @@ export class MirrorRenderer {
     if (session.tools.closed) session.tools = newToolBatch()
     const input = properties.input || {}
     const tool = properties.tool || "tool"
-    if (properties.callID && (session.finishedToolCalls.has(properties.callID) || session.tools.calls.has(properties.callID) || session.hiddenToolCalls.has(properties.callID))) return
     if (isTaskTool(tool, input)) {
-      await this.announceSubagentSpawn(binding, input)
+      if (properties.callID && session.announcedTaskCalls.has(properties.callID)) return
+      if (hasSubagentSpawnTitle(input)) {
+        await this.announceSubagentSpawn(binding, input)
+        if (properties.callID) session.announcedTaskCalls.add(properties.callID)
+      }
       if (properties.callID) session.hiddenToolCalls.add(properties.callID)
       return
     }
+    if (properties.callID && (session.finishedToolCalls.has(properties.callID) || session.tools.calls.has(properties.callID) || session.hiddenToolCalls.has(properties.callID))) return
     if (!this.shouldMirrorTool(tool, input)) {
       if (properties.callID) session.hiddenToolCalls.add(properties.callID)
       return
@@ -382,6 +386,7 @@ export class MirrorRenderer {
         tools: newToolBatch(),
         assistantLastMessageIds: new Map(),
         hiddenToolCalls: new Set(),
+        announcedTaskCalls: new Set(),
         finishedToolCalls: new Set(),
         pendingFinalAssistantIds: new Set(),
       }
@@ -460,11 +465,24 @@ function rememberBounded(set, value, maxSize) {
 }
 
 function subagentSpawnMessage(input = {}) {
-  const type = shortText(input.subagent_type || input.agent || "subagent", 80)
-  const description = shortText(input.description || "", 180)
-  const lines = [`🤖 Subagent spawned: <code>${escapeHtml(type)}</code>`]
-  if (description) lines.push(escapeHtml(description))
-  return lines.join("\n")
+  const title = shortText(subagentSpawnTitle(input), 140)
+  return `🤖 Subagent spawned: <code>${escapeHtml(title)}</code>`
+}
+
+function hasSubagentSpawnTitle(input = {}) {
+  return Boolean(subagentSpawnTitle(input))
+}
+
+function subagentSpawnTitle(input = {}) {
+  return firstText(input.description, input.title, input.name, input.subagent_type, input.agent)
+}
+
+function firstText(...values) {
+  for (const value of values) {
+    const text = String(value || "").replace(/\s+/g, " ").trim()
+    if (text) return text
+  }
+  return ""
 }
 
 function shortText(value, maxChars) {

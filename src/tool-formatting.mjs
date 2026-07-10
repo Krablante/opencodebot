@@ -103,7 +103,7 @@ function inferTool(tool, input) {
   if (tool && tool !== "tool") return tool
   if (input.filePath) return "read"
   if (input.command) return "bash"
-  if (input.subagent_type || input.prompt) return "task"
+  if (input.subagent_type) return "task"
   if (input.todos) return "todowrite"
   if (input.patchText) return "apply_patch"
   if (input.name && Object.keys(input).length === 1) return "skill"
