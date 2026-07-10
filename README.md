@@ -78,8 +78,8 @@ notepad .\token.env
 Secrets belong in `token.env`, not in git. Use your BotFather token, your numeric Telegram user id, and the password for the OpenCodez server API:
 
 ```env
-TELEGRAM_BOT_TOKEN=123456:telegram-token
-TELEGRAM_ALLOWED_USER_IDS=123456789
+OPENCODEBOT_TOKEN=123456:telegram-token
+OPENCODEBOT_ALLOWED_USER_IDS=123456789
 OPENCODEZ_SERVER_PASSWORD=your-opencodez-password
 # Optional, only when speech.enabled is true:
 OPENROUTER_API_KEY=sk-or-...

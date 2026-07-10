@@ -26,8 +26,8 @@ cp token.env.example token.env
 ```
 
 ```env
-TELEGRAM_BOT_TOKEN=123456:telegram-token
-TELEGRAM_ALLOWED_USER_IDS=123456789
+OPENCODEBOT_TOKEN=123456:telegram-token
+OPENCODEBOT_ALLOWED_USER_IDS=123456789
 OPENCODEZ_SERVER_PASSWORD=your-opencodez-password
 ```
 
