@@ -2,17 +2,27 @@ const defaultChatTemplates = {
   d4flash: {
     agent: "build",
     model: { providerID: "deepseek", modelID: "deepseek-v4-flash", variant: "max" },
-    opencodezTemplate: "gpt55",
+    opencodezSystem: "default",
   },
   d4pro: {
     agent: "build",
     model: { providerID: "deepseek", modelID: "deepseek-v4-pro", variant: "max" },
-    opencodezTemplate: "gpt55",
+    opencodezSystem: "default",
   },
-  gpt55p: {
+  luna: {
     agent: "build",
-    model: { providerID: "openai", modelID: "gpt-5.5", variant: "xhigh" },
-    opencodezTemplate: "gpt55",
+    model: { providerID: "openai", modelID: "gpt-5.6-luna", variant: "xhigh" },
+    opencodezSystem: "codex_gpt_5_6_luna_terra",
+  },
+  terra: {
+    agent: "build",
+    model: { providerID: "openai", modelID: "gpt-5.6-terra", variant: "xhigh" },
+    opencodezSystem: "codex_gpt_5_6_luna_terra",
+  },
+  sol: {
+    agent: "build",
+    model: { providerID: "openai", modelID: "gpt-5.6-sol", variant: "xhigh" },
+    opencodezSystem: "codex_gpt_5_6_sol",
   },
 }
 
@@ -27,11 +37,11 @@ export function normalizeChatTemplates(value = {}) {
 
 function normalizeChatTemplate(template = {}) {
   const model = normalizeModel(template.model)
-  if (!template.agent && !model && !template.opencodezTemplate) return null
+  if (!template.agent && !model && !template.opencodezSystem) return null
   return {
     agent: template.agent ? String(template.agent) : undefined,
     model,
-    opencodezTemplate: template.opencodezTemplate ? String(template.opencodezTemplate) : undefined,
+    opencodezSystem: template.opencodezSystem ? String(template.opencodezSystem) : undefined,
   }
 }
 

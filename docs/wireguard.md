@@ -14,7 +14,7 @@ phone or laptop away from home
       -> OpenCodez server selector and cached web assets
 ```
 
-With OpenCodez, this is especially convenient because the web UI is still the full local UI: System/Tone prompt templates, server selector, and cached frontend behavior work the same way as they do on the LAN. The tunnel only changes how the browser reaches the private address.
+With OpenCodez, this is especially convenient because the web UI is still the full local UI: selectable System prompts, server selector, and cached frontend behavior work the same way as they do on the LAN. The tunnel only changes how the browser reaches the private address.
 
 ## What Must Be Ready
 

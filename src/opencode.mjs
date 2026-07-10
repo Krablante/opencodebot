@@ -46,11 +46,12 @@ export class OpenCodeClient {
     })
   }
 
-  async selectPromptTemplate(serverID, sessionID, name, model, options = {}) {
-    const body = { sessionID, kind: "template", name }
-    const normalizedModel = promptModel(model)
-    if (normalizedModel) body.model = normalizedModel
-    return this.request(this.server(serverID), "/opencodez/prompts/select", { ...options, method: "POST", body })
+  async selectSystemPrompt(serverID, sessionID, name, options = {}) {
+    return this.request(this.server(serverID), "/opencodez/prompts/select", {
+      ...options,
+      method: "POST",
+      body: { sessionID, name },
+    })
   }
 
   async request(server, pathname, options = {}) {
@@ -188,12 +189,6 @@ function formatBytes(value) {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GiB`
 }
 
-function promptModel(model) {
-  const value = normalizeModel(model)
-  if (!value?.modelID) return undefined
-  return { providerID: value.providerID, id: value.modelID }
-}
-
 export function profileFromSession(session) {
   if (!session) return {}
   return {
@@ -207,14 +202,14 @@ export function profileFromMessages(messages) {
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]?.info || messages[index]
     if (message?.role !== "user") continue
-    const model = message.model
-      ? { providerID: message.providerID, modelID: message.modelID || message.model, variant: message.model?.variant }
-      : message.providerID && message.modelID
-        ? { providerID: message.providerID, modelID: message.modelID, variant: message.variant }
+    const model = message.model && typeof message.model === "object"
+      ? normalizeModel(message.model)
+      : message.providerID && (message.modelID || message.model)
+        ? { providerID: message.providerID, modelID: message.modelID || message.model, variant: message.variant }
         : undefined
     return {
       agent: message.agent,
-      model: model ? normalizeModel(model) : undefined,
+      model,
     }
   }
   return {}

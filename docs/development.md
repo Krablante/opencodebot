@@ -12,20 +12,27 @@ Run syntax checks:
 npm run check
 ```
 
+Run the small dedicated test suite:
+
+```bash
+npm test
+```
+
 Run the short smoke check:
 
 ```bash
 npm run smoke
 ```
 
-`npm run check` is implemented as a Node script so it works on Linux, macOS, and Windows without relying on shell glob expansion. `npm run smoke` is the central regression check: it verifies config shape, ordered SSE event handling, OpenCode request timeouts, whole-session state pruning without per-session message loss, Telegram download limits, synthetic file text filtering, `/kill`, queued prompt release on session idle, full/economy mode behavior, task/subagent spawn notices, final notification summaries, artifact-topic host rejection, and artifact upload path handling. When a valid runtime config is available, it also checks Telegram `getMe` and probes configured OpenCodez servers with `GET /session`. With an explicit runtime config, it verifies that the local artifact upload root is writable when the default artifact server uses local transfer. It should not create sessions, send prompts, or print tokens.
+`npm run check` is implemented as a Node script so it works on Linux, macOS, and Windows without relying on shell glob expansion. `npm test` holds only the few contracts that benefit from a dedicated test file, such as chat-profile shape and the OpenCodez System selection payload. `npm run smoke` is the central regression check: it verifies config shape, ordered SSE event handling, OpenCode request timeouts, whole-session state pruning without per-session message loss, Telegram download limits, synthetic file text filtering, `/kill`, queued prompt release on session idle, full/economy mode behavior, task/subagent spawn notices, final notification summaries, artifact-topic host rejection, and artifact upload path handling. When a valid runtime config is available, it also checks Telegram `getMe` and probes configured OpenCodez servers with `GET /session`. With an explicit runtime config, it verifies that the local artifact upload root is writable when the default artifact server uses local transfer. It should not create sessions, send prompts, or print tokens.
 
-Do not add separate test files by default. This is a small operated bot; keep at most the central smoke check plus source syntax check unless a future feature genuinely needs a separate harness. Smoke should protect painful production regressions rather than every formatter branch and helper function.
+Keep dedicated test files few and focused. This is a small operated bot, so tests should protect important configuration and API contracts rather than every formatter branch and helper function. Prefer real disposable-session checks for runtime and multihost behavior; clean those sessions up immediately.
 
 On Windows, use PowerShell and the same npm commands:
 
 ```powershell
 npm run check
+npm test
 npm run smoke
 npm start
 ```
@@ -73,6 +80,7 @@ Check status before and after work:
 git status --short
 git diff --stat
 npm run check
+npm test
 npm run smoke
 npm run smoke:live
 ```

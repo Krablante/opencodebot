@@ -6,14 +6,14 @@ It is built as a practical single-operator tool that is still clean enough to sh
 
 ## Why OpenCodez
 
-opencodebot is tuned for OpenCodez's API and event stream. It works especially well with OpenCodez because that fork adds flexible System/Tone prompt control, built-in Codex-style prompt templates, token-saving pruning, and a more convenient cached web UI. That web UI remains useful on the LAN by default, and can also be reached away from home through the optional WireGuard helper if you want private remote access.
+opencodebot is tuned for OpenCodez's API and event stream. It works especially well with OpenCodez because that fork adds selectable System prompts, token-saving pruning, and a more convenient cached web UI. That web UI remains useful on the LAN by default, and can also be reached away from home through the optional WireGuard helper if you want private remote access.
 
 The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/event` SSE stream, then mirrors useful session activity into Telegram.
 
 ## Features
 
 - Telegram forum topics mapped to OpenCodez sessions.
-- `/new [server] [template] [dir:<path>] [title]` for explicit server/profile/directory/topic setup.
+- `/new [server] [profile] [dir:<path>] [title]` for explicit server/profile/directory/topic setup.
 - User-provided topic titles stay user-owned; placeholder titles can be renamed from OpenCodez session titles.
 - `/q` in-memory per-session prompt queue, with status/delete commands.
 - `/kill` to stop the current OpenCodez run for a topic and clear queued prompts.
@@ -135,7 +135,7 @@ The local Telegram Bot API sidecar is also optional. Add `TELEGRAM_API_ID` and `
 
 Use `/start` or `/help` when you want the bot to show its command summary. These commands are safe to run in a normal topic, and they do not create or change an OpenCodez session.
 
-Use `/new` when you want a fresh Telegram topic and a new OpenCodez session. You can give it a server id, an optional chat template, an optional `dir:<path>` override, and a title. If no server id is given, the configured default server is used. After the topic is created, send the first prompt in that topic.
+Use `/new` when you want a fresh Telegram topic and a new OpenCodez session. You can give it a server id, an optional chat profile, an optional `dir:<path>` override, and a title. If no server id is given, the configured default server is used. After the topic is created, send the first prompt in that topic.
 
 Use `/q` inside an existing OpenCodez topic when you want to queue another prompt for the same session. `/q status` shows the queue, and `/q delete 2` removes a queued item by number.
 
@@ -153,12 +153,12 @@ Use `/mode`, `/mode full`, or `/mode economy` to inspect or change the persisten
 
 Use `/mirror_on` and `/mirror_off` when you need to pause or resume web-to-Telegram mirroring without stopping the bot.
 
-Default chat templates are `d4flash`, `d4pro`, and `gpt55p`. Public defaults use the ordinary OpenCodez `gpt55` template; local deployments can override templates in runtime config.
+Default chat profiles are `d4flash`, `d4pro`, `luna`, `terra`, and `sol`. Each profile keeps its agent, model, variant, and OpenCodez System prompt in `chatTemplates`; local deployments can override those values in runtime config without changing code. DeepSeek profiles use the OpenCodez `default` System prompt, Luna and Terra share `codex_gpt_5_6_luna_terra`, and Sol uses `codex_gpt_5_6_sol`.
 
 ## Docs
 
 - [Telegram Workflow](docs/telegram-workflow.md) covers topics, `/new`, `/q`, `/kill`, attachments, multipart prompts, rich messages, tools, user-prompt pins, final notifications, and reconcile.
-- [Config And Runtime](docs/config-runtime.md) covers config loading, token handling, templates, mirror settings, attachments, and state.
+- [Config And Runtime](docs/config-runtime.md) covers config loading, token handling, chat profiles, mirror settings, attachments, and state.
 - [Artifact Gateway](docs/artifact-gateway.md) covers `/artifacts_here`, the LAN gateway, user-dropped artifact uploads, the OpenCodez plugin, and the bundled skill.
 - [Docker](docs/docker.md) covers the recommended Compose deployment path.
 - [Development](docs/development.md) covers source layout, checks, smoke tests, service restart, and change style.

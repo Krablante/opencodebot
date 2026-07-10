@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, "..")
-const roots = [path.join(projectRoot, "src"), path.join(projectRoot, "scripts"), path.join(projectRoot, "plugins")]
+const roots = [path.join(projectRoot, "src"), path.join(projectRoot, "scripts"), path.join(projectRoot, "plugins"), path.join(projectRoot, "test")]
 const files = []
 
 for (const root of roots) {

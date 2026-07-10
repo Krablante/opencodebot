@@ -24,6 +24,7 @@
   "scripts": {
     "start": "node src/main.mjs",
     "check": "node scripts/check.mjs",
+    "test": "node --test test/*.test.mjs",
     "smoke": "node scripts/smoke.mjs",
     "smoke:live": "docker compose exec -T opencodebot npm run smoke -- /app/config.local.json",
     "init-config": "node scripts/init-config.mjs",

@@ -123,11 +123,18 @@ sessionReconciler.reconcileLoop().catch(logError)
 await telegramPolling.poll({ shouldStop: () => shutdownRequested })
 
 async function createPendingTopic(message, args) {
-  const { serverID, title, titleSource, chatTemplateName, chatTemplate, directory: requestedDirectory } = parseNewTopicArgs(args, {
-    servers: opencode.servers,
-    defaultServerID: config.defaultPrompt.serverID,
-    chatTemplates: config.chatTemplates,
-  })
+  let parsed
+  try {
+    parsed = parseNewTopicArgs(args, {
+      servers: opencode.servers,
+      defaultServerID: config.defaultPrompt.serverID,
+      chatTemplates: config.chatTemplates,
+    })
+  } catch (error) {
+    await telegram.sendMessage({ chatId: message.chat.id, topicId: message.message_thread_id, text: escapeHtml(error.message) })
+    return
+  }
+  const { serverID, title, titleSource, chatTemplateName, chatTemplate, directory: requestedDirectory } = parsed
   const directory = requestedDirectory || opencode.defaultNewSessionDirectory(serverID)
   const chatId = state.chatId || message.chat.id
   const topicIcon = await randomTopicIcon()

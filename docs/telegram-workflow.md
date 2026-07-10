@@ -12,12 +12,12 @@ Deleting or closing a Telegram topic is treated as an explicit stop for that top
 
 If `telegram.chatId` is missing and `telegram.allowChatBootstrap` is enabled, the first message from an allowed user initializes the chat in local state. For a shared bot, set `telegram.chatId` and `telegram.allowedUserIds` deliberately instead of relying on accidental bootstrap messages.
 
-When OpenCodez later updates a session title, the linked Telegram topic is renamed too unless the topic title came directly from the user. This lets placeholder titles such as a template name become real session titles, while `/new local gpt55p Refactor auth` keeps `Refactor auth`. New topics use a random forum icon when Telegram exposes available topic icon stickers to the bot.
+When OpenCodez later updates a session title, the linked Telegram topic is renamed too unless the topic title came directly from the user. This lets placeholder titles such as a profile name become real session titles, while `/new local sol Refactor auth` keeps `Refactor auth`. New topics use a random forum icon when Telegram exposes available topic icon stickers to the bot.
 
 ## Commands
 
 ```text
-/new [server] [template] [dir:<path>] [title]  create a topic and wait for the first prompt
+/new [server] [profile] [dir:<path>] [title]   create a topic and wait for the first prompt
 /session                           show topic, binding, session URL, and special topic status
 /q <prompt>                       queue or send a prompt in this topic/session
 /q status                         show queued prompts
@@ -33,7 +33,7 @@ When OpenCodez later updates a session title, the linked Telegram topic is renam
 /mode [full|economy]             show or set the global mirror mode
 /mirror_on                        enable web-to-Telegram mirroring
 /mirror_off                       disable web-to-Telegram mirroring
-/help                             show commands and configured templates
+/help                             show commands and configured chat profiles
 ```
 
 The bot syncs this slash-command menu on startup through Bot API `setMyCommands` for default, private-chat, group-chat, administrator, configured-chat, and configured-member scopes, so the same commands should appear in Telegram's command suggestions.
@@ -46,7 +46,7 @@ The bot syncs this slash-command menu on startup through Bot API `setMyCommands`
 
 `/kill` is a topic-scoped stop command. It calls OpenCodez `POST /session/:sessionID/abort` for the bound session, then clears that topic's in-memory queued prompts so a stopped run does not immediately advance into the next queued prompt. It does not delete the OpenCodez session, remove the Telegram topic, or restart the backend service.
 
-`/new` parses arguments from left to right. If the first argument matches a configured server id, that server is used. If the next argument, or the first argument when no server was given, matches `chatTemplates`, that template is used. A `dir:<path>` argument sets the OpenCodez session directory for this topic; otherwise `/new` uses the selected server's configured home directory. Everything left becomes the user-owned topic title.
+`/new` parses arguments from left to right. If the first argument matches a configured server id, that server is used. If the next argument, or the first argument when no server was given, matches a profile in `chatTemplates`, that profile is used. A `dir:<path>` argument sets the OpenCodez session directory for this topic; otherwise `/new` uses the selected server's configured home directory. Everything left becomes the user-owned topic title.
 
 Examples:
 
@@ -54,16 +54,16 @@ Examples:
 /new TGBOT
 /new ser Release check
 /new d4flash Fix upload flow
-/new local gpt55p Architecture pass
-/new local gpt55p dir:/srv/opencodebot Artifact gateway
+/new local sol Architecture pass
+/new local terra dir:/srv/opencodebot Artifact gateway
 /new dima d4flash dir:"C:\Users\dima\code\voltaren" voltaren
 ```
 
-The default templates are `d4flash`, `d4pro`, and `gpt55p`. They are host-independent Telegram-created-session profiles. Each can set agent, model, variant, and an OpenCodez prompt template. The bot applies the OpenCodez template after creating the session and before sending the first prompt.
+The default profiles are `d4flash`, `d4pro`, `luna`, `terra`, and `sol`. They are host-independent Telegram-created-session profiles. Each keeps its agent, model, variant, and OpenCodez System prompt in config. The bot selects that System after creating the session and before sending the first prompt. The retired `gpt55p` profile is rejected with a direct migration hint instead of being misread as a topic title.
 
 ## Prompts
 
-For an existing topic, the bot sends prompts with the session's current `agent`, `model`, and `variant`, or the last user-message metadata when available. Last sent settings win. For a new topic created from Telegram, the bot uses the runtime default profile unless a chat template overrides it.
+For an existing topic, the bot sends prompts with the session's current `agent`, `model`, and `variant`, or the last user-message metadata when available. Last sent settings win. For a new topic created from Telegram, the bot uses the runtime default profile unless a configured chat profile overrides it.
 
 Long Telegram-origin prompts can arrive as multiple Telegram messages. Near-limit prompt parts are held briefly in memory and joined with a blank line before being sent to OpenCodez. Ordinary short messages are sent immediately.
 

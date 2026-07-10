@@ -147,27 +147,27 @@ Each server in `servers.json` needs an `id` and `url`. The optional `home` field
 
 ## Prompt Profiles
 
-`defaultPrompt` is the fallback profile for Telegram-created sessions. It chooses the default OpenCodez server and the prompt metadata the bot can know before the first prompt: agent, model, and optional `opencodezTemplate`.
+`defaultPrompt` is the fallback profile for Telegram-created sessions. It chooses the default OpenCodez server and the prompt metadata the bot can know before the first prompt: agent and model.
 
-`chatTemplates` are named profiles for `/new`. The built-in defaults are `d4flash`, `d4pro`, and `gpt55p`. Runtime config is merged with those defaults, so you can add a new template or override one existing template without copying every default.
+`chatTemplates` are named launch profiles for `/new`; the key is retained for config compatibility and does not refer to the removed OpenCodez Template prompt kind. The built-in defaults are `d4flash`, `d4pro`, `luna`, `terra`, and `sol`. Runtime config is merged with those defaults, so you can add a profile or override an existing profile without copying every default.
 
-Each template can define:
+Each profile can define:
 
 - `agent`: OpenCodez agent name.
 - `model.providerID`: provider id.
 - `model.modelID`: model id.
 - `model.variant`: optional model effort/variant.
-- `opencodezTemplate`: OpenCodez-side chat template name.
+- `opencodezSystem`: OpenCodez System prompt name selected before the first prompt.
 
 Example:
 
 ```json
 {
   "chatTemplates": {
-    "fast": {
+    "sol": {
       "agent": "build",
-      "model": { "providerID": "deepseek", "modelID": "deepseek-v4-flash", "variant": "max" },
-      "opencodezTemplate": "gpt55"
+      "model": { "providerID": "openai", "modelID": "gpt-5.6-sol", "variant": "xhigh" },
+      "opencodezSystem": "codex_gpt_5_6_sol"
     }
   }
 }
@@ -176,7 +176,7 @@ Example:
 Then start a topic with:
 
 ```text
-/new fast work on the upload flow
+/new sol work on the upload flow
 ```
 
 ## Mirror Modes

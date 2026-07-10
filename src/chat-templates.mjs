@@ -2,6 +2,7 @@ export function parseNewTopicArgs(args, { servers, defaultServerID, chatTemplate
   const parts = tokenizeNewTopicArgs(args)
   const templates = chatTemplates || {}
   const serverID = parts[0] && servers.has(parts[0]) ? parts.shift() : defaultServerID
+  if (parts[0] === "gpt55p") throw new Error("Profile gpt55p was removed. Use luna, terra, or sol.")
   const chatTemplateName = parts[0] && templates[parts[0]] ? parts.shift() : ""
   let directory = ""
   const titleParts = []
@@ -20,8 +21,8 @@ export function parseNewTopicArgs(args, { servers, defaultServerID, chatTemplate
 }
 
 export async function applyChatTemplate(opencode, serverID, sessionID, chatTemplate, options = {}) {
-  if (!chatTemplate?.opencodezTemplate) return
-  await opencode.selectPromptTemplate(serverID, sessionID, chatTemplate.opencodezTemplate, chatTemplate.model, options)
+  if (!chatTemplate?.opencodezSystem) return
+  await opencode.selectSystemPrompt(serverID, sessionID, chatTemplate.opencodezSystem, options)
 }
 
 function tokenizeNewTopicArgs(args) {

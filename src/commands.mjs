@@ -16,7 +16,7 @@ export const telegramBotCommands = [
   { command: "mode", description: "Show or set full/economy mirror mode" },
   { command: "mirror_on", description: "Enable web-to-Telegram mirroring" },
   { command: "mirror_off", description: "Disable web-to-Telegram mirroring" },
-  { command: "help", description: "Show commands and templates" },
+  { command: "help", description: "Show commands and chat profiles" },
   { command: "start", description: "Show help" },
 ]
 
@@ -356,11 +356,11 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
   }
 
   function helpText() {
-    const templates = Object.keys(config.chatTemplates || {}).join(", ") || "none"
+    const profiles = Object.keys(config.chatTemplates || {}).join(", ") || "none"
     return [
       "<b>OpenCodez Bot</b>",
       "",
-      "<code>/new [server] [template] [dir:&lt;path&gt;] [title]</code> - create a topic and wait for the first prompt.",
+      "<code>/new [server] [profile] [dir:&lt;path&gt;] [title]</code> - create a topic and wait for the first prompt.",
       "<code>/session</code> - show current topic, binding, session URL, and special topic status.",
       "<code>/q &lt;prompt&gt;</code> - queue a prompt for this topic/session.",
       "<code>/q status</code> - show queued prompts.",
@@ -375,7 +375,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
       "<code>/mode [full|economy]</code> - show or set the global mirror mode.",
       "<code>/mirror_on</code> / <code>/mirror_off</code> - toggle web-to-Telegram mirroring.",
       "",
-      `Templates: <code>${escapeHtml(templates)}</code>`,
+      `Profiles: <code>${escapeHtml(profiles)}</code>`,
       "Files: send files/photos with a caption, or send files first and prompt text next.",
     ].join("\n")
   }
