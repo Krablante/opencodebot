@@ -1,5 +1,7 @@
 import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
 
+const DEFAULT_REQUEST_TIMEOUT_MS = 60_000
+
 export class OpenCodeClient {
   constructor(config) {
     this.config = config
@@ -57,11 +59,13 @@ export class OpenCodeClient {
     if (options.body !== undefined) headers["content-type"] = "application/json"
     const auth = this.authHeader()
     if (auth) headers.authorization = auth
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: options.method || "GET",
       headers,
       body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-    })
+      signal: options.signal,
+      timeoutMs: options.timeoutMs,
+    }, DEFAULT_REQUEST_TIMEOUT_MS, `OpenCodez ${server.id} ${pathname}`)
     if (!response.ok) {
       const text = await response.text().catch(() => "")
       throw new Error(`OpenCodez ${server.id} ${pathname} failed: ${response.status} ${text.slice(0, 200)}`)
@@ -265,22 +269,41 @@ async function readSse(body, onEvent, signal) {
         .map((line) => line.slice(5).trimStart())
         .join("\n")
       if (!data) continue
+      let event
       try {
-        const event = JSON.parse(data)
-        const result = onEvent(event)
-        if (result && typeof result.then === "function") {
-          const startedAt = Date.now()
-          result
-            .then(() => {
-              const elapsedMs = durationMs(startedAt)
-              if (shouldLogSlow(elapsedMs)) logInfo("opencode.event.handler.slow", { type: event.type, durationMs: elapsedMs })
-            })
-            .catch((error) => logErrorEvent("opencode.event.handler.error", error, { type: event.type }))
-        }
+        event = JSON.parse(data)
       } catch {
-        // Ignore malformed keepalive or partial data.
+        continue
+      }
+      const startedAt = Date.now()
+      try {
+        await onEvent(event)
+      } catch (error) {
+        logErrorEvent("opencode.event.handler.error", error, { type: event.type })
+      } finally {
+        const elapsedMs = durationMs(startedAt)
+        if (shouldLogSlow(elapsedMs)) logInfo("opencode.event.handler.slow", { type: event.type, durationMs: elapsedMs })
       }
     }
+  }
+}
+
+async function fetchWithTimeout(url, options, defaultTimeoutMs, label) {
+  const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : defaultTimeoutMs
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(new Error(`${label} timed out after ${formatDuration(timeoutMs)}`)), timeoutMs)
+  const onAbort = () => controller.abort(options.signal?.reason)
+  if (options.signal?.aborted) onAbort()
+  else options.signal?.addEventListener("abort", onAbort, { once: true })
+  try {
+    const { timeoutMs: _timeoutMs, signal: _signal, ...fetchOptions } = options
+    return await fetch(url, { ...fetchOptions, signal: controller.signal })
+  } catch (error) {
+    if (controller.signal.aborted && !options.signal?.aborted) throw new Error(`${label} timed out after ${formatDuration(timeoutMs)}`, { cause: error })
+    throw error
+  } finally {
+    clearTimeout(timeout)
+    options.signal?.removeEventListener?.("abort", onAbort)
   }
 }
 

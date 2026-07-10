@@ -27,30 +27,25 @@ export function pickValue(env, names) {
   return undefined
 }
 
-export function pickToken(env, names) {
-  const explicit = pickValue(env, names)
-  if (explicit) return explicit
-  for (const value of Object.values(env)) {
-    const text = String(value).trim()
-    if (/^\d{5,}:[A-Za-z0-9_-]{20,}$/.test(text)) return text
-  }
-  return undefined
+export function pickToken(value, env = process.env) {
+  if (typeof value === "string") return value.trim()
+  if (value?.value) return String(value.value).trim()
+  if (value?.env) return String(env[value.env] || "").trim()
+  return ""
 }
 
-export function readNumberList(env, names) {
+export function readNumberList(value, env = process.env) {
+  if (typeof value === "number") return [value]
+  if (typeof value === "string") return parseNumberList(value)
+  if (Array.isArray(value)) return value.flatMap((item) => readNumberList(item, env))
+  if (value?.env) return parseNumberList(env[value.env])
+  return []
+}
+
+function parseNumberList(value) {
   const values = []
-  for (const name of names) {
-    const value = env[name]
-    if (!value) continue
-    for (const item of String(value).split(/[\s,]+/)) {
-      if (/^-?\d+$/.test(item)) values.push(Number(item))
-    }
-  }
-  if (!values.length) {
-    for (const [key, value] of Object.entries(env)) {
-      if (!/(USER|ALLOWED|OWNER).*ID/i.test(key)) continue
-      if (/^-?\d+$/.test(String(value).trim())) values.push(Number(value))
-    }
+  for (const item of String(value || "").split(/[\s,]+/)) {
+    if (/^-?\d+$/.test(item)) values.push(Number(item))
   }
   return values
 }

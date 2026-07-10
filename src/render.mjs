@@ -108,6 +108,7 @@ export class MirrorRenderer {
     if (session.tools.closed) session.tools = newToolBatch()
     const input = properties.input || {}
     const tool = properties.tool || "tool"
+    if (properties.callID && (session.finishedToolCalls.has(properties.callID) || session.tools.calls.has(properties.callID) || session.hiddenToolCalls.has(properties.callID))) return
     if (isTaskTool(tool, input)) {
       await this.announceSubagentSpawn(binding, input)
       if (properties.callID) session.hiddenToolCalls.add(properties.callID)
@@ -128,10 +129,13 @@ export class MirrorRenderer {
     const session = this.ensureSession(this.key(binding))
     if (properties.callID && session.hiddenToolCalls.has(properties.callID)) {
       session.hiddenToolCalls.delete(properties.callID)
+      rememberBounded(session.finishedToolCalls, properties.callID, 500)
       return
     }
+    if (properties.callID && session.finishedToolCalls.has(properties.callID)) return
     const call = session.tools.calls.get(properties.callID) || { tool: properties.tool || "tool", input: properties.input || {} }
     session.tools.calls.delete(properties.callID)
+    if (properties.callID) rememberBounded(session.finishedToolCalls, properties.callID, 500)
     if (!this.shouldMirrorTool(call.tool, call.input)) return
     if (call.reportedOnStart && ok) return
     const suffix = ok ? shortUsefulResult(properties) : shortError(properties)
@@ -155,9 +159,6 @@ export class MirrorRenderer {
       })
       return block.messageId
     }
-    const now = Date.now()
-    if (!force && block.lastEdit && now - block.lastEdit < this.config.mirror.editDebounceMs) return
-    block.lastEdit = now
     if (block.richFallback) {
       await ignoreEditRace(() => this.telegram.editMessageText({ chatId: binding.chatId, messageId: block.messageId, text: payload }))
     } else {
@@ -317,6 +318,7 @@ export class MirrorRenderer {
     }
     await this.markFinalAssistantMessage(binding, session, assistantMessageID, messageId)
     await this.notifyFinalMessage(binding, { assistantMessageID, messageId })
+    this.sessions.delete(this.key(binding))
   }
 
   shouldPinUserPrompts() {
@@ -359,7 +361,6 @@ export class MirrorRenderer {
       }
     }
     block.finalMarked = true
-    block.lastEdit = Date.now()
     logMirrorFlush("mirror.final_marked", binding, {
       assistantMessageID,
       messageId,
@@ -381,6 +382,7 @@ export class MirrorRenderer {
         tools: newToolBatch(),
         assistantLastMessageIds: new Map(),
         hiddenToolCalls: new Set(),
+        finishedToolCalls: new Set(),
         pendingFinalAssistantIds: new Set(),
       }
       this.sessions.set(key, session)
@@ -450,6 +452,11 @@ function splitEscapedText(text, maxEscapedChars) {
 
 function newToolBatch() {
   return { calls: new Map(), lines: [], messageId: null, truncated: false, closed: false, formatFallback: false }
+}
+
+function rememberBounded(set, value, maxSize) {
+  set.add(value)
+  while (set.size > maxSize) set.delete(set.values().next().value)
 }
 
 function subagentSpawnMessage(input = {}) {

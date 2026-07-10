@@ -8,9 +8,8 @@
   "telegram": {
     "chatId": null,
     "allowChatBootstrap": true,
-    "allowedUserIds": [],
-    "tokenEnvNames": ["OPENCODEBOT_TOKEN", "TELEGRAM_BOT_TOKEN", "BOT_TOKEN", "TOKEN"],
-    "allowedUserEnvNames": ["OPENCODEBOT_ALLOWED_USER_IDS", "TELEGRAM_ALLOWED_USER_IDS", "TELEGRAM_USER_ID", "USER_ID"],
+    "allowedUserIds": { "env": "OPENCODEBOT_ALLOWED_USER_IDS" },
+    "token": { "env": "OPENCODEBOT_TOKEN" },
     "botApi": {
       "mode": "cloud",
       "rootUrl": "https://api.telegram.org",

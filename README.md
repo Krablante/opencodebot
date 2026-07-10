@@ -172,7 +172,7 @@ npm run smoke
 npm run smoke:live
 ```
 
-`npm run check` syntax-checks source and scripts. `npm run smoke` is a short contract smoke for the few regressions that are expensive to catch by hand. `npm run smoke:live` runs the same lightweight health check inside the live Compose service against `/app/config.local.json`. Neither smoke path should print tokens or send prompts.
+`npm run check` syntax-checks source and scripts. `npm run smoke` is the central contract smoke for production-sensitive regressions; avoid adding scattered test files for ordinary changes. `npm run smoke:live` runs the same lightweight health check inside the live Compose service against `/app/config.local.json`. Neither smoke path should print tokens or send prompts.
 
 ## License
 

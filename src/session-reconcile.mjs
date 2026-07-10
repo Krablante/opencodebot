@@ -95,6 +95,10 @@ export function createSessionReconciler({
         case "session.next.tool.failed":
           await renderer.toolResult(binding, properties, false)
           break
+        case "message.part.updated":
+        case "message.part.added":
+          await mirrorToolPartUpdate(binding, properties)
+          break
       }
     } catch (error) {
       logErrorEvent("mirror.event.failed", error, fields())
@@ -102,6 +106,24 @@ export function createSessionReconciler({
     }
     const elapsedMs = durationMs(startedAt)
     if (isMirrorMilestone(event.type) || shouldLogSlow(elapsedMs)) logInfo("mirror.event.handled", { ...fields(), durationMs: elapsedMs })
+  }
+
+  async function mirrorToolPartUpdate(binding, properties) {
+    const part = properties.part || properties
+    if (!part || part.type !== "tool") return
+    const status = part.state?.status || part.status
+    const input = part.state?.input || part.input || {}
+    const payload = {
+      callID: part.callID || part.id || properties.partID,
+      tool: part.tool || part.name || properties.tool || "tool",
+      input,
+      output: part.state?.output || part.output,
+      content: part.state?.content || part.content,
+      error: part.state?.error || part.error,
+    }
+    if (status === "running" || status === "pending") await renderer.toolCalled(binding, payload)
+    else if (status === "completed" || status === "success") await renderer.toolResult(binding, payload, true)
+    else if (status === "error" || status === "failed") await renderer.toolResult(binding, payload, false)
   }
 
   function scheduleReconcile(binding, delayMs) {

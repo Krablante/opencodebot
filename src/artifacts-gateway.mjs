@@ -14,6 +14,7 @@ export { artifactFileCaptionHtml, artifactPathLines } from "./artifacts/formatti
 
 const PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"])
 const TELEGRAM_PHOTO_MAX_BYTES = 10 * 1024 * 1024
+const CLOUD_MULTIPART_MEMORY_LIMIT_BYTES = 32 * 1024 * 1024
 
 export function startArtifactGateway({ config, state, telegram, signal }) {
   if (!config.artifacts?.enabled) return null
@@ -80,7 +81,10 @@ async function sendArtifact({ config, telegram, target, payload }) {
     if (payload._stream !== true) throw publicError("stream_required", "Files must be sent to /artifacts/send-file as a stream.", 400)
     if (mode === "text") throw publicError("invalid_text_file_mode", "Send file content as text instead of file when mode is text.", 400)
     const file = fileFromPayload(payload.file, config.artifacts.maxFileBytes)
-    if (!telegram.local && file.localPath && !file.bytes) file.bytes = await fsp.readFile(file.localPath)
+    if (!telegram.local && file.localPath && !file.bytes) {
+      if (file.size > CLOUD_MULTIPART_MEMORY_LIMIT_BYTES) throw publicError("cloud_upload_too_large", `Cloud Bot API uploads from spool are limited to ${CLOUD_MULTIPART_MEMORY_LIMIT_BYTES} bytes; use local Bot API for larger files.`, 413)
+      file.bytes = await fsp.readFile(file.localPath)
+    }
     const method = fileSendMethod(mode, file)
     const sent = await sendFileWithAutoFallback({ telegram, target, file, caption: artifactFileCaptionHtml(caption, captionPaths), method, mode })
     messages.push(messageResult(sent.method, target, sent.message))

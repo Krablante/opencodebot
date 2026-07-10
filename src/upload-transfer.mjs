@@ -62,7 +62,7 @@ async function transferFileViaSsh({ localPath, targetPath, server, transfer }) {
   const targetDir = parentPath(targetPath, style)
   if (style === "windows") {
     await run("ssh", [...sshArgs(transfer), target, windowsMkdirCommand(targetDir)])
-    await run("scp", [...sshArgs(transfer), localPath, `${target}:${scpRemotePath(targetPath, style)}`])
+    await run("scp", [...scpArgs(transfer), localPath, `${target}:${scpRemotePath(targetPath, style)}`])
     return
   }
   await run("ssh", [...sshArgs(transfer), target, `mkdir -p -- ${shellQuote(targetDir)}`])
@@ -80,6 +80,10 @@ function sshArgs(transfer) {
   if (transfer.port) args.push("-p", String(transfer.port))
   if (transfer.identityFile) args.push("-i", String(transfer.identityFile))
   return args
+}
+
+function scpArgs(transfer) {
+  return sshArgs(transfer).map((arg) => (arg === "-p" ? "-P" : arg))
 }
 
 function run(command, args) {

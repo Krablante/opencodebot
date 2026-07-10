@@ -4,8 +4,8 @@ export function formatToolLine(tool, input = {}, ok = true, suffix = "") {
   return `${ok ? "✅" : "❌"} ${action}${tail}`
 }
 
-export function isTaskTool(tool, input) {
-  return tool === "task" || Boolean(input?.subagent_type || input?.prompt)
+export function isTaskTool(tool) {
+  return compactToolName(tool) === "task"
 }
 
 export function shortUsefulResult(properties) {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { createServer } from "node:http"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -23,7 +24,7 @@ import { OpencodebotArtifactsPlugin } from "../plugins/opencodebot-artifacts/src
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, "..")
 const explicitConfigPath = process.argv[2]
-const config = loadConfig(explicitConfigPath)
+const config = loadConfig(explicitConfigPath || path.join(projectRoot, "config.example.json"))
 
 await smokeLocalInvariants()
 await smokeRuntimeHealth(config, { explicit: Boolean(explicitConfigPath) })
@@ -45,6 +46,7 @@ async function smokeLocalInvariants() {
   await smokeMirrorModeCommands()
   await smokeMirrorModeRendering()
   smokeFinalToolSummary()
+  await smokeCoreFailureInvariants()
   await smokeChunkedWebPromptMirror()
   await smokeKillCommand()
   await smokeKillCommandAbortFailure()
@@ -108,16 +110,20 @@ async function smokeMirrorModeRendering() {
   await renderer.toolResult(binding, { callID: "task-full", tool: "task", output: "done", ok: true })
   assert.equal(sent.length, 2)
   assert.equal(sent.at(-1).text, "🤖 Subagent spawned: <code>explore</code>")
+  await renderer.toolCalled(binding, { callID: "prompt-tool-full", tool: "image", input: { prompt: "draw" } })
+  await renderer.toolResult(binding, { callID: "prompt-tool-full", tool: "image", output: "ok", ok: true })
+  assert.equal(sent.length, 3)
+  assert.doesNotMatch(sent.at(-1).text, /Subagent spawned/)
   mode = "economy"
   await renderer.toolCalled(binding, { callID: "read-economy", tool: "read", input: { filePath: "/tmp/b" } })
   await renderer.toolResult(binding, { callID: "read-economy", tool: "read", output: "ok", ok: true })
-  assert.equal(sent.length, 2)
+  assert.equal(sent.length, 3)
   await renderer.toolCalled(binding, { callID: "task-economy", tool: "task", input: { subagent_type: "general", prompt: "inspect" } })
   await renderer.toolResult(binding, { callID: "task-economy", tool: "task", output: "done", ok: true })
-  assert.equal(sent.length, 3)
+  assert.equal(sent.length, 4)
   assert.equal(sent.at(-1).text, "🤖 Subagent spawned: <code>general</code>")
   await renderer.compactTools(binding, ["📄 Read /tmp/c"])
-  assert.equal(sent.length, 3)
+  assert.equal(sent.length, 4)
 }
 
 function smokeFinalToolSummary() {
@@ -147,6 +153,144 @@ function smokeFinalToolSummary() {
   assert.match(notification, /Tools:.*Read × 2; Patch × 1; Edit × 1; Write × 1/)
   assert.ok(notification.includes("Patched:* a\\.mjs; moved\\.mjs; new\\.mjs; edit\\.mjs"))
   assert.doesNotMatch(notification, /\/home\/bloob|C:\\repo|old\.txt|failed\.mjs|Explore|Todo/)
+}
+
+async function smokeCoreFailureInvariants() {
+  await smokeOpenCodeEventOrdering()
+  await smokeOpenCodeRequestTimeout()
+  await smokeStatePruning()
+  await smokeStrictConfigLoading()
+  await smokeTelegramDownloadLimit()
+}
+
+async function smokeOpenCodeEventOrdering() {
+  const events = []
+  const server = createServer((request, response) => {
+    if (request.url !== "/event") {
+      response.writeHead(404).end()
+      return
+    }
+    response.writeHead(200, { "content-type": "text/event-stream" })
+    response.write("data: {\"type\":\"first\",\"properties\":{}}\n\n")
+    response.write("data: {\"type\":\"second\",\"properties\":{}}\n\n")
+    response.end()
+  })
+  const { url, close } = await listen(server)
+  const controller = new AbortController()
+  try {
+    const client = new OpenCodeClient({ opencode: { password: "", mirrorScope: "global", servers: [{ id: "local", url }] } })
+    await client.subscribeEvents("local", async (_server, event) => {
+      events.push(`start:${event.type}`)
+      if (event.type === "first") await wait(25)
+      events.push(`end:${event.type}`)
+      if (event.type === "second") controller.abort()
+    }, controller.signal)
+    assert.deepEqual(events, ["start:first", "end:first", "start:second", "end:second"])
+  } finally {
+    controller.abort()
+    await close()
+  }
+}
+
+async function smokeOpenCodeRequestTimeout() {
+  const server = createServer((_request, _response) => {})
+  const { url, close } = await listen(server)
+  try {
+    const client = new OpenCodeClient({ opencode: { password: "", mirrorScope: "global", servers: [{ id: "local", url }] } })
+    await assert.rejects(() => client.listSessions("local", { timeoutMs: 20 }), /timed out after/)
+  } finally {
+    await close()
+  }
+}
+
+async function smokeStatePruning() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-state-prune-smoke-"))
+  const statePath = path.join(root, "state.json")
+  try {
+    const oversizedMessages = Array.from({ length: 300 }, (_, index) => `msg-${index}`)
+    const oversizedBuckets = Object.fromEntries(Array.from({ length: 300 }, (_, index) => [`nuc:ses-${index}`, [String(index)]]))
+    oversizedBuckets["nuc:big"] = oversizedMessages
+    await writeFile(statePath, JSON.stringify({ version: 1, telegram: {}, mirroredAssistantBySession: oversizedBuckets, mirroredUserBySession: oversizedBuckets }))
+    const state = new StateStore(statePath)
+    await state.load()
+    assert.ok(Object.keys(state.data.mirroredAssistantBySession).length <= 250)
+    assert.ok(Object.values(state.data.mirroredAssistantBySession).every((items) => items.length <= 250))
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+async function smokeStrictConfigLoading() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-config-smoke-"))
+  const configPath = path.join(root, "config.json")
+  const missingPath = path.join(root, "missing.json")
+  const oldToken = process.env.OPENCODEBOT_SMOKE_TOKEN
+  const oldAllowed = process.env.OPENCODEBOT_SMOKE_ALLOWED
+  const oldNoiseToken = process.env.TOKEN
+  try {
+    assert.throws(() => loadConfig(missingPath), /Config file not found/)
+    process.env.OPENCODEBOT_SMOKE_TOKEN = "123456:abcdefghijklmnopqrstuvwxyz"
+    process.env.OPENCODEBOT_SMOKE_ALLOWED = "42,43"
+    process.env.TOKEN = "999999:wrongwrongwrongwrongwrongwrong"
+    await writeFile(path.join(root, "servers.example.json"), JSON.stringify([{ id: "nuc", url: "http://127.0.0.1:40999" }]))
+    await writeFile(configPath, JSON.stringify({
+      telegram: { token: { env: "OPENCODEBOT_SMOKE_TOKEN" }, allowedUserIds: { env: "OPENCODEBOT_SMOKE_ALLOWED" } },
+      artifacts: { enabled: false },
+    }))
+    const strict = loadConfig(configPath)
+    assert.equal(strict.telegram.token, process.env.OPENCODEBOT_SMOKE_TOKEN)
+    assert.deepEqual(strict.telegram.allowedUserIds, [42, 43])
+  } finally {
+    restoreEnv("OPENCODEBOT_SMOKE_TOKEN", oldToken)
+    restoreEnv("OPENCODEBOT_SMOKE_ALLOWED", oldAllowed)
+    restoreEnv("TOKEN", oldNoiseToken)
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+async function smokeTelegramDownloadLimit() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-download-smoke-"))
+  const destination = path.join(root, "too-big.bin")
+  const server = createServer((request, response) => {
+    if (request.url.includes("/getFile")) {
+      response.writeHead(200, { "content-type": "application/json" })
+      response.end(JSON.stringify({ ok: true, result: { file_path: "files/too-big.bin" } }))
+      return
+    }
+    response.writeHead(200, { "content-type": "application/octet-stream" })
+    response.end(Buffer.alloc(16))
+  })
+  const { url, close } = await listen(server)
+  try {
+    const telegram = new TelegramClient("123:test", { rootUrl: url, fileRootUrl: url })
+    await assert.rejects(() => telegram.downloadFile({ fileId: "file", destination, maxBytes: 8 }), /exceeded limit/)
+  } finally {
+    await close()
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function listen(server) {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject)
+    server.listen(0, "127.0.0.1", () => {
+      server.off("error", reject)
+      const address = server.address()
+      resolve({
+        url: `http://127.0.0.1:${address.port}`,
+        close: () => new Promise((closeResolve, closeReject) => server.close((error) => (error ? closeReject(error) : closeResolve()))),
+      })
+    })
+  })
+}
+
+function restoreEnv(name, value) {
+  if (value === undefined) delete process.env[name]
+  else process.env[name] = value
 }
 
 function smokeConfigExample() {

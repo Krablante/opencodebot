@@ -1,6 +1,9 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 
+const MIRRORED_MESSAGES_PER_SESSION_LIMIT = 250
+const MIRRORED_SESSION_BUCKET_LIMIT = 250
+
 export class StateStore {
   constructor(filePath) {
     this.filePath = filePath
@@ -26,6 +29,7 @@ export class StateStore {
       this.data.telegram.artifactsTopic ||= null
       this.data.telegram.soundsTopic ||= null
       this.data.runtime ||= {}
+      if (pruneState(this.data)) await this.save()
     } catch (error) {
       if (error.code !== "ENOENT") throw error
       this.data = defaultState()
@@ -477,6 +481,37 @@ function markMirroredMessage(bySession, serverID, sessionID, messageID) {
   const key = sessionMirrorKey(serverID, sessionID)
   bySession[key] ||= []
   if (!bySession[key].includes(messageID)) bySession[key].push(messageID)
+  if (bySession[key].length > MIRRORED_MESSAGES_PER_SESSION_LIMIT) bySession[key] = bySession[key].slice(-MIRRORED_MESSAGES_PER_SESSION_LIMIT)
+  pruneMirroredBuckets(bySession)
+}
+
+function pruneState(data) {
+  let changed = false
+  changed = pruneMirroredBuckets(data.mirroredAssistantBySession) || changed
+  changed = pruneMirroredBuckets(data.mirroredUserBySession) || changed
+  return changed
+}
+
+function pruneMirroredBuckets(bySession) {
+  if (!bySession || typeof bySession !== "object") return false
+  let changed = false
+  for (const [key, value] of Object.entries(bySession)) {
+    if (!Array.isArray(value)) {
+      delete bySession[key]
+      changed = true
+      continue
+    }
+    if (value.length > MIRRORED_MESSAGES_PER_SESSION_LIMIT) {
+      bySession[key] = value.slice(-MIRRORED_MESSAGES_PER_SESSION_LIMIT)
+      changed = true
+    }
+  }
+  const keys = Object.keys(bySession)
+  if (keys.length > MIRRORED_SESSION_BUCKET_LIMIT) {
+    for (const key of keys.slice(0, keys.length - MIRRORED_SESSION_BUCKET_LIMIT)) delete bySession[key]
+    changed = true
+  }
+  return changed
 }
 
 function toIso(value) {

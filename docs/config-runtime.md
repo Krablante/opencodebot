@@ -14,11 +14,11 @@ Default runtime config path:
 ./config.local.json
 ```
 
-`config.example.json` is the public shape and default baseline. `npm run init-config` creates the local runtime copy and an editable `servers.json`. Edit the runtime copy for local behavior, and update `config.example.json` only when the shareable default shape changes.
+`config.example.json` is the public shape and smoke-test baseline. `npm run init-config` creates the local runtime copy and an editable `servers.json`. Edit the runtime copy for local behavior, and update `config.example.json` only when the shareable default shape changes.
 
 ## Loading
 
-The bot reads `OPENCODEBOT_CONFIG` when it is set. If it is not set, the loader uses `config.local.json` in the repo root. If that file does not exist, it falls back to `config.example.json`; that fallback is useful for checks, but a real bot should have an explicit runtime config.
+The bot reads `OPENCODEBOT_CONFIG` when it is set. If it is not set, the loader uses `config.local.json` in the repo root. If that file does not exist, startup fails. `scripts/smoke.mjs` passes `config.example.json` explicitly for local contract checks, but the runtime loader no longer falls back to example config by itself.
 
 Relative paths in config are resolved from the config file's directory. This keeps the same config shape usable on Linux and Windows.
 
@@ -32,7 +32,7 @@ OpenCodez servers come from `paths.serversJson`, not from the main config body. 
 
 `token.env` is read by local scripts and the Compose runtime. It holds values such as the Telegram bot token, allowed user ids, the OpenCodez password, the optional artifact gateway token, optional `OPENROUTER_API_KEY` for speech transcription, and optional `TELEGRAM_API_ID`/`TELEGRAM_API_HASH` credentials for the local Telegram Bot API sidecar. Do not print it, paste it into docs, or commit it.
 
-The config names the environment variables to try. `telegram.tokenEnvNames` is checked first, but the loader can also recognize a Telegram-looking token from the env file. `telegram.allowedUserEnvNames` is checked first for user ids; if none are found, the loader falls back to env names that look like owner/user/allowed id variables. `opencode.passwordEnvNames` works the same simple way for the OpenCodez password.
+The runtime config must explicitly name Telegram secret sources. Use `telegram.token.env` for the bot token and either a literal `telegram.allowedUserIds` array or `telegram.allowedUserIds.env` for operator ids. The loader does not scan unrelated environment variables for Telegram-looking tokens or user ids. `opencode.passwordEnvNames` remains a configured list for OpenCodez password lookup.
 
 Non-secret config is intentionally small. It covers deployment identity and ownership: chat id, allowed user ids, OpenCodez servers, default prompt profile, chat templates, attachment limits, speech transcription settings, artifact upload folders, final-notification recipients, artifact gateway address, paths, and optional web/WireGuard helpers. The global full/economy mirror mode is runtime state controlled by `/mode`; prompt pinning, reconcile windows, multipart buffering, and tool compaction limits are fixed defaults in code.
 
@@ -68,7 +68,7 @@ To leave local mode, run `docker compose exec -T opencodebot npm run telegram-lo
 
 When files arrive without captions, the bot waits for plain text from the same user/topic before sending the prompt to OpenCodez. If Telegram splits a large follow-up text into several messages, the bot keeps collecting those chunks until the short attachment-text idle window settles, then sends one prompt with all files and text chunks together.
 
-Older local configs that copied `telegram.attachments` from a previous example still work, but new configs should keep attachment policy at the top level.
+Attachment policy belongs at top-level `attachments`; old `telegram.attachments` compatibility has been removed.
 
 ```json
 {
@@ -195,7 +195,7 @@ The final DM is intentionally short and mode-neutral: it includes a source `Topi
 
 `artifacts.tokenEnvNames` lists environment variable names that may contain the artifact token. The default is `OPENCODEBOT_ARTIFACT_TOKEN`. This token is shared with the OpenCodez plugin. It is not the Telegram bot token, and the plugin should never receive the Telegram bot token.
 
-Artifact JSON payload, text, and caption limits are fixed safety defaults in code. File limits depend on Bot API mode: cloud mode keeps the conservative 50 MiB file limit, while local mode allows Telegram's 2 GB local Bot API limit through the streaming `/artifacts/send-file` path. Text artifacts are sent as expandable quotes. Suitable JPEG, PNG, and WebP files are sent with `sendPhoto` in `auto` mode; other files are sent with `sendDocument`.
+Artifact JSON payload, text, and caption limits are fixed safety defaults in code. File limits depend on Bot API mode: cloud mode keeps the conservative 50 MiB file limit, while local mode allows Telegram's 2 GB local Bot API limit through the streaming `/artifacts/send-file` path. Cloud-mode spool uploads also have an internal in-memory cap so oversized files fail fast instead of being read into RAM. Text artifacts are sent as expandable quotes. Suitable JPEG, PNG, and WebP files are sent with `sendPhoto` in `auto` mode; other files are sent with `sendDocument`.
 
 The active target is chosen from Telegram with `/artifacts_here`. Running that command in another topic replaces the previous target. The target is stored in `state.json`, not config.
 
@@ -237,7 +237,7 @@ Per-server roots belong in `servers.json` when one host needs a different dropbo
 
 ## Paths And State
 
-`paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, the current artifacts topic, the current sounds topic, the global full/economy mirror mode, mirror enabled state, pending Telegram-origin prompt ids, known sessions, per-session mirror markers, bounded reconcile windows, and final-notification opt-ins/dedupe markers. It should not contain full prompt queue text. The `/q` queue is memory-only and disappears on service restart by design.
+`paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, the current artifacts topic, the current sounds topic, the global full/economy mirror mode, mirror enabled state, pending Telegram-origin prompt ids, known sessions, per-session mirror markers, bounded reconcile windows, and final-notification opt-ins/dedupe markers. Per-session mirror marker buckets are pruned so state remains small over time. It should not contain full prompt queue text. The `/q` queue is memory-only and disappears on service restart by design.
 
 If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. The queue releases the next prompt only after OpenCodez reports the session idle; reconnects, progress events, assistant step completion, and tool-only events do not release or clear the queue.
 

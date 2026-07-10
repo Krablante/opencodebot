@@ -2,7 +2,7 @@ import fs from "node:fs"
 import fsp from "node:fs/promises"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import { Readable } from "node:stream"
+import { Readable, Transform } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import { durationMs, logErrorEvent, logInfo, logWarn, shouldLogSlow } from "./logger.mjs"
 
@@ -87,11 +87,11 @@ export class TelegramClient {
     if (!response.ok || !response.body) throw new Error(`Telegram file download failed: ${response.status}`)
     const contentLength = Number(response.headers.get("content-length") || 0)
     if (contentLength && contentLength > maxBytes) throw new Error(`Telegram file download is too large (${contentLength} bytes; max ${maxBytes})`)
-    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(destination, { mode: 0o600 }))
-    const stat = await fsp.stat(destination)
-    if (stat.size > maxBytes) {
+    try {
+      await pipeline(Readable.fromWeb(response.body), limitStreamBytes(maxBytes), fs.createWriteStream(destination, { mode: 0o600 }))
+    } catch (error) {
       await fsp.rm(destination, { force: true })
-      throw new Error(`Telegram file download exceeded limit (${stat.size} bytes; max ${maxBytes})`)
+      throw error
     }
     return { file, destination }
   }
@@ -290,6 +290,17 @@ export class TelegramClient {
   async getForumTopicIconStickers() {
     return this.request("getForumTopicIconStickers")
   }
+}
+
+function limitStreamBytes(maxBytes) {
+  let total = 0
+  return new Transform({
+    transform(chunk, _encoding, callback) {
+      total += chunk.length
+      if (total > maxBytes) callback(new Error(`Telegram file download exceeded limit (${total} bytes; max ${maxBytes})`))
+      else callback(null, chunk)
+    },
+  })
 }
 
 export function isAllowedMessage(message, config) {
