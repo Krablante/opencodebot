@@ -150,8 +150,8 @@ function smokeFinalToolSummary() {
   ])
   assert.deepEqual(summary.patchedFiles, ["/home/bloob/repo/src/a.mjs", "/home/bloob/repo/src/moved.mjs", "/home/bloob/repo/src/new.mjs", "C:\\repo\\src\\edit.mjs"])
   const notification = finalNotificationMarkdown({ topicSource: { title: "topic" }, serverID: "nuc", promptText: "change files", ...summary })
-  assert.match(notification, /Tools:.*Read × 2; Patch × 1; Edit × 1; Write × 1/)
-  assert.ok(notification.includes("Patched:* a\\.mjs; moved\\.mjs; new\\.mjs; edit\\.mjs"))
+  assert.ok(notification.includes(">🔧 Tools: Read × 2; Patch × 1; Edit × 1; Write × 1 \\(1 failed\\)"))
+  assert.ok(notification.includes(">🩹 Patched: a\\.mjs; moved\\.mjs; new\\.mjs; edit\\.mjs||"))
   assert.doesNotMatch(notification, /\/home\/bloob|C:\\repo|old\.txt|failed\.mjs|Explore|Todo/)
 }
 

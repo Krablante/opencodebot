@@ -112,9 +112,9 @@ function formatToolSummaryMarkdown(tools, patchedFiles) {
     900,
   )
   const patchedText = summarizeItems(patchedFileDisplayNames(patchedFiles), 2200)
-  if (toolText) lines.push(`🔧 *Tools:* ${escapeMarkdownV2(toolText)}`)
-  if (patchedText) lines.push(`🩹 *Patched:* ${escapeMarkdownV2(patchedText)}`)
-  return lines
+  if (toolText) lines.push(`🔧 Tools: ${toolText}`)
+  if (patchedText) lines.push(`🩹 Patched: ${patchedText}`)
+  return lines.length ? toolQuoteMarkdownV2(lines.join("\n")).split("\n") : []
 }
 
 function formatToolSummaryHtml(tools, patchedFiles) {
@@ -124,9 +124,9 @@ function formatToolSummaryHtml(tools, patchedFiles) {
     900,
   )
   const patchedText = summarizeItems(patchedFileDisplayNames(patchedFiles), 2200)
-  if (toolText) lines.push(`🔧 <b>Tools:</b> ${escapeHtml(toolText)}`)
-  if (patchedText) lines.push(`🩹 <b>Patched:</b> ${escapeHtml(patchedText)}`)
-  return lines
+  if (toolText) lines.push(`🔧 Tools: ${toolText}`)
+  if (patchedText) lines.push(`🩹 Patched: ${patchedText}`)
+  return lines.length ? [`<blockquote>${lines.map((line) => escapeHtml(line)).join("\n")}</blockquote>`] : []
 }
 
 function summarizeItems(values, maxChars) {
