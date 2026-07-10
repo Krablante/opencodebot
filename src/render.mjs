@@ -51,6 +51,7 @@ export class MirrorRenderer {
   async assistantMessage(binding, text, { final = true, assistantMessageID } = {}) {
     const value = String(text || "").trim()
     if (!value) return
+    if (!final) return this.textEnded(binding, { assistantMessageID, textID: assistantMessageID, text: value })
     this.closeToolBatch(binding)
     const output = final ? withFinalAnswerMarker(value) : value
     const markdown = prepareRichMarkdown(output)
@@ -96,11 +97,23 @@ export class MirrorRenderer {
     }
     block.assistantMessageID ||= properties.assistantMessageID
     block.text = properties.text || block.text
-    await this.flushText(binding, block, true)
+    const messageId = await this.flushText(binding, block, true)
     if (session.pendingFinalAssistantIds.has(block.assistantMessageID)) {
       session.pendingFinalAssistantIds.delete(block.assistantMessageID)
       await this.finalAssistantMessageReady(binding, block.assistantMessageID)
     }
+    return messageId
+  }
+
+  assistantStepEnded(binding, assistantMessageID) {
+    if (!assistantMessageID) return
+    this.ensureSession(this.key(binding)).lastStoppedAssistantID = assistantMessageID
+  }
+
+  async sessionIdle(binding) {
+    const session = this.sessions.get(this.key(binding))
+    if (!session?.lastStoppedAssistantID) return
+    await this.finalAssistantMessageReady(binding, session.lastStoppedAssistantID)
   }
 
   async toolCalled(binding, properties) {
@@ -148,6 +161,11 @@ export class MirrorRenderer {
 
   async flushText(binding, block, force) {
     const startedAt = Date.now()
+    const session = this.ensureSession(this.key(binding))
+    if (!block.finalMarked && !block.messageId && session.progressMessageId) {
+      block.messageId = session.progressMessageId
+      block.richFallback = session.progressRichFallback || block.richFallback
+    }
     const rawText = block.finalMarked ? withFinalAnswerMarker(block.text || "...") : block.text || "..."
     const payload = block.richFallback ? preparePlainAssistantText(rawText, this.config) : prepareRichMarkdown(rawText)
     if (!block.messageId) {
@@ -155,6 +173,7 @@ export class MirrorRenderer {
       block.messageId = sent.message_id
       await this.notifyMirrorMessage(binding, sent)
       this.rememberAssistantMessage(binding, block.assistantMessageID, block.messageId)
+      this.rememberProgressMessage(session, block)
       logMirrorFlush("mirror.text.sent", binding, {
         assistantMessageID: block.assistantMessageID,
         messageId: block.messageId,
@@ -188,6 +207,7 @@ export class MirrorRenderer {
       }
     }
     this.rememberAssistantMessage(binding, block.assistantMessageID, block.messageId)
+    this.rememberProgressMessage(session, block)
     const elapsedMs = durationMs(startedAt)
     if (force || shouldLogSlow(elapsedMs)) {
       logMirrorFlush("mirror.text.edited", binding, {
@@ -199,6 +219,12 @@ export class MirrorRenderer {
       })
     }
     return block.messageId
+  }
+
+  rememberProgressMessage(session, block) {
+    if (block.finalMarked || !block.messageId) return
+    session.progressMessageId = block.messageId
+    session.progressRichFallback = Boolean(block.richFallback)
   }
 
   async sendAssistantMarkdown(binding, markdown, rawText, block) {
@@ -389,6 +415,9 @@ export class MirrorRenderer {
         announcedTaskCalls: new Set(),
         finishedToolCalls: new Set(),
         pendingFinalAssistantIds: new Set(),
+        progressMessageId: null,
+        progressRichFallback: false,
+        lastStoppedAssistantID: null,
       }
       this.sessions.set(key, session)
     }
