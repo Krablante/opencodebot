@@ -1,7 +1,6 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 
-const MIRRORED_MESSAGES_PER_SESSION_LIMIT = 250
 const MIRRORED_SESSION_BUCKET_LIMIT = 250
 
 export class StateStore {
@@ -506,7 +505,6 @@ function markMirroredMessage(bySession, serverID, sessionID, messageID) {
   const key = sessionMirrorKey(serverID, sessionID)
   bySession[key] ||= []
   if (!bySession[key].includes(messageID)) bySession[key].push(messageID)
-  if (bySession[key].length > MIRRORED_MESSAGES_PER_SESSION_LIMIT) bySession[key] = bySession[key].slice(-MIRRORED_MESSAGES_PER_SESSION_LIMIT)
   pruneMirroredBuckets(bySession)
 }
 
@@ -525,10 +523,6 @@ function pruneMirroredBuckets(bySession) {
       delete bySession[key]
       changed = true
       continue
-    }
-    if (value.length > MIRRORED_MESSAGES_PER_SESSION_LIMIT) {
-      bySession[key] = value.slice(-MIRRORED_MESSAGES_PER_SESSION_LIMIT)
-      changed = true
     }
   }
   const keys = Object.keys(bySession)

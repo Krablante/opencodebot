@@ -66,17 +66,13 @@ export function createSessionReconciler({
           await renderer.textEnded(binding, properties)
           break
         case "session.next.step.ended":
-          if (properties.finish === "stop") renderer.assistantStepEnded?.(binding, properties.assistantMessageID)
+          if (properties.finish === "stop") await renderer.finalAssistantMessageReady(binding, properties.assistantMessageID)
           await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
           break
         case "session.status":
-          if (properties.status?.type === "idle") {
-            await renderer.sessionIdle?.(binding)
-            await promptQueue.complete(binding)
-          }
+          if (properties.status?.type === "idle") await promptQueue.complete(binding)
           break
         case "session.idle":
-          await renderer.sessionIdle?.(binding)
           await promptQueue.complete(binding)
           break
         case "session.next.step.failed":
@@ -232,7 +228,6 @@ export function createSessionReconciler({
     let catchupUserSeen = !usersOnlyCatchup
     const messages = await backendRequest(binding.serverID, "session messages", () => opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory }))
     if (messages === skippedBackendRequest) return
-    const finalAssistantID = finalStoredAssistantID(messages)
     for (const message of messages) {
       const info = message.info || message
       if (!messageInReconcileWindow(info, window)) continue
@@ -259,7 +254,7 @@ export function createSessionReconciler({
         skippedAssistants += 1
         continue
       }
-      await renderStoredAssistantMessage(binding, message, info.id === finalAssistantID)
+      await renderStoredAssistantMessage(binding, message)
       await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
       mirroredAssistants += 1
     }
@@ -312,7 +307,7 @@ export function createSessionReconciler({
     })
   }
 
-  async function renderStoredAssistantMessage(binding, message, final) {
+  async function renderStoredAssistantMessage(binding, message) {
     const info = message.info || message
     const parts = message.parts || []
     const toolLines = []
@@ -323,7 +318,7 @@ export function createSessionReconciler({
       if (toolLine) toolLines.push(toolLine)
     }
     await renderer.compactTools(binding, toolLines)
-    await renderer.assistantMessage(binding, textParts.join("\n\n"), { final, assistantMessageID: info.id })
+    await renderer.assistantMessage(binding, textParts.join("\n\n"), { final: info.finish === "stop", assistantMessageID: info.id })
   }
 
   async function pinConsumedTelegramPrompt(binding, marker) {
@@ -334,16 +329,6 @@ export function createSessionReconciler({
   }
 
   return { handleOpenCodeEvent, reconcileLoop, scheduleReconcile, seedExistingSessions }
-}
-
-export function finalStoredAssistantID(messages) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index]
-    const info = message?.info || message
-    if (info?.role !== "assistant") continue
-    return isCompleted(info) && info.finish === "stop" ? info.id || "" : ""
-  }
-  return ""
 }
 
 function isUnavailableTopicError(error) {

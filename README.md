@@ -149,7 +149,7 @@ Use `/sounds_here` inside a forum topic when you want that topic to become the v
 
 Use `/notify_on`, `/notify_off`, and `/notify_status` to manage private final-answer notifications for the configured recipients. Those DMs include the source topic, an `Open topic` button, context quotes, a completed task list when the agent closed one, and a separate quoted `Tools`/`Patched` summary with compact tool counts and semicolon-separated file names for successful structured file mutations.
 
-Use `/mode`, `/mode full`, or `/mode economy` to inspect or change the persistent global mirror mode. Both modes keep short subagent spawn notices. Full mode keeps normal compact tool reporting. Economy mode still mirrors assistant progress notes, final answers, and run failures, but suppresses ordinary tool Telegram messages across all topics. During active work, non-final assistant progress is coalesced into one editable status message per session so repeated short progress notes do not flood Telegram search or topic history.
+Use `/mode`, `/mode full`, or `/mode economy` to inspect or change the persistent global mirror mode. Both modes keep short subagent spawn notices. Full mode keeps normal compact tool reporting. Economy mode still mirrors each unique assistant progress note, final answer, and run failure once, but suppresses ordinary tool Telegram messages across all topics.
 
 Use `/mirror_on` and `/mirror_off` when you need to pause or resume web-to-Telegram mirroring without stopping the bot.
 

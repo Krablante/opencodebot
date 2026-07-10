@@ -13,7 +13,7 @@ import { finalNotificationMarkdown, toolSummaryBeforeAssistant } from "../src/fi
 import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { MirrorRenderer, webPromptMessages } from "../src/render.mjs"
-import { bindingSessionReconcileRefresh, createSessionReconciler, finalStoredAssistantID, shouldSkipAssistantForCatchup } from "../src/session-reconcile.mjs"
+import { bindingSessionReconcileRefresh, createSessionReconciler, shouldSkipAssistantForCatchup } from "../src/session-reconcile.mjs"
 import { normalizeSpeechConfig } from "../src/config/speech.mjs"
 import { SpeechModule, transcriptMessage } from "../src/speech/index.mjs"
 import { OpenRouterSpeechClient, audioFormat } from "../src/speech/openrouter-client.mjs"
@@ -46,8 +46,6 @@ async function smokeLocalInvariants() {
   smokeCatchupAssistantGate()
   await smokeMirrorModeCommands()
   await smokeMirrorModeRendering()
-  await smokeAssistantProgressCoalescing()
-  smokeStoredAssistantFinalSelection()
   smokeFinalToolSummary()
   await smokeCoreFailureInvariants()
   await smokeChunkedWebPromptMirror()
@@ -133,53 +131,6 @@ async function smokeMirrorModeRendering() {
   assert.equal(sent.at(-1).text, "🤖 Subagent spawned: <code>general</code>")
   await renderer.compactTools(binding, ["📄 Read /tmp/c"])
   assert.equal(sent.length, 5)
-}
-
-async function smokeAssistantProgressCoalescing() {
-  const sent = []
-  const edits = []
-  const renderer = new MirrorRenderer({
-    config: {
-      mirror: { hiddenTools: [], toolBatchMaxLines: 50, toolBatchMaxChars: 3000, maxTelegramChars: 3900 },
-      telegram: { pinUserPrompts: false },
-    },
-    state: { mirrorMode: () => "economy" },
-    telegram: {
-      async sendRichMessage(message) {
-        sent.push(message)
-        return { message_id: sent.length + 100 }
-      },
-      async editRichMessage(message) {
-        edits.push(message)
-        return true
-      },
-      async sendMessage(message) {
-        sent.push(message)
-        return { message_id: sent.length + 100 }
-      },
-      async editMessageText(message) {
-        edits.push(message)
-        return true
-      },
-    },
-  })
-  const binding = { serverID: "nuc", sessionID: "ses_progress", chatId: "123", topicId: 456 }
-  await renderer.assistantMessage(binding, "First progress note", { final: false, assistantMessageID: "msg-progress-1" })
-  await renderer.assistantMessage(binding, "Second progress note", { final: false, assistantMessageID: "msg-progress-2" })
-  assert.equal(sent.length, 1)
-  assert.equal(edits.length, 1)
-  assert.equal(edits[0].messageId, 101)
-  assert.match(edits[0].markdown, /Second progress note/)
-}
-
-function smokeStoredAssistantFinalSelection() {
-  const messages = [
-    { info: { id: "msg-progress", role: "assistant", finish: "stop", time: { completed: 1 } }, parts: [] },
-    { info: { id: "msg-final", role: "assistant", finish: "stop", time: { completed: 2 } }, parts: [] },
-  ]
-  assert.equal(finalStoredAssistantID(messages), "msg-final")
-  messages.push({ info: { id: "msg-running", role: "assistant", time: { created: 3 } }, parts: [] })
-  assert.equal(finalStoredAssistantID(messages), "")
 }
 
 function smokeFinalToolSummary() {
@@ -271,7 +222,11 @@ async function smokeStatePruning() {
     const state = new StateStore(statePath)
     await state.load()
     assert.ok(Object.keys(state.data.mirroredAssistantBySession).length <= 250)
-    assert.ok(Object.values(state.data.mirroredAssistantBySession).every((items) => items.length <= 250))
+    assert.equal(state.data.mirroredAssistantBySession["nuc:big"].length, 300)
+    assert.equal(state.data.mirroredUserBySession["nuc:big"].length, 300)
+    assert.equal(oversizedMessages.every((messageID) => state.isAssistantMirrored("nuc", "big", messageID)), true)
+    await state.markAssistantMirrored("nuc", "big", "msg-300")
+    assert.equal(state.data.mirroredAssistantBySession["nuc:big"].length, 301)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -877,7 +832,6 @@ async function smokeQueueDrainsOnSessionIdle() {
   const binding = { chatId: 123, topicId: 456, serverID: "nuc", sessionID: "ses_queue_idle", directory: "/tmp/work" }
   const sent = []
   const rendered = []
-  let stoppedAssistantMessageID = null
   const mirrored = []
   const promptQueue = new PromptQueue(async (actualBinding, text) => sent.push({ actualBinding, text }))
   const reconciler = createSessionReconciler({
@@ -890,8 +844,7 @@ async function smokeQueueDrainsOnSessionIdle() {
     telegram: { async sendMessage() {} },
     opencode: {},
     renderer: {
-      assistantStepEnded: (_actualBinding, messageID) => { stoppedAssistantMessageID = messageID },
-      sessionIdle: async (actualBinding) => rendered.push({ actualBinding, messageID: stoppedAssistantMessageID }),
+      finalAssistantMessageReady: async (actualBinding, messageID) => rendered.push({ actualBinding, messageID }),
     },
     promptQueue,
     backendRequest: async () => {},
@@ -914,14 +867,13 @@ async function smokeQueueDrainsOnSessionIdle() {
   assert.equal(sent.length, 0)
   assert.equal(promptQueue.status(binding).length, 1)
   assert.equal(promptQueue.isBusy(binding), true)
-  assert.deepEqual(rendered.map((item) => item.messageID), [])
+  assert.deepEqual(rendered.map((item) => item.messageID), ["msg_done"])
   assert.deepEqual(mirrored.map((item) => item.messageID), ["msg_done"])
 
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, {
     type: "session.status",
     properties: { sessionID: binding.sessionID, status: { type: "idle" } },
   })
-  assert.deepEqual(rendered.map((item) => item.messageID), ["msg_done"])
   assert.equal(sent.length, 1)
   assert.equal(sent[0].text, "queued until idle")
   assert.equal(promptQueue.status(binding).length, 0)
