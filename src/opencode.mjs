@@ -1,6 +1,6 @@
 import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 60_000
+export const OPENCODE_REQUEST_TIMEOUT_MS = 120_000
 
 export class OpenCodeClient {
   constructor(config) {
@@ -65,7 +65,7 @@ export class OpenCodeClient {
       body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
       signal: options.signal,
       timeoutMs: options.timeoutMs,
-    }, DEFAULT_REQUEST_TIMEOUT_MS, `OpenCodez ${server.id} ${pathname}`)
+    }, OPENCODE_REQUEST_TIMEOUT_MS, `OpenCodez ${server.id} ${pathname}`)
     if (!response.ok) {
       const text = await response.text().catch(() => "")
       throw new Error(`OpenCodez ${server.id} ${pathname} failed: ${response.status} ${text.slice(0, 200)}`)

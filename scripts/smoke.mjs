@@ -10,7 +10,7 @@ import { AttachmentBuffer } from "../src/attachments.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "../src/commands.mjs"
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { finalNotificationMarkdown, toolSummaryBeforeAssistant } from "../src/final-notifications.mjs"
-import { OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
+import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { MirrorRenderer, webPromptMessages } from "../src/render.mjs"
 import { bindingSessionReconcileRefresh, createSessionReconciler, shouldSkipAssistantForCatchup } from "../src/session-reconcile.mjs"
@@ -199,6 +199,7 @@ async function smokeOpenCodeEventOrdering() {
 }
 
 async function smokeOpenCodeRequestTimeout() {
+  assert.equal(OPENCODE_REQUEST_TIMEOUT_MS, 120_000)
   const server = createServer((_request, _response) => {})
   const { url, close } = await listen(server)
   try {
