@@ -16,7 +16,7 @@ export class OpenRouterSpeechClient {
     return this.config.apiKey || this.env[this.config.apiKeyEnv]
   }
 
-  async transcribeFile(file) {
+  async transcribeFile(file, modelProfile = null) {
     const apiKey = this.apiKey()
     if (!apiKey) throw new Error(`Missing ${this.config.apiKeyEnv}`)
     const audio = await fs.readFile(file.localPath)
@@ -34,7 +34,7 @@ export class OpenRouterSpeechClient {
           "HTTP-Referer": this.config.referer,
           "X-Title": this.config.title,
         },
-        body: JSON.stringify(this.requestBody(audio, format)),
+        body: JSON.stringify(this.requestBody(audio, format, modelProfile)),
       })
       const bodyText = await response.text()
       const parsed = parseJson(bodyText)
@@ -46,7 +46,8 @@ export class OpenRouterSpeechClient {
       if (!text) throw new Error("OpenRouter STT returned an empty transcript")
       return {
         text,
-        model: this.config.model,
+        model: modelProfile?.id || this.config.model,
+        modelProfile,
         format,
         raw: parsed,
       }
@@ -55,9 +56,10 @@ export class OpenRouterSpeechClient {
     }
   }
 
-  requestBody(audio, format) {
+  requestBody(audio, format, modelProfile = null) {
+    const model = modelProfile?.id || this.config.model
     const body = {
-      model: this.config.model,
+      model,
       input_audio: {
         data: audio.toString("base64"),
         format,
@@ -66,11 +68,16 @@ export class OpenRouterSpeechClient {
       response_format: this.config.responseFormat,
     }
     if (this.config.language) body.language = this.config.language
-    if (this.config.prompt) {
+    if (this.config.prompt && isGroqModel(modelProfile)) {
       body.provider = { options: { groq: { prompt: this.config.prompt } } }
     }
     return body
   }
+}
+
+function isGroqModel(modelProfile) {
+  if (!modelProfile) return true
+  return String(modelProfile.provider || "").toLowerCase() === "groq"
 }
 
 export function audioFormat(file) {

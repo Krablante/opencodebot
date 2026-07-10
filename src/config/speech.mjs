@@ -6,6 +6,7 @@ const DEFAULT_PROMPT = "Русская голосовая заметка. Сох
 export function normalizeSpeechConfig(settings = {}, env = {}) {
   const openrouter = settings.openrouter || {}
   const apiKeyEnv = openrouter.apiKeyEnv || settings.apiKeyEnv || "OPENROUTER_API_KEY"
+  const models = normalizeModels(settings, openrouter)
   return {
     enabled: settings.enabled === true,
     maxFileBytes: numberAtLeast(settings.maxFileBytes, 25_000_000, 1024),
@@ -15,7 +16,8 @@ export function normalizeSpeechConfig(settings = {}, env = {}) {
       apiKeyEnv,
       apiKey: env[apiKeyEnv],
       url: openrouter.url || settings.url || DEFAULT_OPENROUTER_URL,
-      model: openrouter.model || settings.model || DEFAULT_OPENROUTER_MODEL,
+      model: models[0]?.id || openrouter.model || settings.model || DEFAULT_OPENROUTER_MODEL,
+      models,
       language: normalizeOpenRouterLanguage(settings, openrouter),
       temperature: numberOrDefault(openrouter.temperature ?? settings.temperature, 0),
       responseFormat: openrouter.responseFormat || settings.responseFormat || "json",
@@ -25,6 +27,33 @@ export function normalizeSpeechConfig(settings = {}, env = {}) {
       timeoutMs: numberAtLeast(openrouter.timeoutMs ?? settings.timeoutMs, 120_000, 1000),
     },
   }
+}
+
+function normalizeModels(settings, openrouter) {
+  const source = Array.isArray(openrouter.models) && openrouter.models.length
+    ? openrouter.models
+    : Array.isArray(settings.models) && settings.models.length
+      ? settings.models
+      : [{ id: openrouter.model || settings.model || DEFAULT_OPENROUTER_MODEL, label: openrouter.label || settings.label, provider: openrouter.provider || settings.provider, price: openrouter.price || settings.price }]
+  const seen = new Set()
+  const models = []
+  for (const entry of source) {
+    const item = typeof entry === "string" ? { id: entry } : entry || {}
+    const id = String(item.id || item.model || "").trim()
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    models.push({
+      id,
+      label: String(item.label || item.name || friendlyModelLabel(id)).trim(),
+      provider: String(item.provider || "").trim(),
+      price: String(item.price || "").trim(),
+    })
+  }
+  return models
+}
+
+function friendlyModelLabel(id) {
+  return id.split("/").pop().replace(/[-_]+/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
 }
 
 function normalizeOpenRouterLanguage(settings, openrouter) {

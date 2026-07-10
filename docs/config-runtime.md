@@ -95,6 +95,12 @@ Attachment policy belongs at top-level `attachments`; old `telegram.attachments`
     "openrouter": {
       "apiKeyEnv": "OPENROUTER_API_KEY",
       "model": "openai/whisper-large-v3-turbo",
+      "models": [
+        { "id": "openai/whisper-large-v3-turbo", "label": "Whisper V3 Turbo", "provider": "Groq", "price": "0.04" },
+        { "id": "openai/gpt-4o-mini-transcribe", "label": "GPT-4o Mini", "provider": "OpenAI", "price": "input 0.00000125, output 0.000005" },
+        { "id": "openai/gpt-4o-transcribe", "label": "GPT-4o", "provider": "OpenAI", "price": "input 0.0000025, output 0.00001" },
+        { "id": "qwen/qwen3-asr-flash-2026-02-10", "label": "Qwen3 ASR Flash", "provider": "Alibaba", "price": "0.000035" }
+      ],
       "language": "ru",
       "temperature": 0,
       "responseFormat": "json",
@@ -104,7 +110,7 @@ Attachment policy belongs at top-level `attachments`; old `telegram.attachments`
 }
 ```
 
-Run `/sounds_here` in a Telegram forum topic to make that topic the speech inbox. Voice and audio messages in that topic are downloaded, sent to OpenRouter's audio transcription endpoint, and answered with the transcript in the same topic. Only the transcript is wrapped in Telegram Mono formatting so it can be selected/copied without also copying model or timing metadata. Text in the speech topic is not forwarded to OpenCodez sessions.
+Run `/sounds_here` in a Telegram forum topic to make that topic the speech inbox. The command creates and pins a model menu; operators can switch the selected model with inline buttons, and `Refresh` redraws the same menu after adding or removing configured models. Voice and audio messages in that topic are downloaded, sent to OpenRouter's audio transcription endpoint with the selected model, and answered with the transcript in the same topic. Only the transcript is wrapped in Telegram Mono formatting so it can be selected/copied without also copying model or timing metadata. Text in the speech topic is not forwarded to OpenCodez sessions.
 
 The prompt is deliberately short and configurable. Leave it blank if generic transcription is better for your group, or replace it with a small vocabulary hint. Do not put secrets in it.
 

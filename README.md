@@ -22,7 +22,7 @@ The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/eve
 - Both modes announce task/subagent spawns with a short robot notice that uses the web-visible task title; child-session prompts, tool logs, and results stay hidden.
 - Attachments and Telegram media groups attached to the next prompt; large files are copied to the target server's configured upload root and referenced by server-local path.
 - Optional Telegram artifact gateway for sending agent-created files, screenshots, logs, and text into one dedicated artifacts topic; the same topic can accept user-dropped files and save them to a configured server folder.
-- Optional OpenRouter speech transcription for one dedicated `/sounds_here` topic; voice and audio messages receive transcripts in the same topic.
+- Optional OpenRouter speech transcription for one dedicated `/sounds_here` topic; voice and audio messages receive transcripts in the same topic, and a pinned model menu lets operators switch STT models.
 - Optional local Telegram Bot API sidecar for higher file limits and streaming artifact delivery without a separate project.
 - Multipart prompt buffering for Telegram clients that split long messages.
 - Optional WireGuard helper for private off-LAN access to the existing OpenCodez web UI.
@@ -127,7 +127,7 @@ Your `config.local.json`, `servers.json`, `token.env`, and `state/` directory st
 
 The artifact gateway and OpenCodez plugin are optional. Start without them first unless you specifically want agents to send files, screenshots, logs, or text to a Telegram artifacts topic. Enable that later with [Artifact Gateway](docs/artifact-gateway.md).
 
-The speech transcription module is optional. Enable it with `speech.enabled=true` and `OPENROUTER_API_KEY` in `token.env`, then run `/sounds_here` in a Telegram forum topic. It uses OpenRouter's `openai/whisper-large-v3-turbo` by default, so no separate speech service is required.
+The speech transcription module is optional. Enable it with `speech.enabled=true` and `OPENROUTER_API_KEY` in `token.env`, then run `/sounds_here` in a Telegram forum topic. It uses OpenRouter's `openai/whisper-large-v3-turbo` by default and can switch between configured OpenRouter transcription models from a pinned Telegram menu, so no separate speech service is required.
 
 The local Telegram Bot API sidecar is also optional. Add `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` to `token.env`, set `telegram.botApi.mode` to `local`, start Compose with the `telegram-local` profile, then run `docker compose exec -T opencodebot npm run telegram-local -- doctor`. Details are in [Docker](docs/docker.md) and [Config And Runtime](docs/config-runtime.md).
 
@@ -145,7 +145,7 @@ Use `/session` inside a topic when you want to see what Telegram topic is bound 
 
 Use `/artifacts_here` inside a forum topic when you want that topic to become the single Telegram target for agent-sent artifacts. After that, `opencodebot_send_artifact` sends files, screenshots, logs, or text to that topic. Files dropped by a user in the same topic are saved under `artifactUploads.root` on the default server, or on the server named by the file caption. Docker deployments must also mount that local artifact root; see [Docker](docs/docker.md#artifact-dropbox-paths).
 
-Use `/sounds_here` inside a forum topic when you want that topic to become the voice transcription inbox. Voice and audio messages in that topic are transcribed through OpenRouter and answered in the same topic, with only the transcript formatted as Telegram Mono text and service metadata left outside that formatting. The OpenRouter language hint defaults to `ru`, can be changed to another ISO-639-1 code, or can be set to `null` / `"auto"` for auto-detect. `/sounds_off` clears the binding for the current topic, and `/sounds_status` shows whether speech is enabled, configured, and busy.
+Use `/sounds_here` inside a forum topic when you want that topic to become the voice transcription inbox. The command creates or refreshes a pinned model menu with buttons for configured transcription models and a `Refresh` button for config changes. Voice and audio messages in that topic are transcribed through OpenRouter and answered in the same topic, with only the transcript formatted as Telegram Mono text and service metadata left outside that formatting. The OpenRouter language hint defaults to `ru`, can be changed to another ISO-639-1 code, or can be set to `null` / `"auto"` for auto-detect. `/sounds_off` clears the binding for the current topic, and `/sounds_status` shows whether speech is enabled, configured, selected model, and busy.
 
 Use `/notify_on`, `/notify_off`, and `/notify_status` to manage private final-answer notifications for the configured recipients. Those DMs include the source topic, an `Open topic` button, context quotes, a completed task list when the agent closed one, and a separate quoted `Tools`/`Patched` summary with compact tool counts and semicolon-separated file names for successful structured file mutations.
 

@@ -119,7 +119,7 @@ export class TelegramClient {
     return this.request("getUpdates", {
       offset,
       timeout,
-      allowed_updates: ["message"],
+      allowed_updates: ["message", "callback_query"],
     }, 0, options)
   }
 
@@ -247,14 +247,23 @@ export class TelegramClient {
     return this.request("sendRichMessage", payload)
   }
 
-  async editMessageText({ chatId, messageId, text, format = "html" }) {
+  async editMessageText({ chatId, messageId, text, format = "html", replyMarkup }) {
     const payload = {
       chat_id: chatId,
       message_id: messageId,
       disable_web_page_preview: true,
     }
     applyTextFormat(payload, text, format)
+    if (replyMarkup) payload.reply_markup = replyMarkup
     return this.request("editMessageText", payload)
+  }
+
+  async answerCallbackQuery({ callbackQueryId, text, showAlert = false }) {
+    return this.request("answerCallbackQuery", {
+      callback_query_id: callbackQueryId,
+      text,
+      show_alert: showAlert,
+    })
   }
 
   async editRichMessage({ chatId, messageId, markdown, html, skipEntityDetection = false }) {

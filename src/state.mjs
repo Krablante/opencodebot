@@ -93,6 +93,29 @@ export class StateStore {
     return this.data.telegram.soundsTopic || null
   }
 
+  speechModelId(defaultModelId = "") {
+    return String(this.data.telegram.speechModelId || defaultModelId || "")
+  }
+
+  async setSpeechModelId(modelId) {
+    const selected = String(modelId || "").trim()
+    await this.update((data) => {
+      data.telegram.speechModelId = selected
+    })
+    return selected
+  }
+
+  soundsMenuMessageId() {
+    return this.data.telegram.soundsMenuMessageId || null
+  }
+
+  async setSoundsMenuMessageId(messageId) {
+    await this.update((data) => {
+      data.telegram.soundsMenuMessageId = messageId || null
+    })
+    return messageId || null
+  }
+
   isSoundsTopic(chatId, topicId) {
     const topic = this.soundsTopic()
     return Boolean(topic && String(topic.chatId) === String(chatId) && Number(topic.topicId || 0) === Number(topicId || 0))
@@ -108,6 +131,7 @@ export class StateStore {
         setBy,
         setAt: now,
       }
+      data.telegram.soundsMenuMessageId = null
       for (const binding of data.bindings.filter((item) => String(item.chatId) === String(chatId) && Number(item.topicId || 0) === Number(topicId || 0))) {
         binding.disabled = true
         binding.disabledReason = "sounds-topic"
@@ -123,6 +147,7 @@ export class StateStore {
       const topic = data.telegram.soundsTopic
       if (!topic || String(topic.chatId) !== String(chatId) || Number(topic.topicId || 0) !== Number(topicId || 0)) return false
       data.telegram.soundsTopic = null
+      data.telegram.soundsMenuMessageId = null
       return true
     })
   }

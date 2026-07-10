@@ -36,6 +36,7 @@ async function smokeLocalInvariants() {
   await smokeArtifactPluginBatchCaptions()
   await smokeSpeechOpenRouterRequest()
   await smokeSpeechTopicRouting()
+  await smokeSpeechModelMenu()
   smokeSpeechTranscriptMessage()
   await smokeOpenCodeAbortClient()
   await smokeQueuedAttachmentPayload()
@@ -320,6 +321,7 @@ async function smokeSpeechOpenRouterRequest() {
   const normalized = normalizeSpeechConfig({ enabled: true }, { OPENROUTER_API_KEY: "test-key" })
   assert.equal(normalized.openrouter.apiKey, "test-key")
   assert.equal(normalized.openrouter.language, "ru")
+  assert.deepEqual(normalizeSpeechConfig({ enabled: true, openrouter: { models: ["openai/gpt-4o-mini-transcribe", { id: "qwen/qwen3-asr-flash-2026-02-10", label: "Qwen3", provider: "Alibaba" }] } }).openrouter.models.map((model) => model.id), ["openai/gpt-4o-mini-transcribe", "qwen/qwen3-asr-flash-2026-02-10"])
   assert.equal(normalizeSpeechConfig({ enabled: true, openrouter: { language: "EN" } }).openrouter.language, "en")
   assert.equal(normalizeSpeechConfig({ enabled: true, language: "uk" }).openrouter.language, "uk")
   assert.equal(normalizeSpeechConfig({ enabled: true, openrouter: { language: null } }).openrouter.language, null)
@@ -361,6 +363,9 @@ async function smokeSpeechOpenRouterRequest() {
     assert.equal(requests[0].body.provider.options.groq.prompt, "short prompt")
     const autoBody = new OpenRouterSpeechClient({ ...client.config, language: null }, {}, fetchImpl).requestBody(Buffer.from("audio"), "ogg")
     assert.equal(Object.hasOwn(autoBody, "language"), false)
+    const gptBody = client.requestBody(Buffer.from("audio"), "ogg", { id: "openai/gpt-4o-mini-transcribe", label: "GPT-4o Mini", provider: "OpenAI" })
+    assert.equal(gptBody.model, "openai/gpt-4o-mini-transcribe")
+    assert.equal(Object.hasOwn(gptBody, "provider"), false)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -402,6 +407,68 @@ async function smokeSpeechTopicRouting() {
   assert.equal(speech.status().language, "ru")
   speech.config.openrouter.language = null
   assert.equal(speech.status().language, "auto")
+}
+
+async function smokeSpeechModelMenu() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-speech-menu-smoke-"))
+  const state = new StateStore(path.join(root, "state.json"))
+  const sent = []
+  const edited = []
+  const pinned = []
+  const answered = []
+  let rejectNextEditAsUnchanged = false
+  try {
+    await state.load()
+    await state.setSoundsTopic({ chatId: 100, topicId: 7, title: "AUDIO", setBy: 42 })
+    const speech = new SpeechModule({
+      config: normalizeSpeechConfig({
+        enabled: true,
+        openrouter: {
+          apiKeyEnv: "OPENROUTER_API_KEY",
+          models: [
+            { id: "openai/whisper-large-v3-turbo", label: "Whisper V3 Turbo", provider: "Groq", price: "0.04" },
+            { id: "openai/gpt-4o-mini-transcribe", label: "GPT-4o Mini", provider: "OpenAI", price: "input 0.00000125, output 0.000005" },
+            { id: "qwen/qwen3-asr-flash-2026-02-10", label: "Qwen3 ASR Flash", provider: "Alibaba", price: "0.000035" },
+          ],
+        },
+      }, { OPENROUTER_API_KEY: "test-key" }),
+      telegram: {
+        async sendMessage(message) { sent.push(message); return { message_id: sent.length + 10 } },
+        async editMessageText(message) {
+          if (rejectNextEditAsUnchanged) {
+            rejectNextEditAsUnchanged = false
+            throw new Error("Bad Request: message is not modified")
+          }
+          edited.push(message)
+          return true
+        },
+        async pinChatMessage(message) { pinned.push(message); return true },
+        async answerCallbackQuery(message) { answered.push(message); return true },
+      },
+      state,
+      uploadDir: "/tmp",
+      attachmentSettings: {},
+    })
+    await speech.createOrRefreshMenu()
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0].topicId, 7)
+    assert.match(sent[0].text, /Whisper V3 Turbo/)
+    assert.equal(sent[0].replyMarkup.inline_keyboard.length, 4)
+    assert.deepEqual(pinned, [{ chatId: 100, messageId: 11, disableNotification: true }])
+    assert.equal(state.soundsMenuMessageId(), 11)
+    await speech.handleCallbackQuery({ id: "cb1", data: "sounds:model:openai%2Fgpt-4o-mini-transcribe", message: { chat: { id: 100 }, message_thread_id: 7, message_id: 11 } })
+    assert.equal(state.speechModelId(), "openai/gpt-4o-mini-transcribe")
+    assert.match(edited.at(-1).text, /GPT-4o Mini/)
+    assert.equal(edited.at(-1).replyMarkup.inline_keyboard[1][0].text.startsWith("✓ "), true)
+    assert.match(answered.at(-1).text, /GPT-4o Mini/)
+    rejectNextEditAsUnchanged = true
+    await speech.handleCallbackQuery({ id: "cb2", data: "sounds:refresh", message: { chat: { id: 100 }, message_thread_id: 7, message_id: 11 } })
+    assert.match(answered.at(-1).text, /refreshed/)
+    assert.equal(sent.length, 1)
+    assert.equal(state.soundsMenuMessageId(), 11)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 }
 
 function smokeSpeechTranscriptMessage() {

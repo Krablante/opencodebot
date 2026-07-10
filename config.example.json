@@ -31,6 +31,12 @@
     "openrouter": {
       "apiKeyEnv": "OPENROUTER_API_KEY",
       "model": "openai/whisper-large-v3-turbo",
+      "models": [
+        { "id": "openai/whisper-large-v3-turbo", "label": "Whisper V3 Turbo", "provider": "Groq", "price": "0.04" },
+        { "id": "openai/gpt-4o-mini-transcribe", "label": "GPT-4o Mini", "provider": "OpenAI", "price": "input 0.00000125, output 0.000005" },
+        { "id": "openai/gpt-4o-transcribe", "label": "GPT-4o", "provider": "OpenAI", "price": "input 0.0000025, output 0.00001" },
+        { "id": "qwen/qwen3-asr-flash-2026-02-10", "label": "Qwen3 ASR Flash", "provider": "Alibaba", "price": "0.000035" }
+      ],
       "language": "ru",
       "temperature": 0,
       "responseFormat": "json",

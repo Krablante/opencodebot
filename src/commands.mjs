@@ -55,6 +55,9 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
       await handler(message, command.args)
       return true
     },
+    async handleCallback(query) {
+      return Boolean(await speech?.handleCallbackQuery?.(query))
+    },
   }
 
   async function handleMirrorMode(message, args) {
@@ -151,19 +154,8 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Speech transcription is disabled in config." })
       return
     }
-    const target = await speech.setCurrentTopic(message)
-    const status = speech.status()
-    await telegram.sendMessage({
-      chatId: message.chat.id,
-      topicId: topicId(message),
-      text: [
-        "Voice transcription enabled for this topic.",
-        `topic_id: <code>${escapeHtml(String(target.topicId || 0))}</code>`,
-        `model: <code>${escapeHtml(status.model)}</code>`,
-        status.configured ? "api_key: configured" : `api_key: missing <code>${escapeHtml(status.apiKeyEnv)}</code>`,
-        "Send voice or audio messages here to receive transcripts in this topic.",
-      ].join("\n"),
-    })
+    await speech.setCurrentTopic(message)
+    await speech.createOrRefreshMenu({ chatId: message.chat.id, topicId: topicId(message) })
   }
 
   async function handleSoundsOff(message) {
@@ -184,7 +176,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
         "<b>Voice transcription</b>",
         `enabled: ${status.enabled ? "yes" : "no"}`,
         `api_key: ${status.configured ? "configured" : status.apiKeyEnv ? `missing <code>${escapeHtml(status.apiKeyEnv)}</code>` : "not configured"}`,
-        status.model ? `model: <code>${escapeHtml(status.model)}</code>` : null,
+        status.model ? `model: <code>${escapeHtml(status.modelLabel || status.model)}</code>${status.modelProvider ? ` · ${escapeHtml(status.modelProvider)}` : ""}` : null,
         status.language ? `language: <code>${escapeHtml(status.language)}</code>` : null,
         status.topic ? `topic_id: <code>${escapeHtml(String(status.topic.topicId || 0))}</code>` : "topic_id: none",
         `active: <code>${escapeHtml(String(status.active || 0))}</code>`,

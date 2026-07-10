@@ -49,6 +49,7 @@ export function createTelegramPolling({
         const updates = await telegram.getUpdates(offset, 25)
         for (const update of updates) {
           try {
+            if (update.callback_query) await handleCallbackQuery(update.callback_query)
             if (update.message) await handleTelegramMessage(update.message)
           } catch (error) {
             logError(error)
@@ -64,6 +65,18 @@ export function createTelegramPolling({
         await delay(2500)
       }
     }
+  }
+
+  async function handleCallbackQuery(query) {
+    const message = query.message || {}
+    const configuredChatId = state.chatId || config.telegram.chatId
+    if (configuredChatId && String(configuredChatId) !== String(message.chat?.id)) return
+    if (!isAllowedMessage({ from: query.from }, config)) {
+      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: "Not allowed", showAlert: true }).catch(() => {})
+      return
+    }
+    if (await commandHandlers.handleCallback?.(query)) return
+    await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: "Unknown action", showAlert: true }).catch(() => {})
   }
 
   async function handleTelegramMessage(message) {
