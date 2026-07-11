@@ -137,7 +137,7 @@ Use `/start` or `/help` when you want the bot to show its command summary. These
 
 Use `/new` when you want a fresh Telegram topic and a new OpenCodez session. You can give it a server id, an optional chat profile, an optional `dir:<path>` override, and a title. If no server id is given, the configured default server is used. After the topic is created, send the first prompt in that topic.
 
-Use `/q` inside an existing OpenCodez topic when you want to queue another prompt for the same session. `/q status` shows the queue, and `/q delete 2` removes a queued item by number.
+Use `/q` inside an existing OpenCodez topic when you want to queue another prompt for the same session. A queued prompt is released only after OpenCodez is idle and the preceding terminal assistant answer has been mirrored to Telegram. `/q status` shows the queue, and `/q delete 2` removes a queued item by number.
 
 Use `/kill` inside an existing OpenCodez topic when you want to stop the current run. It sends OpenCodez's session abort request and clears that topic's queued prompts, but it does not delete the session or the Telegram topic.
 

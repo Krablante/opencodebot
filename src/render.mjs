@@ -21,11 +21,12 @@ import { createRenderSideEffects } from "./render-side-effects.mjs"
 export { formatToolLine } from "./tool-formatting.mjs"
 
 export class MirrorRenderer {
-  constructor({ telegram, state, config, onMirrorMessage, onFinalMessage }) {
+  constructor({ telegram, state, config, onMirrorMessage, onFinalMessage, onFinalAssistantMirrored }) {
     this.telegram = telegram
     this.state = state
     this.config = config
     this.effects = createRenderSideEffects({ telegram, config, onMirrorMessage, onFinalMessage })
+    this.onFinalAssistantMirrored = onFinalAssistantMirrored
     this.sessions = new Map()
     this.hiddenTools = toolNameSet(config.mirror?.hiddenTools || [])
   }
@@ -314,16 +315,18 @@ export class MirrorRenderer {
   }
 
   async finalAssistantMessageReady(binding, assistantMessageID) {
-    if (!assistantMessageID) return
+    if (!assistantMessageID) return false
     const session = this.ensureSession(this.key(binding))
     const messageId = session?.assistantLastMessageIds.get(assistantMessageID)
     if (!messageId) {
       session.pendingFinalAssistantIds.add(assistantMessageID)
-      return
+      return false
     }
     await this.markFinalAssistantMessage(binding, session, assistantMessageID, messageId)
     await this.notifyFinalMessage(binding, { assistantMessageID, messageId })
+    await this.onFinalAssistantMirrored?.(binding, assistantMessageID)
     this.sessions.delete(this.key(binding))
+    return true
   }
 
   shouldPinUserPrompts() {

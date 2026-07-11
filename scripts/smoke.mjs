@@ -657,7 +657,8 @@ async function smokeQueuedAttachmentPayload() {
     assert.deepEqual(dropped, ["queued.txt"])
 
     await queue.enqueue(binding, "queued again", [{ filename: "queued.txt", localPath }], { sourceMessageId: 456 })
-    const flushed = await queue.complete(binding)
+    assert.equal((await queue.markBackendIdle(binding)).status, "waiting")
+    const flushed = await queue.markTerminalMirrored(binding)
     assert.equal(flushed.status, "sent")
     assert.equal(sent.length, 1)
     assert.equal(sent[0].text, "queued again")
@@ -839,12 +840,17 @@ async function smokeQueueDrainsOnSessionIdle() {
     state: {
       mirrorEnabled: () => true,
       findBinding: (serverID, sessionID) => (serverID === binding.serverID && sessionID === binding.sessionID ? binding : null),
+      isAssistantMirrored: (serverID, sessionID, messageID) => mirrored.some((item) => item.serverID === serverID && item.sessionID === sessionID && item.messageID === messageID),
       markAssistantMirrored: async (serverID, sessionID, messageID) => mirrored.push({ serverID, sessionID, messageID }),
     },
     telegram: { async sendMessage() {} },
     opencode: {},
     renderer: {
-      finalAssistantMessageReady: async (actualBinding, messageID) => rendered.push({ actualBinding, messageID }),
+      finalAssistantMessageReady: async (actualBinding, messageID) => {
+        rendered.push({ actualBinding, messageID })
+        mirrored.push({ serverID: actualBinding.serverID, sessionID: actualBinding.sessionID, messageID })
+        await promptQueue.markTerminalMirrored(actualBinding)
+      },
     },
     promptQueue,
     backendRequest: async () => {},

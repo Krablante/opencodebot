@@ -6,11 +6,14 @@ export class PromptQueue {
   }
 
   markBusy(binding) {
-    this.state(binding).busy = true
+    beginRun(this.state(binding))
   }
 
-  markIdle(binding) {
-    this.state(binding).busy = false
+  markSendFailed(binding) {
+    const state = this.state(binding)
+    state.busy = false
+    state.idle = true
+    state.terminalMirrored = true
   }
 
   isBusy(binding) {
@@ -80,20 +83,29 @@ export class PromptQueue {
       createdAt: item.createdAt,
     }))
     state.busy = false
+    state.idle = true
+    state.terminalMirrored = true
     state.items = []
     items.forEach((item) => this.dropItem(item))
     return cleared
   }
 
-  async complete(binding) {
+  async markBackendIdle(binding) {
     const state = this.state(binding)
-    state.busy = false
-    return this.drain(binding)
+    state.idle = true
+    return this.drainIfReady(binding, state)
   }
 
-  async drain(binding) {
+  async markTerminalMirrored(binding) {
     const state = this.state(binding)
-    if (state.busy || !state.items.length) return { status: "idle" }
+    state.terminalMirrored = true
+    return this.drainIfReady(binding, state)
+  }
+
+  async drainIfReady(binding, state) {
+    if (!state.idle || !state.terminalMirrored) return { status: "waiting" }
+    state.busy = false
+    if (!state.items.length) return { status: "idle" }
     const item = state.items.shift()
     await this.sendNow(binding, item.text, item.files || [], item)
     return { status: "sent", text: item.text }
@@ -101,11 +113,11 @@ export class PromptQueue {
 
   async sendNow(binding, text, files = [], metadata = {}) {
     const state = this.state(binding)
-    state.busy = true
+    beginRun(state)
     try {
       await this.sendPrompt(binding, text, files, metadata)
     } catch (error) {
-      state.busy = false
+      this.markSendFailed(binding)
       throw error
     }
   }
@@ -114,7 +126,7 @@ export class PromptQueue {
     const key = queueKey(binding)
     let state = this.sessions.get(key)
     if (!state) {
-      state = { busy: false, items: [] }
+      state = { busy: false, idle: true, terminalMirrored: true, items: [] }
       this.sessions.set(key, state)
     }
     return state
@@ -124,6 +136,12 @@ export class PromptQueue {
     if (!item?.files?.length) return
     Promise.resolve(this.onDrop(item.files)).catch(() => {})
   }
+}
+
+function beginRun(state) {
+  state.busy = true
+  state.idle = false
+  state.terminalMirrored = false
 }
 
 export function summarizeWords(text, maxWords = 10) {

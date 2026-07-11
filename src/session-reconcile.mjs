@@ -66,14 +66,21 @@ export function createSessionReconciler({
           await renderer.textEnded(binding, properties)
           break
         case "session.next.step.ended":
-          if (properties.finish === "stop") await renderer.finalAssistantMessageReady(binding, properties.assistantMessageID)
-          await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
+          if (properties.finish === "stop") {
+            if (state.isAssistantMirrored(server.id, sessionID, properties.assistantMessageID)) {
+              await promptQueue.markTerminalMirrored(binding)
+            } else {
+              await renderer.finalAssistantMessageReady(binding, properties.assistantMessageID)
+            }
+          } else {
+            await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
+          }
           break
         case "session.status":
-          if (properties.status?.type === "idle") await promptQueue.complete(binding)
+          if (properties.status?.type === "idle") await handleSessionIdle(binding)
           break
         case "session.idle":
-          await promptQueue.complete(binding)
+          await handleSessionIdle(binding)
           break
         case "session.next.step.failed":
           await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
@@ -104,6 +111,12 @@ export function createSessionReconciler({
     }
     const elapsedMs = durationMs(startedAt)
     if (isMirrorMilestone(event.type) || shouldLogSlow(elapsedMs)) logInfo("mirror.event.handled", { ...fields(), durationMs: elapsedMs })
+  }
+
+  async function handleSessionIdle(binding) {
+    const queued = promptQueue.status(binding).queued
+    const result = await promptQueue.markBackendIdle(binding)
+    if (queued && result.status !== "sent") await reconcileBinding(binding)
   }
 
   async function mirrorToolPartUpdate(binding, properties) {
@@ -256,6 +269,7 @@ export function createSessionReconciler({
       }
       await renderStoredAssistantMessage(binding, message)
       await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
+      if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding)
       mirroredAssistants += 1
     }
     const elapsedMs = durationMs(startedAt)

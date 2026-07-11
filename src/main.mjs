@@ -29,7 +29,17 @@ const opencode = new OpenCodeClient(config)
 const finalNotifier = createFinalNotifier({ config, state, telegram, opencode })
 const notifyFinalAnswerReady = finalNotifier.notifyFinalAnswerReady
 let promptRouter
-const renderer = new MirrorRenderer({ telegram, state, config, onMirrorMessage: (...args) => promptRouter.clearPromptFeedback(...args), onFinalMessage: notifyFinalAnswerReady })
+const renderer = new MirrorRenderer({
+  telegram,
+  state,
+  config,
+  onMirrorMessage: (...args) => promptRouter.clearPromptFeedback(...args),
+  onFinalMessage: notifyFinalAnswerReady,
+  onFinalAssistantMirrored: async (binding, assistantMessageID) => {
+    await state.markAssistantMirrored(binding.serverID, binding.sessionID, assistantMessageID)
+    await promptRouter.promptQueue.markTerminalMirrored(binding)
+  },
+})
 let sessionReconciler
 promptRouter = createPromptRouter({
   config,

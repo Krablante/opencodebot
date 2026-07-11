@@ -146,7 +146,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       await updatePromptFeedback(binding, promptFeedbackAcceptedText()).catch(logError)
       scheduleReconcile(binding, 8000)
     } catch (error) {
-      promptQueue.markIdle(binding)
+      promptQueue.markSendFailed(binding)
       await state.removePendingPrompt(binding.serverID, binding.sessionID, text).catch(logError)
       await reportPromptFeedbackError(binding, error).catch(logError)
       throw error
