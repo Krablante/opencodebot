@@ -19,7 +19,10 @@ export function createSessionReconciler({
   maybeExtendBindingActivity,
   logError,
   shouldStop,
+  incompleteRunGraceMs = 1500,
 }) {
+  const activeRuns = new Map()
+
   async function handleOpenCodeEvent(server, event) {
     const startedAt = Date.now()
     const properties = event.properties || {}
@@ -46,6 +49,7 @@ export function createSessionReconciler({
     try {
       switch (event.type) {
         case "session.next.prompted": {
+          startRun(binding, properties.messageID)
           promptQueue.clearExpectedStop(binding)
           promptQueue.markBusy(binding)
           const text = textFromPrompt(properties.prompt)
@@ -68,26 +72,30 @@ export function createSessionReconciler({
         case "session.next.step.ended":
           if (properties.finish === "stop") {
             if (state.isAssistantMirrored(server.id, sessionID, properties.assistantMessageID)) {
+              clearRun(binding)
               await promptQueue.markTerminalMirrored(binding)
             } else {
-              await renderer.finalAssistantMessageReady(binding, properties.assistantMessageID)
+              const mirrored = await renderer.finalAssistantMessageReady(binding, properties.assistantMessageID)
+              if (mirrored) clearRun(binding)
             }
           } else {
             await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
           }
           break
         case "session.status":
-          if (properties.status?.type === "idle") await handleSessionIdle(binding)
+          if (properties.status?.type === "idle") await handleSessionIdle(server, binding)
           break
         case "session.idle":
-          await handleSessionIdle(binding)
+          await handleSessionIdle(server, binding)
           break
         case "session.next.step.failed":
+          clearRun(binding)
           await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
           if (promptQueue.hasExpectedStop(binding)) break
           await notifyRunFailed(binding, properties, promptQueue.clear(binding))
           break
         case "session.error":
+          clearRun(binding)
           if (promptQueue.hasExpectedStop(binding)) break
           await notifySessionError(binding, properties)
           break
@@ -113,10 +121,70 @@ export function createSessionReconciler({
     if (isMirrorMilestone(event.type) || shouldLogSlow(elapsedMs)) logInfo("mirror.event.handled", { ...fields(), durationMs: elapsedMs })
   }
 
-  async function handleSessionIdle(binding) {
+  async function handleSessionIdle(server, binding) {
     const queued = promptQueue.status(binding).queued
     const result = await promptQueue.markBackendIdle(binding)
     if (queued && result.status !== "sent") await reconcileBinding(binding)
+    if (promptQueue.hasExpectedStop(binding)) {
+      clearRun(binding)
+      promptQueue.clearExpectedStop(binding)
+      return
+    }
+    scheduleIncompleteRunCheck(server, binding)
+  }
+
+  function startRun(binding, userMessageID) {
+    const key = bindingKey(binding)
+    clearRun(binding)
+    activeRuns.set(key, { token: Symbol(key), userMessageID, timer: null })
+  }
+
+  function clearRun(binding, token) {
+    const key = bindingKey(binding)
+    const run = activeRuns.get(key)
+    if (!run || (token && run.token !== token)) return
+    if (run.timer) clearTimeout(run.timer)
+    activeRuns.delete(key)
+  }
+
+  function scheduleIncompleteRunCheck(server, binding) {
+    const run = activeRuns.get(bindingKey(binding))
+    if (!run || run.timer) return
+    const token = run.token
+    run.timer = setTimeout(() => {
+      checkIncompleteRun(server, binding, token).catch((error) => logError(error))
+    }, incompleteRunGraceMs)
+    run.timer.unref?.()
+  }
+
+  async function checkIncompleteRun(server, binding, token) {
+    const run = activeRuns.get(bindingKey(binding))
+    if (!run || run.token !== token) return
+    run.timer = null
+
+    const statuses = await backendRequest(server.id, "incomplete-run-status", () => opencode.request(server, "/session/status", { directory: binding.directory }))
+    if (statuses === skippedBackendRequest) return
+    const statusType = statuses?.[binding.sessionID]?.type
+    if (statusType && statusType !== "idle") return
+
+    const messages = await backendRequest(server.id, "incomplete-run-messages", () => opencode.messages(server.id, binding.sessionID, { directory: binding.directory }))
+    if (messages === skippedBackendRequest) return
+    const terminalAssistantID = terminalAssistantAfterUser(messages, run.userMessageID)
+    if (terminalAssistantID) {
+      await reconcileBinding(binding)
+      if (!state.isAssistantMirrored(server.id, binding.sessionID, terminalAssistantID)) return
+      clearRun(binding, token)
+      await promptQueue.markTerminalMirrored(binding)
+      return
+    }
+
+    await telegram.sendMessage({
+      chatId: binding.chatId,
+      topicId: binding.topicId,
+      text: "⚠️ OpenCodez run ended without a final answer.\nThe session is idle. Send a new prompt to continue.",
+    })
+    clearRun(binding, token)
+    await promptQueue.markTerminalMirrored(binding)
   }
 
   async function mirrorToolPartUpdate(binding, properties) {
@@ -435,6 +503,28 @@ function sessionUpdatedMs(session) {
 
 function isCompleted(info) {
   return Boolean(info.time?.completed || info.time?.failed || info.finished || info.completed)
+}
+
+function bindingKey(binding) {
+  return `${binding.serverID}:${binding.sessionID}`
+}
+
+function terminalAssistantAfterUser(messages, userMessageID) {
+  const infos = messages.map((message) => message.info || message)
+  let userIndex = userMessageID ? infos.findIndex((info) => info.id === userMessageID) : -1
+  if (userIndex < 0) {
+    for (let index = infos.length - 1; index >= 0; index -= 1) {
+      if (infos[index]?.role === "user") {
+        userIndex = index
+        break
+      }
+    }
+  }
+  if (userIndex < 0) return null
+  for (let index = infos.length - 1; index > userIndex; index -= 1) {
+    if (infos[index]?.role === "assistant" && infos[index]?.finish === "stop") return infos[index].id || null
+  }
+  return null
 }
 
 function delay(ms) {

@@ -247,6 +247,8 @@ Per-server roots belong in `servers.json` when one host needs a different dropbo
 
 If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. The queue releases the next prompt only after OpenCodez reports the session idle and the terminal assistant answer is mirrored to Telegram. Idle triggers a history reconcile when the terminal event has not arrived yet, and repeated idle events cannot release more than one prompt.
 
+For a run the bot observed starting, idle without a terminal assistant or explicit error starts a short in-memory grace check. If status and history still show no terminal answer, the bot sends one incomplete-run warning and uses that warning as the terminal queue signal. This behavior has no runtime config surface and does not persist run trackers or queued prompt text.
+
 `paths.uploadsDir` stores downloaded Telegram files as local staging. Uploaded files are runtime material and should stay out of git. Small files are inlined into OpenCodez prompts as data URLs. Larger accepted files are copied to the selected server's `uploadRoot`, and the prompt describes the server-local path, size, and MIME metadata. This keeps multihost and Windows setups usable because the path shown to the model belongs to the selected OpenCodez host, not to the bot container.
 
 ```text

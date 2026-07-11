@@ -83,6 +83,8 @@ Supported attachment inputs include documents, photos, videos, animations, audio
 
 The queue advances only after both conditions are true: OpenCodez reports the session idle, and the terminal assistant answer from that run has been mirrored to Telegram. The signals may arrive in either order. On an idle event the bot reconciles OpenCodez history before releasing the queue, so a missed or delayed terminal SSE event cannot cause the next prompt to overtake the final answer. Duplicate idle events are idempotent and cannot release multiple prompts. If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. A service restart drops queued prompts instead of writing full user prompts into `state.json`.
 
+The bot also tracks runs it observed starting. If such a run becomes idle without a `finish=stop` assistant or an explicit error, it waits briefly, checks OpenCodez status and message history, then posts `OpenCodez run ended without a final answer`. This fallback is in-memory, is not triggered for idle sessions merely discovered during startup or reconnect, and counts as the terminal notice that allows `/q` to continue.
+
 `/kill` also clears the queue for the current topic after sending the OpenCodez abort request, and it discards any pending multipart prompt buffer instead of flushing that text as a new prompt. This keeps the command's meaning simple: stop the active run and do not launch another queued prompt automatically.
 
 ## Final Notifications

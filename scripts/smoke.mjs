@@ -53,6 +53,7 @@ async function smokeLocalInvariants() {
   await smokeKillCommandAbortFailure()
   await smokeKillSuppressesAbortFallout()
   await smokeQueueDrainsOnSessionIdle()
+  await smokeIncompleteRunNotice()
 }
 
 async function smokeMirrorModeCommands() {
@@ -884,6 +885,68 @@ async function smokeQueueDrainsOnSessionIdle() {
   assert.equal(sent[0].text, "queued until idle")
   assert.equal(promptQueue.status(binding).length, 0)
   assert.equal(promptQueue.isBusy(binding), true)
+}
+
+async function smokeIncompleteRunNotice() {
+  const binding = { chatId: 123, topicId: 456, serverID: "nuc", sessionID: "ses_incomplete", directory: "/tmp/work" }
+  const userMessageID = "msg_incomplete_user"
+  const notices = []
+  const queued = []
+  const mirroredUsers = new Set()
+  const mirroredAssistants = new Set()
+  const promptQueue = new PromptQueue(async (_binding, text) => queued.push(text))
+  const reconciler = createSessionReconciler({
+    config: { telegram: { autocreateTopics: false }, reconcile: {} },
+    state: {
+      mirrorEnabled: () => true,
+      findBinding: (serverID, sessionID) => (serverID === binding.serverID && sessionID === binding.sessionID ? binding : null),
+      isUserMirrored: (_serverID, _sessionID, messageID) => mirroredUsers.has(messageID),
+      markUserMirrored: async (_serverID, _sessionID, messageID) => mirroredUsers.add(messageID),
+      consumePendingPrompt: async () => null,
+      isAssistantMirrored: (_serverID, _sessionID, messageID) => mirroredAssistants.has(messageID),
+      markAssistantMirrored: async (_serverID, _sessionID, messageID) => mirroredAssistants.add(messageID),
+    },
+    telegram: { async sendMessage(message) { notices.push(message) } },
+    opencode: {
+      async request() { return {} },
+      async messages() {
+        return [{ info: { id: userMessageID, role: "user", time: { created: Date.now() } }, parts: [{ type: "text", text: "start" }] }]
+      },
+    },
+    renderer: {
+      async userPrompt() {},
+      async compactTools() {},
+      async assistantMessage() {},
+      shouldMirrorTool: () => false,
+      shouldPinUserPrompts: () => false,
+    },
+    promptQueue,
+    backendRequest: async (_serverID, _label, request) => request(),
+    skippedBackendRequest: Symbol("skipped"),
+    createTopicForSession: async () => null,
+    createTopicForWebSession: async () => null,
+    isInternalSession: () => false,
+    activateBindingForPrompt: async () => {},
+    maybeExtendBindingActivity: async () => {},
+    logError: (error) => { throw error },
+    shouldStop: () => false,
+    incompleteRunGraceMs: 0,
+  })
+
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, {
+    type: "session.next.prompted",
+    properties: { sessionID: binding.sessionID, messageID: userMessageID, text: "start" },
+  })
+  await promptQueue.enqueue(binding, "continue after notice")
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, {
+    type: "session.idle",
+    properties: { sessionID: binding.sessionID },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+
+  assert.equal(notices.length, 1)
+  assert.match(notices[0].text, /ended without a final answer/)
+  assert.deepEqual(queued, ["continue after notice"])
 }
 
 async function smokeOpenCodeAbortClient() {
