@@ -8,6 +8,7 @@ export function createTelegramPolling({
   telegram,
   commandHandlers,
   handleSpeechMessage,
+  questionManager,
   handleTopicLifecycleMessage,
   handleAttachmentMessage,
   handleArtifactUploadMessage,
@@ -93,6 +94,8 @@ export function createTelegramPolling({
       await state.setChatId(message.chat.id)
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "OpenCodez mirror chat connected." })
     }
+
+    if (await questionManager?.handleReplyMessage?.(message)) return
 
     const promptKey = multipartPromptKey(message)
     if (state.isArtifactsTopic(message.chat.id, topicId(message))) {

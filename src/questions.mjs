@@ -14,7 +14,15 @@ export function createQuestionManager({ config, state, telegram, opencode, logEr
 
   async function handleAsked(server, binding, info) {
     const existing = state.questionRecord(info.id)
-    if (existing?.status === "pending" && existing.messageId) return true
+    if (existing?.status === "pending" && existing.messageId) {
+      await telegram.editMessageText({
+        chatId: existing.chatId,
+        messageId: existing.messageId,
+        text: renderQuestion(existing),
+        replyMarkup: questionReplyMarkup(existing),
+      })
+      return true
+    }
     if (inflight.has(info.id)) return true
     inflight.add(info.id)
     try {
@@ -97,6 +105,27 @@ export function createQuestionManager({ config, state, telegram, opencode, logEr
     return true
   }
 
+  async function handleReplyMessage(message) {
+    const replyToMessageID = message?.reply_to_message?.message_id
+    const text = String(message?.text || message?.caption || "").trim()
+    if (!replyToMessageID || !text || text.startsWith("/")) return false
+    const record = state.questionRecords().find((item) => item.status === "pending"
+      && item.chatId === message.chat?.id
+      && item.topicId === message.message_thread_id
+      && item.messageId === replyToMessageID
+      && item.question?.custom)
+    if (!record) return false
+    const binding = state.findBinding(record.serverID, record.sessionID)
+    try {
+      await opencode.replyQuestion(record.serverID, record.requestID, [[text]], { directory: binding?.directory })
+      await handleResolved(record.requestID, "answered", [[text]])
+    } catch (error) {
+      logError(error, { event: "question.custom_reply", requestID: record.requestID })
+      await telegram.sendMessage({ chatId: record.chatId, topicId: record.topicId, text: "Не удалось отправить собственный ответ в OpenCodez." })
+    }
+    return true
+  }
+
   async function reconcile() {
     for (const server of opencode.servers.values()) {
       const directories = new Set([server.home, ...state.bindings().filter((binding) => binding.serverID === server.id).map((binding) => binding.directory)].filter(Boolean))
@@ -142,7 +171,7 @@ export function createQuestionManager({ config, state, telegram, opencode, logEr
     }
   }
 
-  return { handleEvent, handleCallback, reconcile, hasPending }
+  return { handleEvent, handleCallback, handleReplyMessage, reconcile, hasPending }
 }
 
 function normalizeQuestions(questions) {
@@ -164,10 +193,9 @@ function renderQuestion(record) {
   if (!question) {
     lines.push("", "В опроснике несколько вопросов. Ответьте на них в OpenCodez.")
     ;(record.questions || []).forEach((item, index) => {
-      lines.push("", `<b>${index + 1}. ${escapeHtml(item.header || "Вопрос")}</b>`, escapeHtml(item.text))
+      lines.push("", `<b>${index + 1}.</b> ${escapeHtml(item.text)}`)
     })
   } else {
-    if (question.header) lines.push("", `<b>${escapeHtml(question.header)}</b>`)
     lines.push("", escapeHtml(question.text))
     question.options.forEach((option, index) => {
       lines.push("", `<b>${index + 1}. ${escapeHtml(option.label)}</b>`)

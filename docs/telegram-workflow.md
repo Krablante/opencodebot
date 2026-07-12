@@ -89,7 +89,7 @@ The bot also tracks runs it observed starting. If such a run becomes idle withou
 
 OpenCodez `question.asked` events are mirrored into the bound Telegram topic. A request containing one single-choice question gets one button per option. Clicking an option replies through the OpenCodez question API, removes the keyboard, and edits the same Telegram message to show the selected answer. If the question is answered or rejected in OpenCodez first, `question.replied` or `question.rejected` updates the Telegram message instead.
 
-Requests with multiple questions or multi-select answers are shown without answer buttons and direct the operator to OpenCodez. A custom free-text answer is also entered in OpenCodez in this first implementation.
+Requests with multiple questions or multi-select answers are shown without answer buttons and direct the operator to OpenCodez. For a single question that allows a custom answer, the operator can reply directly to the Telegram question message with ordinary text. The bot sends that reply through the OpenCodez question API, edits the original question message, and does not mirror the reply as a new session prompt.
 
 Every configured final-notification recipient receives a separate direct message with a button linking to the topic question. Question alerts are blocking-work notices, so they use the configured recipient list even when final-answer notifications were toggled off with `/notify_off`.
 
