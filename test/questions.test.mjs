@@ -64,6 +64,7 @@ test("single-choice questions render buttons, notify, and reply through OpenCode
     },
   })
   const custom = state.questionRecord("que_custom")
+  assert.match(sent[2].text, /Свой ответ можно отправить реплаем/)
   assert.equal(await manager.handleReplyMessage({
     chat: { id: binding.chatId },
     message_thread_id: binding.topicId,

@@ -202,7 +202,7 @@ function renderQuestion(record) {
       if (option.description) lines.push(escapeHtml(option.description))
     })
     if (question.multiple) lines.push("", "Для выбора нескольких вариантов ответьте через OpenCodez.")
-    else if (question.custom) lines.push("", "Собственный ответ можно написать в OpenCodez.")
+    else if (question.custom) lines.push("", "Свой ответ можно отправить реплаем на это сообщение.")
   }
   if (record.status === "answered") lines.push("", `✅ <b>Выбран ответ:</b> ${escapeHtml(flattenAnswers(record.answers))}`)
   if (record.status === "rejected") lines.push("", "⚪️ Вопрос отменён в OpenCodez.")
