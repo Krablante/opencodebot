@@ -8,6 +8,7 @@ import { createTelegramCommandHandlers, telegramBotCommands } from "./commands.m
 import { createFinalNotifier } from "./final-notifications.mjs"
 import { OpenCodeClient } from "./opencode.mjs"
 import { createPromptRouter } from "./prompt-routing.mjs"
+import { createQuestionManager } from "./questions.mjs"
 import { MirrorRenderer } from "./render.mjs"
 import { createSessionReconciler } from "./session-reconcile.mjs"
 import { SpeechModule } from "./speech/index.mjs"
@@ -70,7 +71,8 @@ const backendRequester = createBackendRequester()
 const skippedBackendRequest = backendRequester.skipped
 const backendRequest = backendRequester.request
 const speech = new SpeechModule({ config: config.speech, telegram, state, uploadDir: config.paths.uploadsDir, attachmentSettings: config.attachments })
-const commandHandlers = createTelegramCommandHandlers({ config, state, telegram, opencode, promptQueue, multipartPrompts, createPendingTopic, speech })
+const questionManager = createQuestionManager({ config, state, telegram, opencode, logError })
+const commandHandlers = createTelegramCommandHandlers({ config, state, telegram, opencode, promptQueue, multipartPrompts, createPendingTopic, speech, questionManager })
 const artifactUploads = new ArtifactUploadBuffer({
   settings: config.artifactUploads,
   flushUpload: ({ message, files }) => handleArtifactUploadMessage({ telegram, config, opencode, message, files }),
@@ -83,6 +85,7 @@ sessionReconciler = createSessionReconciler({
   opencode,
   renderer,
   promptQueue,
+  questionManager,
   backendRequest,
   skippedBackendRequest,
   createTopicForSession,
@@ -128,6 +131,7 @@ for (const server of config.opencode.servers) {
   opencode.subscribeEvents(server.id, sessionReconciler.handleOpenCodeEvent, abort.signal)
 }
 
+questionManager.reconcile().catch(logError)
 sessionReconciler.reconcileLoop().catch(logError)
 
 await telegramPolling.poll({ shouldStop: () => shutdownRequested })

@@ -22,6 +22,7 @@ export class StateStore {
       this.data.finalNotifications ||= { enabledUserIds: [], sentMessages: [] }
       this.data.finalNotifications.enabledUserIds ||= []
       this.data.finalNotifications.sentMessages ||= []
+      this.data.questionMessages ||= []
       this.data.seenSessions ||= []
       this.data.telegram ||= {}
       this.data.telegram.mirrorMode = normalizeMirrorMode(this.data.telegram.mirrorMode)
@@ -155,6 +156,10 @@ export class StateStore {
 
   findBinding(serverID, sessionID) {
     return this.data.bindings.find((binding) => !binding.disabled && binding.serverID === serverID && binding.sessionID === sessionID)
+  }
+
+  bindings() {
+    return this.data.bindings.filter((binding) => !binding.disabled)
   }
 
   findBindingByTopic(chatId, topicId) {
@@ -447,6 +452,41 @@ export class StateStore {
     })
   }
 
+  questionRecord(requestID) {
+    return this.data.questionMessages?.find((item) => item.requestID === requestID) || null
+  }
+
+  questionRecords() {
+    return [...(this.data.questionMessages || [])]
+  }
+
+  hasPendingQuestion(serverID, sessionID) {
+    return (this.data.questionMessages || []).some((item) => item.serverID === serverID && item.sessionID === sessionID && item.status === "pending")
+  }
+
+  async upsertQuestion(record, maxItems = 250) {
+    return this.update((data) => {
+      data.questionMessages ||= []
+      const index = data.questionMessages.findIndex((item) => item.requestID === record.requestID)
+      const next = { ...(index >= 0 ? data.questionMessages[index] : {}), ...record, updatedAt: new Date().toISOString() }
+      if (index >= 0) data.questionMessages[index] = next
+      else data.questionMessages.push(next)
+      if (data.questionMessages.length > maxItems) data.questionMessages = data.questionMessages.slice(-maxItems)
+      return next
+    })
+  }
+
+  async resolveQuestion(requestID, status, answers = []) {
+    return this.update((data) => {
+      const record = (data.questionMessages || []).find((item) => item.requestID === requestID)
+      if (!record) return null
+      record.status = status
+      record.answers = answers
+      record.updatedAt = new Date().toISOString()
+      return record
+    })
+  }
+
   async disableBinding(serverID, sessionID, reason) {
     return this.update((data) => {
       const binding = data.bindings.find((item) => item.serverID === serverID && item.sessionID === sessionID)
@@ -475,6 +515,7 @@ function defaultState() {
     mirroredAssistantBySession: {},
     mirroredUserBySession: {},
     finalNotifications: { enabledUserIds: [], sentMessages: [] },
+    questionMessages: [],
     seenSessions: [],
     runtime: {},
   }

@@ -10,6 +10,7 @@ export function createSessionReconciler({
   opencode,
   renderer,
   promptQueue,
+  questionManager,
   backendRequest,
   skippedBackendRequest,
   createTopicForSession,
@@ -27,11 +28,22 @@ export function createSessionReconciler({
     const startedAt = Date.now()
     const properties = event.properties || {}
     const sessionID = properties.sessionID
-    if (!sessionID || !state.mirrorEnabled(config)) return
+    if (!sessionID) return
+
+    if (event.type === "question.replied" || event.type === "question.rejected") {
+      await questionManager?.handleEvent(server, null, event)
+      return
+    }
+    if (!state.mirrorEnabled(config)) return
 
     let binding = state.findBinding(server.id, sessionID)
     if (!binding && event.type === "session.next.prompted" && config.telegram.autocreateTopics) {
       binding = await createTopicForWebSession(server.id, sessionID, textFromPrompt(properties.prompt))
+    }
+    if (!binding && event.type === "question.asked" && config.telegram.autocreateTopics) {
+      await delay(500)
+      binding = state.findBinding(server.id, sessionID)
+      if (!binding) binding = await createTopicForWebSession(server.id, sessionID, properties.questions?.[0]?.question || "OpenCodez question")
     }
     if (!binding || binding.disabled) return
     if (event.type === "session.next.prompted") await activateBindingForPrompt(binding, "web-prompt")
@@ -63,6 +75,11 @@ export function createSessionReconciler({
           if (properties.messageID) await state.markUserMirrored(server.id, sessionID, properties.messageID)
           break
         }
+        case "question.asked":
+        case "question.replied":
+        case "question.rejected":
+          await questionManager?.handleEvent(server, binding, event)
+          break
         case "session.next.text.delta":
           await renderer.textDelta(binding, properties)
           break
@@ -161,6 +178,7 @@ export function createSessionReconciler({
     const run = activeRuns.get(bindingKey(binding))
     if (!run || run.token !== token) return
     run.timer = null
+    if (questionManager?.hasPending(server.id, binding.sessionID)) return
 
     const statuses = await backendRequest(server.id, "incomplete-run-status", () => opencode.request(server, "/session/status", { directory: binding.directory }))
     if (statuses === skippedBackendRequest) return

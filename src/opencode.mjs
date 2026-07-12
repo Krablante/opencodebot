@@ -31,6 +31,18 @@ export class OpenCodeClient {
     return this.request(this.server(serverID), `/session/${encodeURIComponent(sessionID)}/message`, options)
   }
 
+  async questions(serverID, options = {}) {
+    return this.request(this.server(serverID), "/question", options)
+  }
+
+  async replyQuestion(serverID, requestID, answers, options = {}) {
+    return this.request(this.server(serverID), `/question/${encodeURIComponent(requestID)}/reply`, {
+      ...options,
+      method: "POST",
+      body: { answers },
+    })
+  }
+
   async promptAsync(serverID, sessionID, payload, options = {}) {
     return this.request(this.server(serverID), `/session/${encodeURIComponent(sessionID)}/prompt_async`, {
       ...options,

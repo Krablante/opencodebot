@@ -20,7 +20,7 @@ export const telegramBotCommands = [
   { command: "start", description: "Show help" },
 ]
 
-export function createTelegramCommandHandlers({ config, state, telegram, opencode, promptQueue, multipartPrompts, createPendingTopic, speech }) {
+export function createTelegramCommandHandlers({ config, state, telegram, opencode, promptQueue, multipartPrompts, createPendingTopic, speech, questionManager }) {
   const handlers = {
     mirror_on: async (message) => {
       await state.setMirrorEnabled(true)
@@ -56,6 +56,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
       return true
     },
     async handleCallback(query) {
+      if (await questionManager?.handleCallback?.(query)) return true
       return Boolean(await speech?.handleCallbackQuery?.(query))
     },
   }

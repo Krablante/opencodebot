@@ -85,6 +85,16 @@ The queue advances only after both conditions are true: OpenCodez reports the se
 
 The bot also tracks runs it observed starting. If such a run becomes idle without a `finish=stop` assistant or an explicit error, it waits briefly, checks OpenCodez status and message history, then posts `OpenCodez run ended without a final answer`. This fallback is in-memory, is not triggered for idle sessions merely discovered during startup or reconnect, and counts as the terminal notice that allows `/q` to continue.
 
+## Questions
+
+OpenCodez `question.asked` events are mirrored into the bound Telegram topic. A request containing one single-choice question gets one button per option. Clicking an option replies through the OpenCodez question API, removes the keyboard, and edits the same Telegram message to show the selected answer. If the question is answered or rejected in OpenCodez first, `question.replied` or `question.rejected` updates the Telegram message instead.
+
+Requests with multiple questions or multi-select answers are shown without answer buttons and direct the operator to OpenCodez. A custom free-text answer is also entered in OpenCodez in this first implementation.
+
+Every configured final-notification recipient receives a separate direct message with a button linking to the topic question. Question alerts are blocking-work notices, so they use the configured recipient list even when final-answer notifications were toggled off with `/notify_off`.
+
+Minimal question/message bindings are kept in `state.json`. On startup the bot lists pending questions for each bound OpenCodez working directory, recreates questions that do not yet have a saved Telegram message, and closes stale keyboards. A pending question suppresses the incomplete-run watchdog and never counts as a terminal queue signal.
+
 `/kill` also clears the queue for the current topic after sending the OpenCodez abort request, and it discards any pending multipart prompt buffer instead of flushing that text as a new prompt. This keeps the command's meaning simple: stop the active run and do not launch another queued prompt automatically.
 
 ## Final Notifications

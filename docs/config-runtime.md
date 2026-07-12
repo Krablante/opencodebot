@@ -193,6 +193,8 @@ Long Telegram prompts and bounded missed-event recovery are always on with conse
 
 The final DM is intentionally short and mode-neutral: it includes a source `Topic:` line from Telegram topic metadata, with the Telegram topic name and topic custom emoji when Telegram provides it. It also provides an `Open topic` button for the final message in the Telegram topic, quotes the original user prompt in an expandable block for orientation, includes a compact quoted `📋 Tasks [n/n]:` checklist when the agent closed a todo list for that run, and adds a separate quoted `Tools:` / `Patched:` block with compact tool counts and file names from successful `apply_patch`, `edit`, and `write` calls. It does not include the final answer text. Durable dedupe markers are capped internally so live events plus reconcile do not send the same final notification twice.
 
+The same configured `userIds` receive blocking OpenCodez question alerts with a direct link to the topic message. These alerts do not follow the per-user final-notification toggle because a pending question stops the active run. No additional recipient setting is required.
+
 ## Artifacts
 
 `artifacts.enabled` starts the optional LAN artifact gateway. The gateway is for agent-created screenshots, logs, text snippets, and files that should be delivered to one Telegram artifacts topic. It is not a mirror-session router and it does not try to infer the current OpenCodez topic.
@@ -243,7 +245,7 @@ Per-server roots belong in `servers.json` when one host needs a different dropbo
 
 ## Paths And State
 
-`paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, the current artifacts topic, the current sounds topic, the global full/economy mirror mode, mirror enabled state, pending Telegram-origin prompt ids, known sessions, per-session mirror markers, bounded reconcile windows, and final-notification opt-ins/dedupe markers. All mirrored message ids are retained inside each retained session bucket so reconcile cannot replay forgotten history; only old whole-session buckets are pruned. It should not contain full prompt queue text. The `/q` queue is memory-only and disappears on service restart by design.
+`paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, the current artifacts topic, the current sounds topic, the global full/economy mirror mode, mirror enabled state, pending Telegram-origin prompt ids, known sessions, per-session mirror markers, bounded reconcile windows, final-notification opt-ins/dedupe markers, and a bounded list of OpenCodez question/message bindings. Question records contain request and session ids, Telegram message location, displayed options, status, and notified recipients. All mirrored message ids are retained inside each retained session bucket so reconcile cannot replay forgotten history; only old whole-session buckets are pruned. It should not contain full prompt queue text. The `/q` queue and active run trackers are memory-only and disappear on service restart by design.
 
 If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and lists the cleared items by number plus the same first-words summary used by `/q status`. The queue releases the next prompt only after OpenCodez reports the session idle and the terminal assistant answer is mirrored to Telegram. Idle triggers a history reconcile when the terminal event has not arrived yet, and repeated idle events cannot release more than one prompt.
 

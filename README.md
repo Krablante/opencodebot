@@ -1,6 +1,6 @@
 # opencodebot
 
-opencodebot is a small Telegram mirror and companion for [OpenCodez](https://github.com/Krablante/opencodez). OpenCodez stays the main interface and source of truth; the bot adds Telegram forum topics, prompts, progress, compact tool status, attachments, user-prompt pins, final notifications, artifact delivery, optional voice transcription, and a memory-only prompt queue.
+opencodebot is a small Telegram mirror and companion for [OpenCodez](https://github.com/Krablante/opencodez). OpenCodez stays the main interface and source of truth; the bot adds Telegram forum topics, prompts, progress, compact tool status, attachments, interactive questions, user-prompt pins, final notifications, artifact delivery, optional voice transcription, and a memory-only prompt queue.
 
 It is built as a practical single-operator tool that is still clean enough to share. The code favors readable modules, plain JSON config, and boring runtime state over a large framework.
 
@@ -18,6 +18,7 @@ The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/eve
 - `/q` in-memory per-session prompt queue, with status/delete commands.
 - `/kill` to stop the current OpenCodez run for a topic and clear queued prompts.
 - Rich assistant messages sent as completed blocks instead of noisy token streaming.
+- Single-choice OpenCodez questions mirrored into the bound topic with Telegram buttons; configured recipients receive a direct notification linking to the question.
 - Global `/mode full|economy` mirror modes: full keeps compact expandable tool quotes, while economy shows assistant progress and final answers without Telegram tool traffic.
 - Both modes announce task/subagent spawns with a short robot notice that uses the web-visible task title; child-session prompts, tool logs, and results stay hidden.
 - Attachments and Telegram media groups attached to the next prompt; large files are copied to the target server's configured upload root and referenced by server-local path.
