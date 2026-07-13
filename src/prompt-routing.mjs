@@ -289,14 +289,18 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     if (kind === "accepted" && config.promptFeedback.accepted === false) return
     if (kind === "queued" && config.promptFeedback.queued === false) return
     if (kind === "error" && config.promptFeedback.errors === false) return
-    if ((kind === "accepted" || kind === "rewind") && binding) await clearPromptFeedback(binding)
+    if ((kind === "accepted" || kind === "rewind") && binding) await clearPromptFeedback(binding, { force: true })
     const message = await telegram.sendMessage({
       chatId: binding?.chatId ?? chatId,
       topicId: binding?.topicId ?? targetTopicId,
       text,
     })
     if ((kind === "accepted" || kind === "rewind") && binding && message?.message_id) {
-      promptFeedbackMessages.set(promptFeedbackKey(binding), { chatId: binding.chatId, messageId: message.message_id })
+      promptFeedbackMessages.set(promptFeedbackKey(binding), {
+        chatId: binding.chatId,
+        messageId: message.message_id,
+        sticky: kind === "rewind",
+      })
     }
     return message
   }
@@ -325,10 +329,11 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     return { message_id: item.messageId }
   }
 
-  async function clearPromptFeedback(binding) {
+  async function clearPromptFeedback(binding, { force = false } = {}) {
     const key = promptFeedbackKey(binding)
     const item = promptFeedbackMessages.get(key)
     if (!item) return
+    if (item.sticky && !force) return
     promptFeedbackMessages.delete(key)
     try {
       await telegram.deleteMessage({ chatId: item.chatId, messageId: item.messageId })

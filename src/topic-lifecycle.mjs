@@ -29,7 +29,7 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
     const binding = state.findBindingByTopic(chatId, targetTopicId)
     if (binding) {
       await state.disableBinding(binding.serverID, binding.sessionID, reason)
-      await clearPromptFeedback(binding)
+      await clearPromptFeedback(binding, { force: true })
       logInfo("telegram.topic.disabled_binding", { chatId, topicId: targetTopicId, serverID: binding.serverID, sessionID: binding.sessionID, reason })
     }
     if (state.pendingTopic(targetTopicId)) {
