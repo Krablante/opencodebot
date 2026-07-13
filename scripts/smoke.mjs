@@ -475,6 +475,12 @@ async function smokeSpeechTopicRouting() {
   assert.equal(await speech.handleMessage({ chat: { id: 100 }, message_thread_id: 7, voice: { file_id: "v1", file_unique_id: "uv1" } }), true)
   assert.equal(jobs.length, 1)
   assert.equal(jobs[0].descriptors[0].kind, "voice")
+  const regularTopicVoice = { chat: { id: 100 }, message_id: 44, message_thread_id: 8, voice: { file_id: "v2", file_unique_id: "uv2" } }
+  assert.equal(await speech.handleMessage(regularTopicVoice), false)
+  assert.equal(await speech.handleVoiceMessage(regularTopicVoice), true)
+  assert.equal(jobs.length, 2)
+  assert.equal(jobs[1].message.message_thread_id, 8)
+  assert.equal(await speech.handleVoiceMessage({ ...regularTopicVoice, voice: undefined, audio: regularTopicVoice.voice }), false)
   assert.equal(speech.status().language, "ru")
   speech.config.openrouter.language = null
   assert.equal(speech.status().language, "auto")

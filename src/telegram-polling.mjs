@@ -8,6 +8,7 @@ export function createTelegramPolling({
   telegram,
   commandHandlers,
   handleSpeechMessage,
+  handleVoiceMessage,
   questionManager,
   handleTopicLifecycleMessage,
   handleAttachmentMessage,
@@ -95,10 +96,14 @@ export function createTelegramPolling({
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "OpenCodez mirror chat connected." })
     }
 
+    const artifactsTopic = state.isArtifactsTopic(message.chat.id, topicId(message))
+    // Artifact topics keep file-upload semantics; elsewhere voice notes are transcript-only drafts.
+    if (!artifactsTopic && message.voice && (await handleVoiceMessage?.(message))) return
+
     if (await questionManager?.handleReplyMessage?.(message)) return
 
     const promptKey = multipartPromptKey(message)
-    if (state.isArtifactsTopic(message.chat.id, topicId(message))) {
+    if (artifactsTopic) {
       if (files.length) {
         await handleArtifactUploadMessage({ message, files })
         return

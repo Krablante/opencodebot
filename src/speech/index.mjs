@@ -29,6 +29,17 @@ export class SpeechModule {
 
   async handleMessage(message) {
     if (!this.enabled() || !this.isSoundsTopic(message)) return false
+
+    return this.enqueueAudioMessage(message)
+  }
+
+  async handleVoiceMessage(message) {
+    if (!this.enabled() || !message?.voice) return false
+
+    return this.enqueueAudioMessage(message)
+  }
+
+  async enqueueAudioMessage(message) {
     const files = audioDescriptors(message)
     if (!files.length) return false
     const job = { message, descriptors: files }

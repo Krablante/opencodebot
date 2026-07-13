@@ -110,7 +110,9 @@ Attachment policy belongs at top-level `attachments`; old `telegram.attachments`
 }
 ```
 
-Run `/sounds_here` in a Telegram forum topic to make that topic the speech inbox. The command creates and pins a model menu; operators can switch the selected model with inline buttons, and `Refresh` redraws the same menu after adding or removing configured models. Voice and audio messages in that topic are downloaded, sent to OpenRouter's audio transcription endpoint with the selected model, and answered with the transcript in the same topic. Only the transcript is wrapped in Telegram Mono formatting so it can be selected/copied without also copying model or timing metadata. Text in the speech topic is not forwarded to OpenCodez sessions.
+Once speech is enabled, Telegram voice messages in ordinary non-artifact topics are downloaded, sent to OpenRouter's audio transcription endpoint with the selected model, and answered as replies in the same topic. They stop before question handling, attachment buffering, and prompt dispatch, so a transcript reaches OpenCodez only after the operator copies it and sends it as text. General audio files outside the dedicated speech topic keep the normal attachment behavior.
+
+Run `/sounds_here` in a Telegram forum topic when you also want a dedicated voice/audio inbox. The command creates and pins a model menu; operators can switch the selected model with inline buttons, and `Refresh` redraws the same menu after adding or removing configured models. Voice messages, general audio files, and supported audio documents in that topic are transcribed. Only the transcript is wrapped in Telegram Mono formatting so it can be selected/copied without also copying model or timing metadata. Text in the dedicated speech topic is not forwarded to OpenCodez sessions. `/sounds_off` clears only this dedicated inbox; ordinary-topic voice transcription remains active while `speech.enabled` is true.
 
 The prompt is deliberately short and configurable. Leave it blank if generic transcription is better for your group, or replace it with a small vocabulary hint. Do not put secrets in it.
 

@@ -7,9 +7,9 @@ export const telegramBotCommands = [
   { command: "reset", description: "Start fresh, optionally change profile" },
   { command: "session", description: "Show topic, session, and special topic status" },
   { command: "artifacts_here", description: "Use this topic for agent artifact uploads" },
-  { command: "sounds_here", description: "Transcribe voice/audio in this topic" },
-  { command: "sounds_off", description: "Disable speech for this topic" },
-  { command: "sounds_status", description: "Show speech topic status" },
+  { command: "sounds_here", description: "Use this topic as the speech inbox" },
+  { command: "sounds_off", description: "Disable the dedicated speech inbox" },
+  { command: "sounds_status", description: "Show speech transcription status" },
   { command: "q", description: "Queue prompts for the current session" },
   { command: "kill", description: "Stop the current run and clear queued prompts" },
   { command: "notify_on", description: "Enable final-answer DMs" },
@@ -288,7 +288,9 @@ export function createTelegramCommandHandlers({
     await telegram.sendMessage({
       chatId: message.chat.id,
       topicId: topicId(message),
-      text: cleared ? "Voice transcription disabled for this topic." : "This topic is not the voice transcription topic.",
+      text: cleared
+        ? "Dedicated voice/audio inbox disabled for this topic. Voice messages in ordinary topics are still transcribed."
+        : "This topic is not the dedicated voice/audio inbox.",
     })
   }
 
@@ -303,7 +305,8 @@ export function createTelegramCommandHandlers({
         `api_key: ${status.configured ? "configured" : status.apiKeyEnv ? `missing <code>${escapeHtml(status.apiKeyEnv)}</code>` : "not configured"}`,
         status.model ? `model: <code>${escapeHtml(status.modelLabel || status.model)}</code>${status.modelProvider ? ` · ${escapeHtml(status.modelProvider)}` : ""}` : null,
         status.language ? `language: <code>${escapeHtml(status.language)}</code>` : null,
-        status.topic ? `topic_id: <code>${escapeHtml(String(status.topic.topicId || 0))}</code>` : "topic_id: none",
+        "voice_messages: all non-artifact topics when enabled",
+        status.topic ? `dedicated_topic_id: <code>${escapeHtml(String(status.topic.topicId || 0))}</code>` : "dedicated_topic_id: none",
         `active: <code>${escapeHtml(String(status.active || 0))}</code>`,
         `queue: <code>${escapeHtml(String(status.queueDepth || 0))}</code>`,
       ].filter(Boolean).join("\n"),
@@ -509,8 +512,9 @@ export function createTelegramCommandHandlers({
       "<code>/kill</code> - stop the current run and clear queued prompts.",
       "<code>/artifacts_here</code> - make this topic the artifact target and file dropbox.",
       "Drop files there with an optional server id caption; no caption uses the default server.",
-      "<code>/sounds_here</code> - transcribe voice/audio messages in this topic.",
-      "<code>/sounds_off</code> / <code>/sounds_status</code> - manage the speech topic.",
+      "When speech is enabled, voice messages in ordinary topics become copyable transcript replies; send the transcript as text to use it as a prompt.",
+      "<code>/sounds_here</code> - use this topic as the dedicated voice/audio inbox with the model menu.",
+      "<code>/sounds_off</code> / <code>/sounds_status</code> - manage the dedicated inbox and show speech status.",
       "<code>/notify_on</code> / <code>/notify_off</code> - toggle final-answer DMs for configured recipients.",
       "<code>/notify_status</code> - show configured final-answer DM status.",
       "<code>/mode [full|economy]</code> - show or set the global mirror mode.",

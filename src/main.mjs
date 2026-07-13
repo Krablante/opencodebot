@@ -116,6 +116,7 @@ const telegramPolling = createTelegramPolling({
   telegram,
   commandHandlers,
   handleSpeechMessage: (message) => speech.handleMessage(message),
+  handleVoiceMessage: (message) => speech.handleVoiceMessage(message),
   questionManager,
   handleTopicLifecycleMessage,
   handleAttachmentMessage,
