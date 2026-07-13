@@ -44,6 +44,12 @@ LAN browser, or optional WireGuard browser
 
 OpenCodez remains the main workspace. Telegram is the mirror/control surface for moments when a chat interface is more convenient.
 
+OpenCodez owns session and message identifiers. The bot submits prompts without
+client-generated message ids, then binds the original Telegram message to the
+canonical id reported by `session.next.prompted` (or recovered by reconcile).
+This keeps OpenCodez ordering, Web UI grouping, and Telegram reply-to-rewind on
+one durable identity without duplicating backend id rules.
+
 ## Platforms
 
 Docker Compose is the recommended deployment path on Linux, Windows, and macOS. The bot also runs directly through Node.js and npm. Windows is fully fine as a Telegram, browser, Docker, and WireGuard client.

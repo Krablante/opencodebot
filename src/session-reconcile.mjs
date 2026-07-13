@@ -77,8 +77,12 @@ export function createSessionReconciler({
             return
           }
           const consumed = await state.consumePendingPrompt(server.id, sessionID, text)
-          if (consumed) await pinConsumedTelegramPrompt(binding, consumed)
-          else await renderer.userPrompt(binding, text, "web")
+          if (consumed) {
+            await recordConsumedPromptOrigin(binding, consumed, properties.messageID)
+            await pinConsumedTelegramPrompt(binding, consumed)
+          } else {
+            await renderer.userPrompt(binding, text, "web")
+          }
           if (properties.messageID) await state.markUserMirrored(server.id, sessionID, properties.messageID)
           break
         }
@@ -361,7 +365,12 @@ export function createSessionReconciler({
             continue
           }
           const consumed = await state.consumePendingPrompt(binding.serverID, binding.sessionID, text)
-          if (!consumed) await renderer.userPrompt(binding, text, "web")
+          if (consumed) {
+            await recordConsumedPromptOrigin(binding, consumed, info.id)
+            await pinConsumedTelegramPrompt(binding, consumed)
+          } else {
+            await renderer.userPrompt(binding, text, "web")
+          }
           await state.markUserMirrored(binding.serverID, binding.sessionID, info.id)
           mirroredUsers += 1
           catchupUserSeen = true
@@ -449,6 +458,19 @@ export function createSessionReconciler({
     const messageId = Number(marker?.messageId)
     if (!renderer.shouldPinUserPrompts() || !Number.isSafeInteger(messageId) || messageId <= 0) return
     await renderer.pinMessage(binding, messageId, { origin: "telegram-prompt-event" })
+  }
+
+  async function recordConsumedPromptOrigin(binding, marker, opencodeMessageID) {
+    const telegramMessageID = Number(marker?.messageId)
+    if (!opencodeMessageID || !Number.isSafeInteger(telegramMessageID)) return
+    await state.recordPromptOrigin({
+      serverID: binding.serverID,
+      sessionID: binding.sessionID,
+      opencodeMessageID,
+      chatID: binding.chatId,
+      topicID: binding.topicId,
+      telegramMessageID,
+    })
   }
 
   return { handleOpenCodeEvent, reconcileLoop, scheduleReconcile, seedExistingSessions, detachBinding: clearRun }

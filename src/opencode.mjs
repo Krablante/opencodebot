@@ -184,7 +184,7 @@ function cleanDirectory(value) {
   return trimmed || undefined
 }
 
-export function promptPayload(text, profile, files = [], messageID) {
+export function promptPayload(text, profile, files = []) {
   const inlineFiles = (files || []).filter((file) => file?.type !== "saved_file" && file?.url)
   const savedFiles = (files || []).filter((file) => file?.type === "saved_file")
   const promptText = [savedFilesText(savedFiles), text].filter(Boolean).join("\n\n")
@@ -192,7 +192,6 @@ export function promptPayload(text, profile, files = [], messageID) {
     parts: [...fileParts(inlineFiles), { type: "text", text: promptText }],
   }
   if (profile?.agent) payload.agent = profile.agent
-  if (messageID) payload.messageID = messageID
   if (profile?.model) {
     const model = normalizeModel(profile.model)
     payload.model = { providerID: model.providerID, modelID: model.modelID }
@@ -342,11 +341,16 @@ async function fetchWithTimeout(url, options, defaultTimeoutMs, label) {
 
 function delay(ms, signal) {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms)
-    signal?.addEventListener("abort", () => {
+    const onAbort = () => {
       clearTimeout(timer)
       resolve()
-    }, { once: true })
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener?.("abort", onAbort)
+      resolve()
+    }, ms)
+    if (signal?.aborted) onAbort()
+    else signal?.addEventListener("abort", onAbort, { once: true })
   })
 }
 

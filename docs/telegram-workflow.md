@@ -89,6 +89,14 @@ For a valid reply, one service message progresses from `🟡 Reverting…` to `�
 
 The guard is intentionally strict: the replied prompt must belong to the same active `(server, session, Telegram topic)` binding. A reply to a prompt from before `/reset`, another topic, a closed session, or a branch already rewound is rejected and is never silently sent to the current session. A reply to an unrelated Telegram message keeps normal prompt behavior. Prompts created before this feature was deployed have no durable Telegram-to-OpenCodez link and therefore cannot trigger a rewind.
 
+OpenCodez is the sole owner of message ids. Telegram prompts are submitted
+without a client-generated id. The bot keeps a short pending marker and records
+the reply-to-rewind origin only after `session.next.prompted` reports the
+canonical OpenCodez user-message id; full reconcile provides the same fallback
+when the live event was missed. Client ids such as `msg_tg_*` must never be
+introduced because OpenCodez relies on ordered ids for prompt-loop termination
+and Web UI message grouping.
+
 ```text
 dima upload root: /home/dima/.opencodebot/uploads
 ```
@@ -121,7 +129,7 @@ Minimal question/message bindings are kept in `state.json`. On startup the bot l
 
 ## Mirror
 
-Web-origin text prompts are mirrored into Telegram with a small `💬` marker. Oversized web prompts are split into numbered Telegram messages instead of being truncated, so the topic keeps the full prompt text in order. Telegram-origin prompts are suppressed when the bot can match them to its own pending send.
+Web-origin text prompts are mirrored into Telegram with a small `💬` marker. Oversized web prompts are split into numbered Telegram messages instead of being truncated, so the topic keeps the full prompt text in order. Telegram-origin prompts are suppressed when the bot can match them to its own pending send. Consuming that pending marker also binds the canonical OpenCodez message id to the original Telegram message for reply-to-rewind.
 
 Assistant text is accumulated until OpenCodez completes the text block. The bot does not edit Telegram token-by-token. Each completed assistant progress note is mirrored once using its OpenCodez message id as the durable dedupe key. Completed/final assistant text is sent as Telegram Rich Message markdown when the Bot API accepts it, with fallback for local Markdown links and formatting errors. Real final answers are identified by `finish=stop` and marked with `🏁 `. The bot pins the user prompt that started the run: the original Telegram message for Telegram-origin prompts, or the mirrored user message for web-origin prompts.
 

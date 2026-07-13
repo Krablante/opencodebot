@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto"
 import { formatDuration } from "./backend-backoff.mjs"
 import { AttachmentBuffer, cleanupFiles, downloadTelegramFiles } from "./attachments.mjs"
 import { applyChatTemplate } from "./chat-templates.mjs"
@@ -183,22 +182,13 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     try {
       const profile = await currentProfile(binding)
       const preparedFiles = await prepareSavedFilesForServer(files, { server: opencode.server(binding.serverID), sessionID: binding.sessionID })
-      const opencodeMessageID = telegramPromptMessageID()
       await state.addPendingPrompt({
         serverID: binding.serverID,
         sessionID: binding.sessionID,
         hash: promptHash(text),
         messageId: sourceMessageId,
       })
-      await opencode.promptAsync(binding.serverID, binding.sessionID, promptPayload(text, profile, preparedFiles, opencodeMessageID), { directory: binding.directory })
-      await state.recordPromptOrigin({
-        chatID: binding.chatId,
-        topicID: binding.topicId,
-        telegramMessageID: sourceMessageId,
-        serverID: binding.serverID,
-        sessionID: binding.sessionID,
-        opencodeMessageID,
-      })
+      await opencode.promptAsync(binding.serverID, binding.sessionID, promptPayload(text, profile, preparedFiles), { directory: binding.directory })
       if (await pinTelegramPromptMessage(binding, sourceMessageId, "telegram-prompt", { serviceMessageAfterId: feedbackMessage?.message_id })) {
         await state.markPendingPromptPinned(binding.serverID, binding.sessionID, text, sourceMessageId).catch(logError)
       }
@@ -412,10 +402,6 @@ function rewindFeedbackFailedText() {
 
 function rewindFeedbackReplacementNotSentText() {
   return "🟠 Reverted · replacement not sent"
-}
-
-function telegramPromptMessageID() {
-  return `msg_tg_${randomUUID().replaceAll("-", "")}`
 }
 
 function parseQueueCaption(caption) {

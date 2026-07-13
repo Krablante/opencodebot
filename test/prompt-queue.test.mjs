@@ -1,7 +1,14 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
+import { promptPayload } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
+
+test("prompt payload leaves message ID generation to OpenCode", () => {
+  const payload = promptPayload("hello", { agent: "build", model: null }, [])
+
+  assert.equal("messageID" in payload, false)
+})
 
 test("queued prompts wait for both backend idle and terminal mirror", async () => {
   const binding = { serverID: "nuc", sessionID: "ses_queue" }
