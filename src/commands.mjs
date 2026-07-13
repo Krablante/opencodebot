@@ -245,6 +245,7 @@ export function createTelegramCommandHandlers({
         "🆕 <b>Fresh session ready</b>",
         `Previous session <code>${escapeHtml(binding.sessionID)}</code> was preserved in OpenCodez and detached from this topic.`,
         discarded.length ? `Discarded: ${escapeHtml(discarded.join(", "))}.` : null,
+        "The current Telegram topic name will be preserved.",
         "Send the first prompt to create a new session here.",
       ]
         .filter(Boolean)

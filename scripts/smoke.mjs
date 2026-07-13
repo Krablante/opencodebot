@@ -717,12 +717,13 @@ async function smokeResetCommand() {
     sessionID: "ses_reset_old",
     directory: "/tmp/work",
     title: "Old session",
-    titleSource: "session",
+    titleSource: "opencode",
     chatTemplateName: "gpt",
     chatTemplate: { model: "openai/test" },
   }
   const sent = []
   const steps = []
+  const preservedTopicTitle = "Current visible topic"
   const promptQueue = new PromptQueue({
     onPrompt: async () => {},
     onQueued: async () => {},
@@ -732,6 +733,8 @@ async function smokeResetCommand() {
     const state = new StateStore(statePath)
     await state.load()
     await state.bindTopic(binding)
+    await state.updateBindingTitle(binding.serverID, binding.sessionID, preservedTopicTitle)
+    assert.equal(state.findBinding(binding.serverID, binding.sessionID).topicTitle, preservedTopicTitle)
     promptQueue.markBusy(binding)
     await promptQueue.enqueue(binding, "queued prompt")
     const handlers = createTelegramCommandHandlers({
@@ -765,9 +768,12 @@ async function smokeResetCommand() {
     assert.equal(state.findAnyBindingByTopic(123, 456).disabledReason, "topic-reset")
     assert.equal(state.pendingTopic(456).directory, binding.directory)
     assert.equal(state.pendingTopic(456).chatTemplateName, binding.chatTemplateName)
+    assert.equal(state.pendingTopic(456).title, preservedTopicTitle)
+    assert.equal(state.pendingTopic(456).titleSource, "user")
     assert.equal(promptQueue.status(binding).length, 0)
     assert.match(sent.at(-1).text, /Fresh session ready/)
     assert.match(sent.at(-1).text, /preserved in OpenCodez/)
+    assert.match(sent.at(-1).text, /topic name will be preserved/)
 
     steps.length = 0
     await handlers.handle(
@@ -780,8 +786,24 @@ async function smokeResetCommand() {
 
     const reloaded = new StateStore(statePath)
     await reloaded.load()
-    assert.equal(reloaded.pendingTopic(456).topicTitle, binding.topicTitle)
+    assert.equal(reloaded.pendingTopic(456).topicTitle, preservedTopicTitle)
+    assert.equal(reloaded.pendingTopic(456).titleSource, "user")
     assert.equal(reloaded.findAnyBindingByTopic(123, 456).disabled, true)
+    reloaded.data.pendingTopics["456"].titleSource = "opencode"
+    await reloaded.save()
+    const migratedPending = new StateStore(statePath)
+    await migratedPending.load()
+    assert.equal(migratedPending.pendingTopic(456).titleSource, "user")
+
+    const pending = migratedPending.pendingTopic(456)
+    await migratedPending.bindTopic({ ...pending, chatId: 123, topicId: 456, sessionID: "ses_reset_new", title: "Generated session title" })
+    assert.equal(migratedPending.findBindingByTopic(123, 456).titleSource, "user")
+    assert.equal(migratedPending.findBindingByTopic(123, 456).topicTitle, preservedTopicTitle)
+    migratedPending.findBindingByTopic(123, 456).titleSource = "opencode"
+    await migratedPending.save()
+    const migratedActive = new StateStore(statePath)
+    await migratedActive.load()
+    assert.equal(migratedActive.findBindingByTopic(123, 456).titleSource, "user")
   } finally {
     await rm(root, { recursive: true, force: true })
   }

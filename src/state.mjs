@@ -29,7 +29,9 @@ export class StateStore {
       this.data.telegram.artifactsTopic ||= null
       this.data.telegram.soundsTopic ||= null
       this.data.runtime ||= {}
-      if (pruneState(this.data)) await this.save()
+      const migratedResetTitles = migrateResetTitleOwnership(this.data)
+      const pruned = pruneState(this.data)
+      if (migratedResetTitles || pruned) await this.save()
     } catch (error) {
       if (error.code !== "ENOENT") throw error
       this.data = defaultState()
@@ -257,10 +259,12 @@ export class StateStore {
     return this.update((data) => {
       const binding = data.bindings.find((item) => item.serverID === serverID && item.sessionID === sessionID)
       if (!binding) return false
-      if (binding.title === title) return false
+      if (binding.title === title && binding.titleSource === titleSource && binding.topicTitle === title) return false
       binding.title = title
       binding.titleSource = titleSource
       binding.titleUpdatedAt = new Date().toISOString()
+      binding.topicTitle = title
+      binding.topicTitleUpdatedAt = binding.titleUpdatedAt
       return true
     })
   }
@@ -349,13 +353,14 @@ export class StateStore {
       current.disabled = true
       current.disabledReason = reason
       current.disabledAt = now
+      const topicTitle = current.topicTitle || current.title || "New session"
       const pending = compactObject({
         chatId: current.chatId,
-        topicTitle: current.topicTitle,
+        topicTitle,
         topicIconCustomEmojiId: current.topicIconCustomEmojiId,
         topicIconEmoji: current.topicIconEmoji,
-        title: current.title || "New session",
-        titleSource: current.titleSource || "user",
+        title: topicTitle,
+        titleSource: "user",
         serverID: current.serverID,
         directory: current.directory,
         chatTemplateName: current.chatTemplateName,
@@ -617,4 +622,37 @@ function toMillis(value) {
 
 function compactObject(value) {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined))
+}
+
+function migrateResetTitleOwnership(data) {
+  const resetTopics = new Set(
+    data.bindings
+      .filter((binding) => binding.disabled && binding.disabledReason === "topic-reset")
+      .map((binding) => bindingTopicKey(binding)),
+  )
+  let changed = false
+
+  for (const binding of data.bindings) {
+    if (binding.disabled || !resetTopics.has(bindingTopicKey(binding)) || binding.titleSource === "user") continue
+    binding.titleSource = "user"
+    binding.titleUpdatedAt = new Date().toISOString()
+    changed = true
+  }
+
+  for (const [topicId, pending] of Object.entries(data.pendingTopics || {})) {
+    const key = `${String(pending.chatId ?? data.telegram?.chatId ?? "")}:${Number(topicId || 0)}`
+    if (!resetTopics.has(key)) continue
+    const topicTitle = pending.topicTitle || pending.title || "New session"
+    if (pending.titleSource === "user" && pending.title === topicTitle && pending.topicTitle === topicTitle) continue
+    pending.titleSource = "user"
+    pending.title = topicTitle
+    pending.topicTitle = topicTitle
+    changed = true
+  }
+
+  return changed
+}
+
+function bindingTopicKey(binding) {
+  return `${String(binding.chatId ?? "")}:${Number(binding.topicId || 0)}`
 }
