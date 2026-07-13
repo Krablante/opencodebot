@@ -724,6 +724,11 @@ async function smokeResetCommand() {
   const sent = []
   const steps = []
   const preservedTopicTitle = "Current visible topic"
+  const chatTemplates = {
+    gpt: binding.chatTemplate,
+    sol: { agent: "build", model: { providerID: "openai", modelID: "gpt-5.6-sol", variant: "xhigh" } },
+    terra: { agent: "build", model: { providerID: "openai", modelID: "gpt-5.6-terra", variant: "xhigh" } },
+  }
   const promptQueue = new PromptQueue({
     onPrompt: async () => {},
     onQueued: async () => {},
@@ -738,12 +743,13 @@ async function smokeResetCommand() {
     promptQueue.markBusy(binding)
     await promptQueue.enqueue(binding, "queued prompt")
     const handlers = createTelegramCommandHandlers({
-      config: { chatTemplates: {} },
+      config: { chatTemplates, opencode: { servers: [{ id: "nuc", url: "http://127.0.0.1:4098" }] } },
       state,
       telegram: { async sendMessage(message) { sent.push(message) } },
       opencode: { async abortSession() { steps.push("abort") } },
       promptQueue,
       multipartPrompts: {
+        async flushKey() {},
         discardKey() {
           steps.push("multipart")
           return true
@@ -757,9 +763,18 @@ async function smokeResetCommand() {
       createPendingTopic: async () => {},
     })
 
+    await handlers.handle(
+      { chat: { id: 123 }, message_thread_id: 456, message_id: 788 },
+      { name: "reset", args: "unknown" },
+      "123:456",
+    )
+    assert.deepEqual(steps, [])
+    assert.equal(state.findBinding("nuc", "ses_reset_old").disabled, undefined)
+    assert.match(sent.at(-1).text, /Unknown profile unknown/)
+
     const handled = await handlers.handle(
       { chat: { id: 123 }, message_thread_id: 456, message_id: 789 },
-      { name: "reset", args: "" },
+      { name: "reset", args: "sol" },
       "123:456",
     )
     assert.equal(handled, true)
@@ -767,22 +782,34 @@ async function smokeResetCommand() {
     assert.equal(state.findBinding("nuc", "ses_reset_old"), undefined)
     assert.equal(state.findAnyBindingByTopic(123, 456).disabledReason, "topic-reset")
     assert.equal(state.pendingTopic(456).directory, binding.directory)
-    assert.equal(state.pendingTopic(456).chatTemplateName, binding.chatTemplateName)
+    assert.equal(state.pendingTopic(456).chatTemplateName, "sol")
+    assert.deepEqual(state.pendingTopic(456).chatTemplate, chatTemplates.sol)
     assert.equal(state.pendingTopic(456).title, preservedTopicTitle)
     assert.equal(state.pendingTopic(456).titleSource, "user")
     assert.equal(promptQueue.status(binding).length, 0)
     assert.match(sent.at(-1).text, /Fresh session ready/)
     assert.match(sent.at(-1).text, /preserved in OpenCodez/)
+    assert.match(sent.at(-1).text, /New session profile: <code>sol<\/code>/)
     assert.match(sent.at(-1).text, /topic name will be preserved/)
+
+    await handlers.handle(
+      { chat: { id: 123 }, message_thread_id: 456, message_id: 789 },
+      { name: "session", args: "" },
+      "123:456",
+    )
+    assert.match(sent.at(-1).text, /profile: <code>sol<\/code>/)
 
     steps.length = 0
     await handlers.handle(
       { chat: { id: 123 }, message_thread_id: 456, message_id: 790 },
-      { name: "reset", args: "" },
+      { name: "reset", args: "terra" },
       "123:456",
     )
     assert.deepEqual(steps, ["multipart", "attachments"])
     assert.match(sent.at(-1).text, /already waiting for its first prompt/)
+    assert.match(sent.at(-1).text, /New session profile: <code>terra<\/code>/)
+    assert.equal(state.pendingTopic(456).chatTemplateName, "terra")
+    assert.deepEqual(state.pendingTopic(456).chatTemplate, chatTemplates.terra)
 
     const reloaded = new StateStore(statePath)
     await reloaded.load()

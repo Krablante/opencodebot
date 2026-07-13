@@ -1,9 +1,10 @@
 import { summarizeWords } from "./prompt-queue.mjs"
 import { escapeHtml, topicId } from "./telegram.mjs"
+import { parseResetProfileArg } from "./chat-templates.mjs"
 
 export const telegramBotCommands = [
   { command: "new", description: "Create a new OpenCodez session topic" },
-  { command: "reset", description: "Start fresh in this topic" },
+  { command: "reset", description: "Start fresh, optionally change profile" },
   { command: "session", description: "Show topic, session, and special topic status" },
   { command: "artifacts_here", description: "Use this topic for agent artifact uploads" },
   { command: "sounds_here", description: "Transcribe voice/audio in this topic" },
@@ -164,7 +165,7 @@ export function createTelegramCommandHandlers({
     await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: lines.join("\n") })
   }
 
-  async function handleResetCommand(message, _args, promptKey) {
+  async function handleResetCommand(message, args, promptKey) {
     const currentTopicId = topicId(message)
     if (!currentTopicId) {
       await telegram.sendMessage({ chatId: message.chat.id, text: "Run /reset inside an active OpenCodez session topic." })
@@ -179,9 +180,22 @@ export function createTelegramCommandHandlers({
       return
     }
 
+    let profile
+    try {
+      profile = parseResetProfileArg(args, { chatTemplates: config.chatTemplates })
+    } catch (error) {
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: currentTopicId,
+        text: escapeHtml(error.message),
+      })
+      return
+    }
+
     const binding = state.findBindingByTopic(message.chat.id, currentTopicId)
     if (!binding) {
       const pending = state.pendingTopic(currentTopicId)
+      if (pending && profile) await state.updatePendingTopicProfile(currentTopicId, profile)
       const discardedMultipart = pending ? multipartPrompts.discardKey?.(promptKey) || false : false
       const discardedAttachments = pending ? await discardAttachmentBatch(promptKey) : 0
       const discarded = [
@@ -194,7 +208,13 @@ export function createTelegramCommandHandlers({
         chatId: message.chat.id,
         topicId: currentTopicId,
         text: pending
-          ? `🟡 This topic is already waiting for its first prompt.${discarded.length ? ` Discarded: ${discarded.join(", ")}.` : ""}`
+          ? [
+              "🟡 This topic is already waiting for its first prompt.",
+              profile ? `New session profile: <code>${escapeHtml(profile.chatTemplateName)}</code>.` : null,
+              discarded.length ? `Discarded: ${escapeHtml(discarded.join(", "))}.` : null,
+            ]
+              .filter(Boolean)
+              .join("\n")
           : "No active OpenCodez session is bound here. Use /new to create a session topic.",
       })
       return
@@ -220,7 +240,7 @@ export function createTelegramCommandHandlers({
     const cleared = promptQueue.clear(binding, "Discarded by /reset")
     const discardedMultipart = multipartPrompts.discardKey?.(promptKey) || false
     const discardedAttachments = await discardAttachmentBatch(promptKey)
-    const reset = await state.resetBindingToPending(binding)
+    const reset = await state.resetBindingToPending(binding, profile)
     if (!reset) {
       promptQueue.clearExpectedStop(binding)
       await telegram.sendMessage({
@@ -245,6 +265,7 @@ export function createTelegramCommandHandlers({
         "🆕 <b>Fresh session ready</b>",
         `Previous session <code>${escapeHtml(binding.sessionID)}</code> was preserved in OpenCodez and detached from this topic.`,
         discarded.length ? `Discarded: ${escapeHtml(discarded.join(", "))}.` : null,
+        profile ? `New session profile: <code>${escapeHtml(profile.chatTemplateName)}</code>.` : null,
         "The current Telegram topic name will be preserved.",
         "Send the first prompt to create a new session here.",
       ]
@@ -414,6 +435,7 @@ export function createTelegramCommandHandlers({
         "🔗 <b>Binding</b>",
         "status: 🟡 waiting for first prompt",
         `server: <code>${escapeHtml(pending.serverID || "")}</code>`,
+        pending.chatTemplateName ? `profile: <code>${escapeHtml(pending.chatTemplateName)}</code>` : "profile: server default",
         previousBinding?.sessionID
           ? `previous session: <code>${escapeHtml(previousBinding.sessionID)}</code> (preserved in OpenCodez)`
           : null,
@@ -479,7 +501,7 @@ export function createTelegramCommandHandlers({
       "<b>OpenCodez Bot</b>",
       "",
       "<code>/new [server] [profile] [dir:&lt;path&gt;] [title]</code> - create a topic and wait for the first prompt.",
-      "<code>/reset</code> - preserve the old session and start fresh in the current topic.",
+      "<code>/reset [profile]</code> - preserve the old session and start fresh here, optionally with another profile.",
       "<code>/session</code> - show current topic, binding, session URL, and special topic status.",
       "<code>/q &lt;prompt&gt;</code> - queue a prompt for this topic/session.",
       "<code>/q status</code> - show queued prompts.",

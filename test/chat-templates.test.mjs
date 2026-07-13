@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import test from "node:test"
 
-import { applyChatTemplate, parseNewTopicArgs } from "../src/chat-templates.mjs"
+import { applyChatTemplate, parseNewTopicArgs, parseResetProfileArg } from "../src/chat-templates.mjs"
 import { normalizeChatTemplates } from "../src/config/chat-templates.mjs"
 import { OpenCodeClient, profileFromMessages } from "../src/opencode.mjs"
 
@@ -37,6 +37,18 @@ test("/new resolves a profile and rejects the retired gpt55p alias", async () =>
   await applyChatTemplate({ selectSystemPrompt: (...args) => calls.push(args) }, "nuc", "ses_test", parsed.chatTemplate)
   assert.deepEqual(calls, [["nuc", "ses_test", "codex_gpt_5_6_sol", {}]])
   assert.throws(() => parseNewTopicArgs("nuc gpt55p old-chat", options), /Profile gpt55p was removed/)
+})
+
+test("/reset accepts exactly one configured profile", () => {
+  const profiles = normalizeChatTemplates()
+  assert.equal(parseResetProfileArg("", { chatTemplates: profiles }), null)
+  assert.deepEqual(parseResetProfileArg("sol", { chatTemplates: profiles }), {
+    chatTemplateName: "sol",
+    chatTemplate: profiles.sol,
+  })
+  assert.throws(() => parseResetProfileArg("unknown", { chatTemplates: profiles }), /Unknown profile unknown/)
+  assert.throws(() => parseResetProfileArg("sol extra", { chatTemplates: profiles }), /Usage: \/reset \[profile\]/)
+  assert.throws(() => parseResetProfileArg("gpt55p", { chatTemplates: profiles }), /Profile gpt55p was removed/)
 })
 
 test("OpenCodez System selection sends the current minimal payload", async (context) => {

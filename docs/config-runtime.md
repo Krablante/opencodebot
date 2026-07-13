@@ -149,7 +149,7 @@ Each server in `servers.json` needs an `id` and `url`. The optional `home` field
 
 `defaultPrompt` is the fallback profile for Telegram-created sessions. It chooses the default OpenCodez server and the prompt metadata the bot can know before the first prompt: agent and model.
 
-`chatTemplates` are named launch profiles for `/new`; the key is retained for config compatibility and does not refer to the removed OpenCodez Template prompt kind. The built-in defaults are `d4flash`, `d4pro`, `luna`, `terra`, and `sol`. Runtime config is merged with those defaults, so you can add a profile or override an existing profile without copying every default.
+`chatTemplates` are named launch profiles for `/new` and `/reset [profile]`; the key is retained for config compatibility and does not refer to the removed OpenCodez Template prompt kind. The built-in defaults are `d4flash`, `d4pro`, `luna`, `terra`, and `sol`. Runtime config is merged with those defaults, so you can add a profile or override an existing profile without copying every default. `/reset` without an argument inherits the current binding's profile, while `/reset sol` changes the profile used by the next session in the same topic without changing that topic's server or directory.
 
 Each profile can define:
 

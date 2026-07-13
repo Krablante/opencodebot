@@ -20,6 +20,21 @@ export function parseNewTopicArgs(args, { servers, defaultServerID, chatTemplate
   return { serverID, title, titleSource, chatTemplateName, chatTemplate: chatTemplateName ? templates[chatTemplateName] : null, directory }
 }
 
+export function parseResetProfileArg(args, { chatTemplates }) {
+  const input = String(args || "").trim()
+  if (!input) return null
+  const parts = input.split(/\s+/)
+  if (parts.length !== 1) throw new Error("Usage: /reset [profile]")
+  const profile = parts[0]
+  if (profile === "gpt55p") throw new Error("Profile gpt55p was removed. Use luna, terra, or sol.")
+  const templates = chatTemplates || {}
+  if (!templates[profile]) {
+    const available = Object.keys(templates).sort().join(", ") || "none"
+    throw new Error(`Unknown profile ${profile}. Available profiles: ${available}.`)
+  }
+  return { chatTemplateName: profile, chatTemplate: templates[profile] }
+}
+
 export async function applyChatTemplate(opencode, serverID, sessionID, chatTemplate, options = {}) {
   if (!chatTemplate?.opencodezSystem) return
   await opencode.selectSystemPrompt(serverID, sessionID, chatTemplate.opencodezSystem, options)

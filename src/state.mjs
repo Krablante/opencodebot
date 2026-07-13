@@ -342,7 +342,7 @@ export class StateStore {
     })
   }
 
-  async resetBindingToPending(binding, reason = "topic-reset") {
+  async resetBindingToPending(binding, profile = null, reason = "topic-reset") {
     return this.update((data) => {
       const current = data.bindings.find(
         (item) => item.serverID === binding.serverID && item.sessionID === binding.sessionID && !item.disabled,
@@ -363,12 +363,23 @@ export class StateStore {
         titleSource: "user",
         serverID: current.serverID,
         directory: current.directory,
-        chatTemplateName: current.chatTemplateName,
-        chatTemplate: current.chatTemplate,
+        chatTemplateName: profile?.chatTemplateName || current.chatTemplateName,
+        chatTemplate: profile?.chatTemplate || current.chatTemplate,
         createdAt: now,
       })
       data.pendingTopics[String(current.topicId ?? 0)] = pending
       return { binding: { ...current }, pending: { ...pending } }
+    })
+  }
+
+  async updatePendingTopicProfile(topicId, profile) {
+    return this.update((data) => {
+      const pending = data.pendingTopics[String(topicId ?? 0)]
+      if (!pending) return null
+      pending.chatTemplateName = profile.chatTemplateName
+      pending.chatTemplate = profile.chatTemplate
+      pending.updatedAt = new Date().toISOString()
+      return { ...pending }
     })
   }
 
