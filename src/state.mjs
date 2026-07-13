@@ -50,12 +50,13 @@ export class StateStore {
   }
 
   async update(mutator) {
-    this.queue = this.queue.then(async () => {
+    const update = this.queue.then(async () => {
       const result = await mutator(this.data)
       await this.save()
       return result
     })
-    return this.queue
+    this.queue = update.catch(() => undefined)
+    return update
   }
 
   get chatId() {

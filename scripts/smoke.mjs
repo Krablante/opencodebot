@@ -233,6 +233,7 @@ async function smokeCoreFailureInvariants() {
   await smokeOpenCodeEventOrdering()
   await smokeOpenCodeRequestTimeout()
   await smokeStatePruning()
+  await smokeStateWriteRecovery()
   await smokeStrictConfigLoading()
   await smokeTelegramDownloadLimit()
 }
@@ -294,6 +295,27 @@ async function smokeStatePruning() {
     assert.equal(oversizedMessages.every((messageID) => state.isAssistantMirrored("nuc", "big", messageID)), true)
     await state.markAssistantMirrored("nuc", "big", "msg-300")
     assert.equal(state.data.mirroredAssistantBySession["nuc:big"].length, 301)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+async function smokeStateWriteRecovery() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-state-recovery-smoke-"))
+  const blockedParent = path.join(root, "blocked")
+  const statePath = path.join(blockedParent, "state.json")
+  try {
+    await writeFile(blockedParent, "not a directory")
+    const state = new StateStore(statePath)
+    await assert.rejects(() => state.setMirrorMode("full"))
+
+    await rm(blockedParent)
+    await mkdir(blockedParent)
+    await state.setMirrorMode("economy")
+
+    const reloaded = new StateStore(statePath)
+    await reloaded.load()
+    assert.equal(reloaded.data.telegram.mirrorMode, "economy")
   } finally {
     await rm(root, { recursive: true, force: true })
   }
