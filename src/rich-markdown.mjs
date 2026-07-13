@@ -1,4 +1,5 @@
 import { clampTelegram, clampTelegramRichMarkdown, escapeHtml } from "./telegram.mjs"
+import { normalizeNestedRichLists } from "./rich-list-normalization.mjs"
 
 export const FINAL_ANSWER_MARKER = "🏁"
 
@@ -9,7 +10,7 @@ export function closeOpenCodeFence(markdown) {
 }
 
 export function prepareRichMarkdown(markdown) {
-  return sanitizeRichMarkdownLinks(closeOpenCodeFence(clampTelegramRichMarkdown(markdown)))
+  return sanitizeRichMarkdownLinks(closeOpenCodeFence(clampTelegramRichMarkdown(normalizeNestedRichLists(markdown))))
 }
 
 export function withFinalAnswerMarker(text) {

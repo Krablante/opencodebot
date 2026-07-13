@@ -18,7 +18,7 @@ The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/eve
 - `/q` in-memory per-session prompt queue, with status/delete commands.
 - `/kill` to stop the current OpenCodez run for a topic and clear queued prompts.
 - `/reset` to preserve the old session and start fresh in the same Telegram topic.
-- Rich assistant messages sent as completed blocks instead of noisy token streaming.
+- Rich assistant messages sent as completed blocks instead of noisy token streaming; nested lists are structurally normalized to stable visual lines because Telegram Rich Message mis-renders list dedents.
 - Single-choice OpenCodez questions mirrored into the bound topic with Telegram buttons; configured recipients receive a direct notification linking to the question.
 - Global `/mode full|economy` mirror modes: full keeps compact expandable tool quotes, while economy shows assistant progress and final answers without Telegram tool traffic.
 - Both modes announce task/subagent spawns with a short robot notice that uses the web-visible task title; child-session prompts, tool logs, and results stay hidden.

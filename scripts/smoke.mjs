@@ -13,6 +13,7 @@ import { finalNotificationMarkdown, toolSummaryBeforeAssistant } from "../src/fi
 import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { MirrorRenderer, webPromptMessages } from "../src/render.mjs"
+import { normalizeNestedRichLists } from "../src/rich-list-normalization.mjs"
 import { bindingSessionReconcileRefresh, createSessionReconciler, shouldSkipAssistantForCatchup } from "../src/session-reconcile.mjs"
 import { normalizeSpeechConfig } from "../src/config/speech.mjs"
 import { SpeechModule, transcriptMessage } from "../src/speech/index.mjs"
@@ -32,6 +33,7 @@ await smokeRuntimeHealth(config, { explicit: Boolean(explicitConfigPath) })
 async function smokeLocalInvariants() {
   smokeConfigExample()
   smokeSyntheticTextFilter()
+  smokeNestedRichListNormalization()
   await smokeArtifactDropbox()
   await smokeArtifactPluginBatchCaptions()
   await smokeSpeechOpenRouterRequest()
@@ -55,6 +57,69 @@ async function smokeLocalInvariants() {
   await smokeKillSuppressesAbortFallout()
   await smokeQueueDrainsOnSessionIdle()
   await smokeIncompleteRunNotice()
+}
+
+function smokeNestedRichListNormalization() {
+  const simple = "1. one\n2. two\n"
+  const fenced = "```md\n1. parent\n   - child\n```"
+  assert.equal(normalizeNestedRichLists(simple), simple)
+  assert.equal(normalizeNestedRichLists(fenced), fenced)
+
+  const screenshotCase = [
+    "## Nested list",
+    "",
+    "1. First top-level item.",
+    "2. Item with **bold**, `code`, and [link](https://example.com).",
+    "3. Third top-level item.",
+    "4. Atomic transition:",
+    "",
+    "   - disable the old binding;",
+    "   - create pending state.",
+    "",
+    "5. Preserve settings:",
+    "",
+    "   - server and directory;",
+    "   - profile and title.",
+    "",
+    "6. Final top-level item.",
+  ].join("\n")
+  const normalized = normalizeNestedRichLists(screenshotCase)
+  assert.match(normalized, /1⁠\. First top-level item\.  \n/)
+  assert.match(normalized, /2⁠\. Item with \*\*bold\*\*, `code`, and \[link\]\(https:\/\/example\.com\)\.  \n/)
+  assert.match(normalized, /4⁠\. Atomic transition:  \n • disable the old binding;  \n • create pending state\.  \n5⁠\. Preserve settings:/)
+  assert.match(normalized, / • profile and title\.  \n6⁠\. Final top-level item\./)
+  assert.doesNotMatch(normalized, /\n\s+5⁠\./)
+
+  const deepMixed = [
+    "7. outer",
+    "   - nested unordered",
+    "     1. deeply nested ordered",
+    "   - nested sibling",
+    "8. outer sibling",
+  ].join("\n")
+  assert.equal(
+    normalizeNestedRichLists(deepMixed),
+    ["7⁠. outer  ", " • nested unordered  ", "  1⁠. deeply nested ordered  ", " • nested sibling  ", "8⁠. outer sibling"].join("\n"),
+  )
+
+  const quoted = ["> 1. parent", ">    - child", "> 2. back"].join("\n")
+  assert.equal(normalizeNestedRichLists(quoted), ["> 1⁠. parent  ", ">  • child  ", "> 2⁠. back"].join("\n"))
+
+  const taskAndCode = [
+    "1. [ ] task with code:",
+    "",
+    "   ```js",
+    "   const value = 1",
+    "   ```",
+    "",
+    "   - nested follow-up",
+    "2. back to top",
+  ].join("\n")
+  const codeNormalized = normalizeNestedRichLists(taskAndCode)
+  assert.match(codeNormalized, /1⁠\. \\\[ ] task with code:/)
+  assert.match(codeNormalized, /```js\nconst value = 1\n```/)
+  assert.match(codeNormalized, / • nested follow-up/)
+  assert.match(codeNormalized, /2⁠\. back to top/)
 }
 
 async function smokeMirrorModeCommands() {

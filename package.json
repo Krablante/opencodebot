@@ -33,5 +33,9 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "mdast-util-from-markdown": "2.0.3",
+    "mdast-util-to-markdown": "2.1.2"
   }
 }
