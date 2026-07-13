@@ -159,13 +159,13 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     })
     if (!origin) return {}
     if (String(topicId(message) ?? "") !== String(topicId(replied) ?? "")) {
-      return { error: "This reply points to a prompt from another topic, so nothing was sent." }
+      return { error: "Revert unavailable · other topic" }
     }
     if (origin.status !== "active") {
-      return { error: "This prompt is already part of an undone branch. Nothing was sent." }
+      return { error: "Revert unavailable · branch already replaced" }
     }
     if (!binding || origin.serverID !== binding.serverID || origin.sessionID !== binding.sessionID) {
-      return { error: "This prompt belongs to an earlier session. Nothing was sent to the current session." }
+      return { error: "Revert unavailable · old session" }
     }
     return { origin }
   }
@@ -174,10 +174,12 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     return `${message.chat.id}:${topicId(message)}:${message.from?.id || 0}`
   }
 
-  async function sendTelegramPrompt(binding, text, files = [], { sourceMessageId } = {}) {
+  async function sendTelegramPrompt(binding, text, files = [], { sourceMessageId, feedbackMode = "prompt" } = {}) {
     promptQueue.markBusy(binding)
     await activateBindingForPrompt(binding, "telegram-prompt")
-    const feedbackMessage = await sendPromptFeedback({ binding, text: promptFeedbackStartingText(), kind: "accepted" })
+    const feedbackMessage = feedbackMode === "rewind"
+      ? feedbackMessageFor(binding)
+      : await sendPromptFeedback({ binding, text: promptFeedbackStartingText(), kind: "accepted" })
     try {
       const profile = await currentProfile(binding)
       const preparedFiles = await prepareSavedFilesForServer(files, { server: opencode.server(binding.serverID), sessionID: binding.sessionID })
@@ -200,12 +202,13 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       if (await pinTelegramPromptMessage(binding, sourceMessageId, "telegram-prompt", { serviceMessageAfterId: feedbackMessage?.message_id })) {
         await state.markPendingPromptPinned(binding.serverID, binding.sessionID, text, sourceMessageId).catch(logError)
       }
-      await updatePromptFeedback(binding, promptFeedbackAcceptedText()).catch(logError)
+      await updatePromptFeedback(binding, feedbackMode === "rewind" ? rewindFeedbackRevertedText() : promptFeedbackAcceptedText()).catch(logError)
       scheduleReconcile(binding, 8000)
     } catch (error) {
       promptQueue.markSendFailed(binding)
       await state.removePendingPrompt(binding.serverID, binding.sessionID, text).catch(logError)
-      await reportPromptFeedbackError(binding, error).catch(logError)
+      if (feedbackMode === "rewind") await reportRewindStatus(binding, rewindFeedbackReplacementNotSentText()).catch(logError)
+      else await reportPromptFeedbackError(binding, error).catch(logError)
       throw error
     }
   }
@@ -227,32 +230,35 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       currentOrigin.sessionID !== binding.sessionID
     ) {
       await cleanupFiles(files)
-      await sendRewindError(message, "This prompt no longer belongs to the active session. Nothing was sent.")
+      await sendRewindError(message, "Revert unavailable · session changed")
       return
     }
-    await telegram.sendMessage({
-      chatId: message.chat.id,
-      topicId: topicId(message),
-      text: "↩️ Rewinding this branch and sending the replacement prompt…",
-    })
+    await sendPromptFeedback({ binding, text: rewindFeedbackStartingText(), kind: "rewind" })
 
     promptQueue.discardPending(binding)
-    const status = await opencode.sessionStatus(binding.serverID, binding.sessionID, { directory: binding.directory })
-    if (status.type !== "idle") {
-      promptQueue.markExpectedStop(binding, 45_000)
-      await opencode.abortSession(binding.serverID, binding.sessionID, { directory: binding.directory })
-      await opencode.waitForSessionIdle(binding.serverID, binding.sessionID, { directory: binding.directory, timeoutMs: 45_000 })
-      await promptQueue.waitForExpectedStop(binding)
+    let reverted = false
+    try {
+      const status = await opencode.sessionStatus(binding.serverID, binding.sessionID, { directory: binding.directory })
+      if (status.type !== "idle") {
+        promptQueue.markExpectedStop(binding, 45_000)
+        await opencode.abortSession(binding.serverID, binding.sessionID, { directory: binding.directory })
+        await opencode.waitForSessionIdle(binding.serverID, binding.sessionID, { directory: binding.directory, timeoutMs: 45_000 })
+        await promptQueue.waitForExpectedStop(binding)
+      }
+      await promptQueue.markBackendIdle(binding)
+      await promptQueue.markTerminalMirrored(binding)
+      await opencode.revertSession(binding.serverID, binding.sessionID, rewind.origin.opencodeMessageID, { directory: binding.directory })
+      reverted = true
+      await state.markPromptOriginsRewound(binding.serverID, binding.sessionID, rewind.origin.opencodeMessageID)
+      await promptQueue.sendNow(binding, text, files, { sourceMessageId: message.message_id, feedbackMode: "rewind" })
+    } catch (error) {
+      await reportRewindStatus(binding, reverted ? rewindFeedbackReplacementNotSentText() : rewindFeedbackFailedText()).catch(logError)
+      throw error
     }
-    await promptQueue.markBackendIdle(binding)
-    await promptQueue.markTerminalMirrored(binding)
-    await opencode.revertSession(binding.serverID, binding.sessionID, rewind.origin.opencodeMessageID, { directory: binding.directory })
-    await state.markPromptOriginsRewound(binding.serverID, binding.sessionID, rewind.origin.opencodeMessageID)
-    await promptQueue.sendNow(binding, text, files, { sourceMessageId: message.message_id })
   }
 
   async function sendRewindError(message, text) {
-    await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: `⚠️ ${text}` })
+    await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: `⚪ ${text}` })
   }
 
   async function activateBindingForPrompt(binding, reason) {
@@ -283,13 +289,13 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     if (kind === "accepted" && config.promptFeedback.accepted === false) return
     if (kind === "queued" && config.promptFeedback.queued === false) return
     if (kind === "error" && config.promptFeedback.errors === false) return
-    if (kind === "accepted" && binding) await clearPromptFeedback(binding)
+    if ((kind === "accepted" || kind === "rewind") && binding) await clearPromptFeedback(binding)
     const message = await telegram.sendMessage({
       chatId: binding?.chatId ?? chatId,
       topicId: binding?.topicId ?? targetTopicId,
       text,
     })
-    if (kind === "accepted" && binding && message?.message_id) {
+    if ((kind === "accepted" || kind === "rewind") && binding && message?.message_id) {
       promptFeedbackMessages.set(promptFeedbackKey(binding), { chatId: binding.chatId, messageId: message.message_id })
     }
     return message
@@ -306,6 +312,17 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     const text = `🔴 Prompt was not accepted\n🧯 ${escapeHtml(error.message)}`
     const updated = await updatePromptFeedback(binding, text).catch(() => false)
     if (!updated) await sendPromptFeedback({ binding, text, kind: "error" })
+  }
+
+  async function reportRewindStatus(binding, text) {
+    const updated = await updatePromptFeedback(binding, text).catch(() => false)
+    if (!updated) await sendPromptFeedback({ binding, text, kind: "rewind" })
+  }
+
+  function feedbackMessageFor(binding) {
+    const item = promptFeedbackMessages.get(promptFeedbackKey(binding))
+    if (!item) return undefined
+    return { message_id: item.messageId }
   }
 
   async function clearPromptFeedback(binding) {
@@ -374,6 +391,22 @@ function promptFeedbackStartingText() {
 
 function promptFeedbackAcceptedText() {
   return "🟢 Accepted by OpenCodez\n🧠 Waiting for the first events"
+}
+
+function rewindFeedbackStartingText() {
+  return "🟡 Reverting…"
+}
+
+function rewindFeedbackRevertedText() {
+  return "🟢 Reverted"
+}
+
+function rewindFeedbackFailedText() {
+  return "🔴 Revert failed"
+}
+
+function rewindFeedbackReplacementNotSentText() {
+  return "🟠 Reverted · replacement not sent"
 }
 
 function telegramPromptMessageID() {
