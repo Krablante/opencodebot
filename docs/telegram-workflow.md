@@ -81,6 +81,14 @@ After a Telegram prompt is handed to OpenCodez, the bot sends a short acknowledg
 
 Telegram-origin prompts can include attachments. The bot downloads supported files into its local staging uploads directory. Small files are sent to OpenCodez as data URL file parts next to the prompt text. Larger accepted files are copied to the selected server's configured `uploadRoot`, and the prompt receives that server-local path. Files with captions flush as one prompt after media groups settle. Files without captions wait for plain text from the same user/topic; if Telegram splits that text into near-limit chunks, those chunks are collected until the short attachment-text idle window settles and then sent with the files as one prompt.
 
+### Reply-to-rewind
+
+Reply to an earlier Telegram **user prompt** in an active bound topic to replace that turn. The reply may contain text, attachments, or both. The bot stores a compact durable link from the Telegram message id to the exact OpenCodez user-message id; it does not retain prompt text or attachment contents for this feature, and the link survives a bot restart.
+
+For a valid reply, the bot discards later queued prompts, aborts an active run when necessary, waits for the OpenCodez session to become idle, calls OpenCodez's session-revert API at the replied user message, and sends the reply as the replacement prompt. OpenCodez restores the saved working-tree state and removes the reverted branch as it accepts that replacement prompt.
+
+The guard is intentionally strict: the replied prompt must belong to the same active `(server, session, Telegram topic)` binding. A reply to a prompt from before `/reset`, another topic, a closed session, or a branch already rewound is rejected and is never silently sent to the current session. A reply to an unrelated Telegram message keeps normal prompt behavior. Prompts created before this feature was deployed have no durable Telegram-to-OpenCodez link and therefore cannot trigger a rewind.
+
 ```text
 dima upload root: /home/dima/.opencodebot/uploads
 ```

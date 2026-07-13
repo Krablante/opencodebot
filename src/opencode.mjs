@@ -58,6 +58,31 @@ export class OpenCodeClient {
     })
   }
 
+  async revertSession(serverID, sessionID, messageID, options = {}) {
+    return this.request(this.server(serverID), `/session/${encodeURIComponent(sessionID)}/revert`, {
+      ...options,
+      method: "POST",
+      body: { messageID },
+    })
+  }
+
+  async sessionStatus(serverID, sessionID, options = {}) {
+    const statuses = await this.request(this.server(serverID), "/session/status", options)
+    return statuses?.[sessionID] || { type: "idle" }
+  }
+
+  async waitForSessionIdle(serverID, sessionID, options = {}) {
+    const timeoutMs = options.timeoutMs || 30_000
+    const intervalMs = options.intervalMs || 400
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const status = await this.sessionStatus(serverID, sessionID, options)
+      if (status.type === "idle") return
+      await delay(intervalMs, options.signal)
+    }
+    throw new Error("OpenCodez session did not become idle before undo timed out")
+  }
+
   async selectSystemPrompt(serverID, sessionID, name, options = {}) {
     return this.request(this.server(serverID), "/opencodez/prompts/select", {
       ...options,
@@ -159,7 +184,7 @@ function cleanDirectory(value) {
   return trimmed || undefined
 }
 
-export function promptPayload(text, profile, files = []) {
+export function promptPayload(text, profile, files = [], messageID) {
   const inlineFiles = (files || []).filter((file) => file?.type !== "saved_file" && file?.url)
   const savedFiles = (files || []).filter((file) => file?.type === "saved_file")
   const promptText = [savedFilesText(savedFiles), text].filter(Boolean).join("\n\n")
@@ -167,6 +192,7 @@ export function promptPayload(text, profile, files = []) {
     parts: [...fileParts(inlineFiles), { type: "text", text: promptText }],
   }
   if (profile?.agent) payload.agent = profile.agent
+  if (messageID) payload.messageID = messageID
   if (profile?.model) {
     const model = normalizeModel(profile.model)
     payload.model = { providerID: model.providerID, modelID: model.modelID }

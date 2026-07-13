@@ -16,7 +16,7 @@ export class AttachmentBuffer {
     if (!this.settings.enabled) return { status: "disabled" }
     if (!files.length) return { status: "empty" }
     const entry = this.entry(key, context)
-    entry.context = context
+    entry.context = mergePromptContext(entry.context, context)
     if (flushPrompt) entry.flushPrompt = flushPrompt
     entry.files.push(...files)
     if (mediaGroupID) entry.mediaGroupID = mediaGroupID
@@ -41,7 +41,7 @@ export class AttachmentBuffer {
     if (!entry) return false
     const cleanText = String(text || "").trim()
     if (!cleanText) return false
-    entry.context = context
+    entry.context = mergePromptContext(entry.context, context)
     entry.textParts.push(cleanText)
     this.scheduleTextFlush(key, entry)
     return true
@@ -138,6 +138,16 @@ export class AttachmentBuffer {
     await cleanupFiles(entry.files)
     await this.onExpire?.(entry.context, entry.files)
   }
+}
+
+function mergePromptContext(current, next) {
+  const currentTarget = current?.rewind?.origin?.opencodeMessageID
+  const nextTarget = next?.rewind?.origin?.opencodeMessageID
+  if (currentTarget && nextTarget && currentTarget !== nextTarget) {
+    throw new Error("All attachments in one prompt must reply to the same earlier prompt")
+  }
+  if (currentTarget && !nextTarget) return { ...next, rewind: current.rewind }
+  return next
 }
 
 export function extractTelegramFiles(message) {

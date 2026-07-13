@@ -18,6 +18,7 @@ The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/eve
 - `/q` in-memory per-session prompt queue, with status/delete commands.
 - `/kill` to stop the current OpenCodez run for a topic and clear queued prompts.
 - `/reset` to preserve the old session and start fresh in the same Telegram topic.
+- Reply to an earlier Telegram user prompt to rewind that OpenCodez branch and replace it with the reply text and attachments.
 - Rich assistant messages sent as completed blocks instead of noisy token streaming; nested lists are structurally normalized to stable visual lines because Telegram Rich Message mis-renders list dedents.
 - Single-choice OpenCodez questions mirrored into the bound topic with Telegram buttons; configured recipients receive a direct notification linking to the question.
 - Global `/mode full|economy` mirror modes: full keeps compact expandable tool quotes, while economy shows assistant progress and final answers without Telegram tool traffic.
@@ -146,6 +147,8 @@ If a run becomes idle without producing a terminal assistant answer or an explic
 Use `/kill` inside an existing OpenCodez topic when you want to stop the current run. It sends OpenCodez's session abort request and clears that topic's queued prompts, but it does not delete the session or the Telegram topic.
 
 Use `/reset [profile]` when the Telegram thread should stay but its OpenCodez context should start over. With no argument, the new session inherits the current chat profile; `/reset sol` or `/reset terra` selects another configured profile while preserving the current server and directory. The profile is validated before the bot aborts the old run. The bot then clears queued or partially buffered input, atomically disables the old binding, and leaves the same topic waiting for its first prompt. That prompt creates a new OpenCodez session with the selected profile plus the previous server, directory, topic title, and icon metadata. Reset makes the current Telegram topic title user-owned, so the new session cannot rename the reused thread. The old session is preserved in OpenCodez. While the topic is already pending, `/reset terra` updates its waiting profile without creating or aborting a session. Reset is rejected in `#General`, artifacts, sounds, or otherwise unbound topics.
+
+To replace an earlier turn, reply to that Telegram user prompt with the corrected text, attachments, or both. The bot stops an active run if necessary, discards later queued input, asks OpenCodez to rewind at that exact user message, then sends the reply as the replacement prompt. It only does this when the replied message belongs to the active OpenCodez session for the same topic. Replies to a prompt from before `/reset`, a different topic, or an already undone branch are rejected without sending anything to the current session. The reply-to-rewind association is durable across bot restarts, but it is available only for prompts sent after this feature was deployed.
 
 Use `/session` inside a topic when you want to see what Telegram topic is bound to which OpenCodez server/session. It also shows the web session URL, a pending reset waiting for its first prompt, and whether the current topic is the artifacts target.
 

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { formatDuration } from "./backend-backoff.mjs"
 import { AttachmentBuffer, cleanupFiles, downloadTelegramFiles } from "./attachments.mjs"
 import { applyChatTemplate } from "./chat-templates.mjs"
@@ -23,10 +24,23 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
   const promptQueue = new PromptQueue(sendTelegramPrompt, { onDrop: cleanupFiles })
 
   async function queueTelegramPrompt(key, text, context) {
+    if (context?.rewindError) {
+      await sendRewindError(context.message, context.rewindError)
+      return
+    }
     await multipartPrompts.push(key, text, context)
   }
 
   async function flushTelegramPrompt(context, text, files = []) {
+    if (context.rewindError) {
+      await cleanupFiles(files)
+      await sendRewindError(context.message, context.rewindError)
+      return
+    }
+    if (context.rewind) {
+      await rewindTelegramPrompt(context, text, files)
+      return
+    }
     const sourceMessageId = context.message?.message_id
     if (context.binding) {
       await sendTelegramPrompt(context.binding, text, files, { sourceMessageId })
@@ -63,6 +77,10 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       return
     }
     const context = promptContext(message)
+    if (context?.rewindError) {
+      await sendRewindError(message, context.rewindError)
+      return
+    }
     if (!context) {
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "No OpenCodez session is bound to this topic. Create one with /new, then send files here." })
       return
@@ -94,6 +112,11 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
 
   async function flushAttachmentText(message, promptKey, text) {
     const context = promptContext(message)
+    if (context?.rewindError) {
+      await attachmentBuffer.discard(promptKey)
+      await sendRewindError(message, context.rewindError)
+      return
+    }
     if (!context) {
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "No OpenCodez session is bound to this topic. Create one with /new first." })
       return
@@ -116,10 +139,35 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
 
   function promptContext(message) {
     const binding = state.findBindingByTopic(message.chat.id, topicId(message))
-    if (binding) return { message, binding }
+    const rewind = resolveReplyRewind(message, binding)
+    if (rewind.error) return { message, rewindError: rewind.error }
+    if (binding) return { message, binding, rewind: rewind.origin ? rewind : undefined }
     const pending = state.pendingTopic(topicId(message))
     if (pending) return { message, pending }
     return null
+  }
+
+  function resolveReplyRewind(message, binding) {
+    const replied = message.reply_to_message
+    const telegramMessageID = Number(replied?.message_id)
+    if (!Number.isSafeInteger(telegramMessageID)) return {}
+
+    const origin = state.findPromptOrigin({
+      chatID: message.chat.id,
+      topicID: topicId(replied),
+      telegramMessageID,
+    })
+    if (!origin) return {}
+    if (String(topicId(message) ?? "") !== String(topicId(replied) ?? "")) {
+      return { error: "This reply points to a prompt from another topic, so nothing was sent." }
+    }
+    if (origin.status !== "active") {
+      return { error: "This prompt is already part of an undone branch. Nothing was sent." }
+    }
+    if (!binding || origin.serverID !== binding.serverID || origin.sessionID !== binding.sessionID) {
+      return { error: "This prompt belongs to an earlier session. Nothing was sent to the current session." }
+    }
+    return { origin }
   }
 
   function multipartPromptKey(message) {
@@ -133,13 +181,22 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     try {
       const profile = await currentProfile(binding)
       const preparedFiles = await prepareSavedFilesForServer(files, { server: opencode.server(binding.serverID), sessionID: binding.sessionID })
+      const opencodeMessageID = telegramPromptMessageID()
       await state.addPendingPrompt({
         serverID: binding.serverID,
         sessionID: binding.sessionID,
         hash: promptHash(text),
         messageId: sourceMessageId,
       })
-      await opencode.promptAsync(binding.serverID, binding.sessionID, promptPayload(text, profile, preparedFiles), { directory: binding.directory })
+      await opencode.promptAsync(binding.serverID, binding.sessionID, promptPayload(text, profile, preparedFiles, opencodeMessageID), { directory: binding.directory })
+      await state.recordPromptOrigin({
+        chatID: binding.chatId,
+        topicID: binding.topicId,
+        telegramMessageID: sourceMessageId,
+        serverID: binding.serverID,
+        sessionID: binding.sessionID,
+        opencodeMessageID,
+      })
       if (await pinTelegramPromptMessage(binding, sourceMessageId, "telegram-prompt", { serviceMessageAfterId: feedbackMessage?.message_id })) {
         await state.markPendingPromptPinned(binding.serverID, binding.sessionID, text, sourceMessageId).catch(logError)
       }
@@ -151,6 +208,51 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       await reportPromptFeedbackError(binding, error).catch(logError)
       throw error
     }
+  }
+
+  async function rewindTelegramPrompt(context, text, files) {
+    const { message, rewind } = context
+    const binding = state.findBindingByTopic(message.chat.id, topicId(message))
+    const currentOrigin = state.findPromptOrigin({
+      chatID: message.chat.id,
+      topicID: topicId(message.reply_to_message),
+      telegramMessageID: message.reply_to_message?.message_id,
+    })
+    if (
+      !binding ||
+      !currentOrigin ||
+      currentOrigin.status !== "active" ||
+      currentOrigin.opencodeMessageID !== rewind.origin.opencodeMessageID ||
+      currentOrigin.serverID !== binding.serverID ||
+      currentOrigin.sessionID !== binding.sessionID
+    ) {
+      await cleanupFiles(files)
+      await sendRewindError(message, "This prompt no longer belongs to the active session. Nothing was sent.")
+      return
+    }
+    await telegram.sendMessage({
+      chatId: message.chat.id,
+      topicId: topicId(message),
+      text: "↩️ Rewinding this branch and sending the replacement prompt…",
+    })
+
+    promptQueue.discardPending(binding)
+    const status = await opencode.sessionStatus(binding.serverID, binding.sessionID, { directory: binding.directory })
+    if (status.type !== "idle") {
+      promptQueue.markExpectedStop(binding, 45_000)
+      await opencode.abortSession(binding.serverID, binding.sessionID, { directory: binding.directory })
+      await opencode.waitForSessionIdle(binding.serverID, binding.sessionID, { directory: binding.directory, timeoutMs: 45_000 })
+      await promptQueue.waitForExpectedStop(binding)
+    }
+    await promptQueue.markBackendIdle(binding)
+    await promptQueue.markTerminalMirrored(binding)
+    await opencode.revertSession(binding.serverID, binding.sessionID, rewind.origin.opencodeMessageID, { directory: binding.directory })
+    await state.markPromptOriginsRewound(binding.serverID, binding.sessionID, rewind.origin.opencodeMessageID)
+    await promptQueue.sendNow(binding, text, files, { sourceMessageId: message.message_id })
+  }
+
+  async function sendRewindError(message, text) {
+    await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: `⚠️ ${text}` })
   }
 
   async function activateBindingForPrompt(binding, reason) {
@@ -272,6 +374,10 @@ function promptFeedbackStartingText() {
 
 function promptFeedbackAcceptedText() {
   return "🟢 Accepted by OpenCodez\n🧠 Waiting for the first events"
+}
+
+function telegramPromptMessageID() {
+  return `msg_tg_${randomUUID().replaceAll("-", "")}`
 }
 
 function parseQueueCaption(caption) {

@@ -37,6 +37,14 @@ export class PromptQueue {
     return false
   }
 
+  async waitForExpectedStop(binding, timeoutMs = 10_000) {
+    const deadline = Date.now() + timeoutMs
+    while (this.hasExpectedStop(binding)) {
+      if (Date.now() >= deadline) throw new Error("OpenCodez idle event did not arrive after stopping the run")
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+  }
+
   async enqueue(binding, text, files = [], metadata = {}) {
     if (!Array.isArray(files)) {
       metadata = files || {}
@@ -88,6 +96,13 @@ export class PromptQueue {
     state.items = []
     items.forEach((item) => this.dropItem(item))
     return cleared
+  }
+
+  discardPending(binding) {
+    const state = this.state(binding)
+    const items = state.items.splice(0)
+    items.forEach((item) => this.dropItem(item))
+    return items.length
   }
 
   async markBackendIdle(binding) {

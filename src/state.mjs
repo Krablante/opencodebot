@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 
 const MIRRORED_SESSION_BUCKET_LIMIT = 250
+const MAX_PROMPT_ORIGINS = 5_000
 
 export class StateStore {
   constructor(filePath) {
@@ -17,6 +18,7 @@ export class StateStore {
       this.data.bindings ||= []
       this.data.pendingTopics ||= {}
       this.data.pendingPrompts ||= []
+      this.data.promptOrigins ||= []
       this.data.mirroredAssistantBySession ||= {}
       this.data.mirroredUserBySession ||= {}
       this.data.finalNotifications ||= { enabledUserIds: [], sentMessages: [] }
@@ -431,6 +433,70 @@ export class StateStore {
         (item) => !(item.serverID === serverID && item.sessionID === sessionID && item.hash === hash),
       )
     })
+  }
+
+  // Durable Telegram -> OpenCodez prompt links. They make reply-to-rewind safe
+  // across bot restarts without retaining prompt text or attachment contents.
+
+  findPromptOrigin({ chatID, topicID, telegramMessageID }) {
+    const chat = String(chatID)
+    const topic = String(topicID ?? "")
+    const messageID = Number(telegramMessageID)
+    if (!Number.isSafeInteger(messageID)) return null
+
+    for (let index = this.data.promptOrigins.length - 1; index >= 0; index -= 1) {
+      const origin = this.data.promptOrigins[index]
+      if (origin.chatID !== chat || origin.topicID !== topic || origin.telegramMessageID !== messageID) continue
+      return { ...origin }
+    }
+    return null
+  }
+
+  async recordPromptOrigin({ chatID, topicID, telegramMessageID, serverID, sessionID, opencodeMessageID }) {
+    const origin = {
+      chatID: String(chatID),
+      topicID: String(topicID ?? ""),
+      telegramMessageID: Number(telegramMessageID),
+      serverID: String(serverID),
+      sessionID: String(sessionID),
+      opencodeMessageID: String(opencodeMessageID),
+      status: "active",
+      createdAt: new Date().toISOString(),
+    }
+    if (!Number.isSafeInteger(origin.telegramMessageID)) throw new Error("Telegram message id is required to record prompt origin")
+
+    return this.update((data) => {
+      data.promptOrigins ||= []
+      const existing = data.promptOrigins.findIndex(
+        (item) =>
+          item.chatID === origin.chatID &&
+          item.topicID === origin.topicID &&
+          item.telegramMessageID === origin.telegramMessageID,
+      )
+      if (existing >= 0) data.promptOrigins.splice(existing, 1)
+      data.promptOrigins.push(origin)
+      if (data.promptOrigins.length > MAX_PROMPT_ORIGINS) data.promptOrigins.splice(0, data.promptOrigins.length - MAX_PROMPT_ORIGINS)
+    })
+  }
+
+  async markPromptOriginsRewound(serverID, sessionID, targetMessageID) {
+    const server = String(serverID)
+    const session = String(sessionID)
+    const target = String(targetMessageID)
+    let rewound = 0
+
+    await this.update((data) => {
+      let afterTarget = false
+      for (const origin of data.promptOrigins || []) {
+        if (origin.serverID !== server || origin.sessionID !== session) continue
+        if (origin.opencodeMessageID === target) afterTarget = true
+        if (!afterTarget || origin.status !== "active") continue
+        origin.status = "rewound"
+        origin.rewoundAt = new Date().toISOString()
+        rewound += 1
+      }
+    })
+    return rewound
   }
 
   // Final-answer DM notification preferences and dedupe markers.
