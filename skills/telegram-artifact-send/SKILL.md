@@ -21,7 +21,7 @@ Use this only when Telegram delivery is explicit. Good triggers include “send 
 
 ## Mode Guide
 
-Use `auto` for ordinary files and images when no special handling matters. Use `photo` for images/screenshots that should render inline in Telegram. Use `document` for exact file delivery, archives, PDFs, raw screenshots, and logs as files. Use `text` for pasted output, short logs, snippets, or notes that should appear as an expandable quote.
+Use `auto` for ordinary files and images. It chooses inline photo only when Telegram accepts the original; oversized or rejected photos become lossless documents automatically. Use `photo` only as an inline-display preference, never as a size guarantee. Use `document` for exact file delivery, archives, PDFs, raw screenshots, and logs as files. Use `text` for pasted output, short logs, snippets, or notes that should appear as an expandable quote.
 
 ## Path Quote
 
@@ -41,7 +41,7 @@ Examples:
 {
   "path": "/tmp/opencodebot-smoke.png",
   "caption": "nuc/opencodebot/screenshot/artifact gateway smoke",
-  "mode": "photo"
+  "mode": "auto"
 }
 ```
 
@@ -49,7 +49,7 @@ Examples:
 {
   "paths": ["./screenshots/home.png", "./screenshots/settings.png"],
   "caption": "nuc/opencodebot/screenshots/settings check",
-  "mode": "photo"
+  "mode": "auto"
 }
 ```
 

@@ -105,8 +105,8 @@ async function sendFileWithAutoFallback({ telegram, target, file, caption, metho
       : await telegram.sendDocument({ chatId: target.chatId, topicId: target.topicId, file, caption, captionFormat: "html" })
     return { method, message }
   } catch (error) {
-    if (mode !== "auto" || method !== "sendPhoto") throw error
-    logWarn("artifacts.photo_fallback", { filename: file.filename, bytes: fileSize(file), contentType: file.contentType })
+    if (method !== "sendPhoto") throw error
+    logWarn("artifacts.photo_fallback", { requestedMode: mode, filename: file.filename, bytes: fileSize(file), contentType: file.contentType })
     const message = await telegram.sendDocument({ chatId: target.chatId, topicId: target.topicId, file, caption, captionFormat: "html" })
     return { method: "sendDocument", message }
   }
@@ -141,7 +141,6 @@ function fileFromPayload(file, maxFileBytes) {
 }
 
 function fileSendMethod(mode, file) {
-  if (mode === "photo") return "sendPhoto"
   if (mode === "document") return "sendDocument"
   if (PHOTO_TYPES.has(file.contentType) && fileSize(file) <= TELEGRAM_PHOTO_MAX_BYTES) return "sendPhoto"
   return "sendDocument"

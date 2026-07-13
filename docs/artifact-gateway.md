@@ -129,7 +129,7 @@ The metadata JSON accepts the same top-level fields as `/artifacts/send`, plus s
 }
 ```
 
-`mode` can be `auto`, `photo`, `document`, or `text`. `auto` sends suitable JPEG/PNG/WebP files as Telegram photos and everything else as documents. Text artifacts are sent as Telegram MarkdownV2 expandable quotes. In cloud Bot API mode, the gateway keeps the conservative 50 MiB file limit. In local Bot API mode, streamed files are spooled under the shared local Bot API volume and sent to Telegram by local file path, allowing the local Bot API 2 GB file limit. The gateway keeps Telegram-visible file names clean by placing each streamed upload in a unique spool directory and preserving the requested file name as the local file basename.
+`mode` can be `auto`, `photo`, `document`, or `text`. `auto` sends suitable JPEG/PNG/WebP files as Telegram photos and everything else as documents. `photo` is a display preference: an oversized or incompatible image is sent as a document instead, and a Telegram photo rejection is retried as a document. The original file remains lossless in every document path. Text artifacts are sent as Telegram MarkdownV2 expandable quotes. In cloud Bot API mode, the gateway keeps the conservative 50 MiB file limit. In local Bot API mode, streamed files are spooled under the shared local Bot API volume and sent to Telegram by local file path, allowing the local Bot API 2 GB file limit. The gateway keeps Telegram-visible file names clean by placing each streamed upload in a unique spool directory and preserving the requested file name as the local file basename.
 
 ## OpenCodez Plugin Setup
 
@@ -207,15 +207,16 @@ Use full `docker compose up -d --build` instead when Compose services or the Tel
 
 If the update changed `plugins/opencodebot-artifacts/`, refresh the plugin package wherever OpenCodez loads it. If the update changed `skills/telegram-artifact-send/`, refresh the whole skill directory in the OpenCodez skills location, including `agents/openai.yaml`.
 
-Restart every OpenCodez service whose plugin or skill copy changed. Running agents may not reload plugin code or skill metadata until the service restarts. In Politia, use the harness deploy script for this rollout; when operating from `nuc`, restart `nuc` last and deferred.
+Restart every permitted OpenCodez service whose plugin or skill copy changed. Running agents may not reload plugin code or skill metadata until the service restarts. In Politia, use the harness deploy script for this rollout; when a host must remain running, stage its managed files with `--skip-restart-host HOST` and restart it only during an approved maintenance window.
 
 ## Verification
 
 1. Run `/artifacts_here` in the desired Telegram forum topic.
 2. Check gateway status with the artifact token.
 3. Send a text artifact through the plugin.
-4. Send an image file and confirm Telegram shows it as a photo when `mode` is `auto`.
-5. Send a non-image file and confirm Telegram receives it as a document.
+4. Send a small image file and confirm Telegram shows it as a photo when `mode` is `auto`.
+5. Send an oversized image with `mode` set to `photo` and confirm Telegram receives the unchanged file as a document.
+6. Send a non-image file and confirm Telegram receives it as a document.
 
 ## Update Prompt
 

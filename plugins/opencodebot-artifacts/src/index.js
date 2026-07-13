@@ -19,7 +19,7 @@ Use this only when the user explicitly asks to send, upload, share, or forward s
         paths: { type: "array", items: { type: "string" }, description: "Multiple local file paths to send as one batch. Relative paths resolve from the current project directory. file:// URLs are supported." },
         text: { type: "string", description: "Text to send as an expandable quote." },
         caption: { type: "string", minLength: 1, description: "Short context shown with the artifact. Include host/project/action/reason." },
-        mode: { type: "string", enum: ["auto", "photo", "document", "text"], description: "How to send the artifact. auto chooses photo for suitable images and document otherwise." },
+        mode: { type: "string", enum: ["auto", "photo", "document", "text"], description: "How to send the artifact. auto chooses photo for small compatible images and document otherwise; oversized or rejected photos automatically fall back to document." },
         filename: { type: "string", description: "Filename override when sending file bytes." },
         contentType: { type: "string", description: "MIME type override for file bytes." },
         maxBytes: { type: "number", description: "Maximum local file size to stream, in bytes. Defaults to 2 GB; the gateway may enforce a lower cloud-mode limit." },
