@@ -3,6 +3,7 @@ import { escapeHtml, topicId } from "./telegram.mjs"
 
 export const telegramBotCommands = [
   { command: "new", description: "Create a new OpenCodez session topic" },
+  { command: "reset", description: "Start fresh in this topic" },
   { command: "session", description: "Show topic, session, and special topic status" },
   { command: "artifacts_here", description: "Use this topic for agent artifact uploads" },
   { command: "sounds_here", description: "Transcribe voice/audio in this topic" },
@@ -20,7 +21,19 @@ export const telegramBotCommands = [
   { command: "start", description: "Show help" },
 ]
 
-export function createTelegramCommandHandlers({ config, state, telegram, opencode, promptQueue, multipartPrompts, createPendingTopic, speech, questionManager }) {
+export function createTelegramCommandHandlers({
+  config,
+  state,
+  telegram,
+  opencode,
+  promptQueue,
+  multipartPrompts,
+  createPendingTopic,
+  discardAttachmentBatch = async () => 0,
+  detachBinding = () => {},
+  speech,
+  questionManager,
+}) {
   const handlers = {
     mirror_on: async (message) => {
       await state.setMirrorEnabled(true)
@@ -36,6 +49,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
     sounds_status: handleSoundsStatus,
     session: handleSessionInfo,
     new: createPendingTopic,
+    reset: handleResetCommand,
     help: sendHelp,
     start: sendHelp,
     q: handleQueueCommand,
@@ -51,8 +65,8 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
       const handler = handlers[command.name]
       if (!handler) return false
       if (command.name === "kill") multipartPrompts.discardKey?.(promptKey)
-      else await multipartPrompts.flushKey(promptKey)
-      await handler(message, command.args)
+      else if (command.name !== "reset") await multipartPrompts.flushKey(promptKey)
+      await handler(message, command.args, promptKey)
       return true
     },
     async handleCallback(query) {
@@ -148,6 +162,94 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
       cleared.length ? `Cleared ${cleared.length} queued prompt(s).` : "No queued prompts were pending.",
     ]
     await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: lines.join("\n") })
+  }
+
+  async function handleResetCommand(message, _args, promptKey) {
+    const currentTopicId = topicId(message)
+    if (!currentTopicId) {
+      await telegram.sendMessage({ chatId: message.chat.id, text: "Run /reset inside an active OpenCodez session topic." })
+      return
+    }
+    if (state.isArtifactsTopic(message.chat.id, currentTopicId) || state.isSoundsTopic(message.chat.id, currentTopicId)) {
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: currentTopicId,
+        text: "This special-purpose topic cannot be reset into an OpenCodez session topic.",
+      })
+      return
+    }
+
+    const binding = state.findBindingByTopic(message.chat.id, currentTopicId)
+    if (!binding) {
+      const pending = state.pendingTopic(currentTopicId)
+      const discardedMultipart = pending ? multipartPrompts.discardKey?.(promptKey) || false : false
+      const discardedAttachments = pending ? await discardAttachmentBatch(promptKey) : 0
+      const discarded = [
+        discardedMultipart ? "unfinished multipart prompt" : null,
+        discardedAttachments
+          ? `${discardedAttachments} buffered attachment${discardedAttachments === 1 ? "" : "s"}`
+          : null,
+      ].filter(Boolean)
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: currentTopicId,
+        text: pending
+          ? `🟡 This topic is already waiting for its first prompt.${discarded.length ? ` Discarded: ${discarded.join(", ")}.` : ""}`
+          : "No active OpenCodez session is bound here. Use /new to create a session topic.",
+      })
+      return
+    }
+    if (!opencode?.abortSession) {
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: "OpenCodez abort API is not available." })
+      return
+    }
+
+    promptQueue.markExpectedStop(binding)
+    try {
+      await opencode.abortSession(binding.serverID, binding.sessionID, { directory: binding.directory })
+    } catch (error) {
+      promptQueue.clearExpectedStop(binding)
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: currentTopicId,
+        text: `Reset failed while stopping the current OpenCodez session.\n<code>${escapeHtml(error.message)}</code>`,
+      })
+      return
+    }
+
+    const cleared = promptQueue.clear(binding, "Discarded by /reset")
+    const discardedMultipart = multipartPrompts.discardKey?.(promptKey) || false
+    const discardedAttachments = await discardAttachmentBatch(promptKey)
+    const reset = await state.resetBindingToPending(binding)
+    if (!reset) {
+      promptQueue.clearExpectedStop(binding)
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: currentTopicId,
+        text: "The topic binding changed while it was being reset. Check /session before retrying.",
+      })
+      return
+    }
+    detachBinding(binding)
+
+    const discarded = []
+    if (cleared.length) discarded.push(`${cleared.length} queued prompt${cleared.length === 1 ? "" : "s"}`)
+    if (discardedMultipart) discarded.push("an unfinished multipart prompt")
+    if (discardedAttachments) {
+      discarded.push(`${discardedAttachments} buffered attachment${discardedAttachments === 1 ? "" : "s"}`)
+    }
+    await telegram.sendMessage({
+      chatId: message.chat.id,
+      topicId: currentTopicId,
+      text: [
+        "🆕 <b>Fresh session ready</b>",
+        `Previous session <code>${escapeHtml(binding.sessionID)}</code> was preserved in OpenCodez and detached from this topic.`,
+        discarded.length ? `Discarded: ${escapeHtml(discarded.join(", "))}.` : null,
+        "Send the first prompt to create a new session here.",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    })
   }
 
   async function handleSoundsHere(message) {
@@ -278,8 +380,11 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
   async function handleSessionInfo(message) {
     const currentTopicId = topicId(message)
     const activeBinding = state.findBindingByTopic(message.chat.id, currentTopicId)
-    const storedBinding = activeBinding || state.findAnyBindingByTopic(message.chat.id, currentTopicId)
-    const server = storedBinding ? config.opencode.servers.find((item) => item.id === storedBinding.serverID) : null
+    const pending = activeBinding ? null : state.pendingTopic(currentTopicId)
+    const previousBinding = state.findAnyBindingByTopic(message.chat.id, currentTopicId)
+    const storedBinding = activeBinding || (!pending ? previousBinding : null)
+    const serverID = storedBinding?.serverID || pending?.serverID
+    const server = serverID ? config.opencode.servers.find((item) => item.id === serverID) : null
     const artifactsTopic = state.artifactsTopic()
     const thisIsArtifactsTopic = state.isArtifactsTopic(message.chat.id, currentTopicId)
     const soundsTopic = state.soundsTopic()
@@ -303,7 +408,18 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
       `message_id: <code>${escapeHtml(String(message.message_id))}</code>`,
       "",
     ]
-    if (storedBinding) {
+    if (pending) {
+      lines.push(
+        "🔗 <b>Binding</b>",
+        "status: 🟡 waiting for first prompt",
+        `server: <code>${escapeHtml(pending.serverID || "")}</code>`,
+        previousBinding?.sessionID
+          ? `previous session: <code>${escapeHtml(previousBinding.sessionID)}</code> (preserved in OpenCodez)`
+          : null,
+        pending.title ? `title: <code>${escapeHtml(pending.title)}</code>` : null,
+        "",
+      )
+    } else if (storedBinding) {
       lines.push(
         "🔗 <b>Binding</b>",
         `status: ${activeBinding ? "🟢 active" : "⚪ disabled"}`,
@@ -362,6 +478,7 @@ export function createTelegramCommandHandlers({ config, state, telegram, opencod
       "<b>OpenCodez Bot</b>",
       "",
       "<code>/new [server] [profile] [dir:&lt;path&gt;] [title]</code> - create a topic and wait for the first prompt.",
+      "<code>/reset</code> - preserve the old session and start fresh in the current topic.",
       "<code>/session</code> - show current topic, binding, session URL, and special topic status.",
       "<code>/q &lt;prompt&gt;</code> - queue a prompt for this topic/session.",
       "<code>/q status</code> - show queued prompts.",

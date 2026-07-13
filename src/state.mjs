@@ -338,6 +338,35 @@ export class StateStore {
     })
   }
 
+  async resetBindingToPending(binding, reason = "topic-reset") {
+    return this.update((data) => {
+      const current = data.bindings.find(
+        (item) => item.serverID === binding.serverID && item.sessionID === binding.sessionID && !item.disabled,
+      )
+      if (!current) return null
+
+      const now = new Date().toISOString()
+      current.disabled = true
+      current.disabledReason = reason
+      current.disabledAt = now
+      const pending = compactObject({
+        chatId: current.chatId,
+        topicTitle: current.topicTitle,
+        topicIconCustomEmojiId: current.topicIconCustomEmojiId,
+        topicIconEmoji: current.topicIconEmoji,
+        title: current.title || "New session",
+        titleSource: current.titleSource || "user",
+        serverID: current.serverID,
+        directory: current.directory,
+        chatTemplateName: current.chatTemplateName,
+        chatTemplate: current.chatTemplate,
+        createdAt: now,
+      })
+      data.pendingTopics[String(current.topicId ?? 0)] = pending
+      return { binding: { ...current }, pending: { ...pending } }
+    })
+  }
+
   async removePendingTopic(topicId) {
     return this.update((data) => {
       delete data.pendingTopics[String(topicId ?? 0)]
@@ -584,4 +613,8 @@ function toMillis(value) {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0
   const parsed = Date.parse(value)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function compactObject(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined))
 }

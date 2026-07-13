@@ -72,7 +72,6 @@ const skippedBackendRequest = backendRequester.skipped
 const backendRequest = backendRequester.request
 const speech = new SpeechModule({ config: config.speech, telegram, state, uploadDir: config.paths.uploadsDir, attachmentSettings: config.attachments })
 const questionManager = createQuestionManager({ config, state, telegram, opencode, logError })
-const commandHandlers = createTelegramCommandHandlers({ config, state, telegram, opencode, promptQueue, multipartPrompts, createPendingTopic, speech, questionManager })
 const artifactUploads = new ArtifactUploadBuffer({
   settings: config.artifactUploads,
   flushUpload: ({ message, files }) => handleArtifactUploadMessage({ telegram, config, opencode, message, files }),
@@ -96,6 +95,19 @@ sessionReconciler = createSessionReconciler({
   clearPromptFeedback,
   logError,
   shouldStop: () => shutdownRequested,
+})
+const commandHandlers = createTelegramCommandHandlers({
+  config,
+  state,
+  telegram,
+  opencode,
+  promptQueue,
+  multipartPrompts,
+  createPendingTopic,
+  discardAttachmentBatch: promptRouter.discardAttachmentBatch,
+  detachBinding: sessionReconciler.detachBinding,
+  speech,
+  questionManager,
 })
 const telegramPolling = createTelegramPolling({
   config,

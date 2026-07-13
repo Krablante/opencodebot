@@ -2,7 +2,7 @@
 
 Telegram is the companion surface, not a second OpenCodez backend. The bot binds Telegram forum topics to OpenCodez sessions, sends prompts through the normal OpenCodez API, and mirrors visible progress from OpenCodez events and history. If OpenCodez says something happened, Telegram can show it; if a browser dropdown changed but no prompt was sent, the bot does not invent that local browser state.
 
-The useful shape is deliberately narrow. A topic is a working thread, `/new` creates a session-backed topic, `/q` keeps the next prompt ready while a run is busy, `/kill` stops the current run, attachments travel with the prompt text, and optional `/sounds_here` topics transcribe voice without creating OpenCodez prompts. The mirror should feel like the visible web UI in Telegram, not like raw backend JSON.
+The useful shape is deliberately narrow. A topic is a working thread with at most one active session binding, `/new` creates a session-backed topic, `/reset` starts fresh without replacing the Telegram topic, `/q` keeps the next prompt ready while a run is busy, `/kill` stops the current run, attachments travel with the prompt text, and optional `/sounds_here` topics transcribe voice without creating OpenCodez prompts. The mirror should feel like the visible web UI in Telegram, not like raw backend JSON.
 
 ## Topics
 
@@ -18,6 +18,7 @@ When OpenCodez later updates a session title, the linked Telegram topic is renam
 
 ```text
 /new [server] [profile] [dir:<path>] [title]   create a topic and wait for the first prompt
+/reset                             preserve the old session and start fresh in this topic
 /session                           show topic, binding, session URL, and special topic status
 /q <prompt>                       queue or send a prompt in this topic/session
 /q status                         show queued prompts
@@ -42,9 +43,13 @@ The bot syncs this slash-command menu on startup through Bot API `setMyCommands`
 
 `/sounds_here` marks the current forum topic as the voice transcription inbox when `speech.enabled` is configured. If another topic later runs `/sounds_here`, the new topic replaces the old one. The command creates and pins a model menu with one button per configured OpenRouter transcription model and a `Refresh` button that redraws the menu after config changes. Sounds topics do not mirror OpenCodez sessions: ordinary text is kept out of the prompt flow, while voice and audio messages are downloaded, transcribed through the currently selected OpenRouter model, and answered in the same topic with only the transcript formatted as Telegram Mono text. `/sounds_off` clears the binding for the current topic, and `/sounds_status` shows whether the module is enabled, whether the API key is present, the selected model, and queue activity.
 
-`/session` is a small operator command for the current topic. It shows Telegram chat/topic/message ids, the active or last stored binding, OpenCodez server/session details, a web session URL when the backend session can be read, and artifact/sounds target status. It works in normal mirror topics and special topics, and it does not print secrets or runtime tokens.
+`/session` is a small operator command for the current topic. It shows Telegram chat/topic/message ids, the active or last stored binding, OpenCodez server/session details, a web session URL when the backend session can be read, and artifact/sounds target status. Between `/reset` and the next prompt it reports that the topic is pending and identifies the preserved previous session. It works in normal mirror topics and special topics, and it does not print secrets or runtime tokens.
 
 `/kill` is a topic-scoped stop command. It calls OpenCodez `POST /session/:sessionID/abort` for the bound session, then clears that topic's in-memory queued prompts so a stopped run does not immediately advance into the next queued prompt. It does not delete the OpenCodez session, remove the Telegram topic, or restart the backend service.
+
+`/reset` is a topic-scoped context reset. It first applies the same backend abort boundary as `/kill`; if abort fails, the active binding is left in place. On success the bot clears queued prompts, an unfinished multipart prompt, and buffered attachments, then atomically disables the old binding and records the same topic as pending. The previous OpenCodez session remains available in OpenCodez, while its delayed reconcile and run-watchdog work can no longer write into the reused topic. The next normal prompt lazily creates and binds a new session with the previous server, directory, chat profile, topic title, and icon metadata.
+
+Running `/reset` again while the topic is pending is safe: it discards any newly buffered multipart prompt or attachments and reports that the first prompt is still expected. The command is rejected in `#General`, the artifacts topic, the sounds topic, and a manually created topic that has no active or pending binding. This keeps special-topic routing and accidental command taps from changing the topic's purpose.
 
 `/new` parses arguments from left to right. If the first argument matches a configured server id, that server is used. If the next argument, or the first argument when no server was given, matches a profile in `chatTemplates`, that profile is used. A `dir:<path>` argument sets the OpenCodez session directory for this topic; otherwise `/new` uses the selected server's configured home directory. Everything left becomes the user-owned topic title.
 

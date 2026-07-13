@@ -24,6 +24,13 @@ export function createSessionReconciler({
 }) {
   const activeRuns = new Map()
 
+  function activeBinding(binding) {
+    const current = state.findBinding(binding.serverID, binding.sessionID)
+    if (!current) return null
+    if (String(current.chatId) !== String(binding.chatId) || String(current.topicId) !== String(binding.topicId)) return null
+    return current
+  }
+
   async function handleOpenCodeEvent(server, event) {
     const startedAt = Date.now()
     const properties = event.properties || {}
@@ -178,6 +185,12 @@ export function createSessionReconciler({
     const run = activeRuns.get(bindingKey(binding))
     if (!run || run.token !== token) return
     run.timer = null
+    const originalBinding = binding
+    binding = activeBinding(binding)
+    if (!binding) {
+      clearRun(originalBinding, token)
+      return
+    }
     if (questionManager?.hasPending(server.id, binding.sessionID)) return
 
     const statuses = await backendRequest(server.id, "incomplete-run-status", () => opencode.request(server, "/session/status", { directory: binding.directory }))
@@ -187,6 +200,10 @@ export function createSessionReconciler({
 
     const messages = await backendRequest(server.id, "incomplete-run-messages", () => opencode.messages(server.id, binding.sessionID, { directory: binding.directory }))
     if (messages === skippedBackendRequest) return
+    if (!activeBinding(binding)) {
+      clearRun(binding, token)
+      return
+    }
     const terminalAssistantID = terminalAssistantAfterUser(messages, run.userMessageID)
     if (terminalAssistantID) {
       await reconcileBinding(binding)
@@ -226,7 +243,8 @@ export function createSessionReconciler({
   function scheduleReconcile(binding, delayMs) {
     if (config.reconcile.enabled === false) return
     setTimeout(() => {
-      const current = state.findBinding(binding.serverID, binding.sessionID) || binding
+      const current = activeBinding(binding)
+      if (!current) return
       reconcileBinding(current).catch(logError)
     }, delayMs).unref?.()
   }
@@ -317,6 +335,9 @@ export function createSessionReconciler({
   }
 
   async function reconcileBinding(binding) {
+    const current = activeBinding(binding)
+    if (!current) return
+    binding = current
     const window = reconcileWindow(binding)
     if (!window) return
     const startedAt = Date.now()
@@ -327,7 +348,9 @@ export function createSessionReconciler({
     let catchupUserSeen = !usersOnlyCatchup
     const messages = await backendRequest(binding.serverID, "session messages", () => opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory }))
     if (messages === skippedBackendRequest) return
+    if (!activeBinding(binding)) return
     for (const message of messages) {
+      if (!activeBinding(binding)) return
       const info = message.info || message
       if (!messageInReconcileWindow(info, window)) continue
       if (info.role === "user") {
@@ -428,7 +451,7 @@ export function createSessionReconciler({
     await renderer.pinMessage(binding, messageId, { origin: "telegram-prompt-event" })
   }
 
-  return { handleOpenCodeEvent, reconcileLoop, scheduleReconcile, seedExistingSessions }
+  return { handleOpenCodeEvent, reconcileLoop, scheduleReconcile, seedExistingSessions, detachBinding: clearRun }
 }
 
 function isUnavailableTopicError(error) {

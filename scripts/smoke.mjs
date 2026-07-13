@@ -50,6 +50,7 @@ async function smokeLocalInvariants() {
   await smokeCoreFailureInvariants()
   await smokeChunkedWebPromptMirror()
   await smokeKillCommand()
+  await smokeResetCommand()
   await smokeKillCommandAbortFailure()
   await smokeKillSuppressesAbortFallout()
   await smokeQueueDrainsOnSessionIdle()
@@ -635,6 +636,90 @@ async function smokeKillCommand() {
   assert.equal(sent[0].topicId, 456)
   assert.match(sent[0].text, /Stop signal sent/)
   assert.match(sent[0].text, /Cleared 1 queued prompt/)
+}
+
+async function smokeResetCommand() {
+  assert.ok(telegramBotCommands.some((command) => command.command === "reset"))
+
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-reset-smoke-"))
+  const statePath = path.join(root, "state.json")
+  const binding = {
+    chatId: 123,
+    topicId: 456,
+    topicTitle: "Reusable topic",
+    topicIconEmoji: "🧭",
+    serverID: "nuc",
+    sessionID: "ses_reset_old",
+    directory: "/tmp/work",
+    title: "Old session",
+    titleSource: "session",
+    chatTemplateName: "gpt",
+    chatTemplate: { model: "openai/test" },
+  }
+  const sent = []
+  const steps = []
+  const promptQueue = new PromptQueue({
+    onPrompt: async () => {},
+    onQueued: async () => {},
+    onQueueCleared: async () => {},
+  })
+  try {
+    const state = new StateStore(statePath)
+    await state.load()
+    await state.bindTopic(binding)
+    promptQueue.markBusy(binding)
+    await promptQueue.enqueue(binding, "queued prompt")
+    const handlers = createTelegramCommandHandlers({
+      config: { chatTemplates: {} },
+      state,
+      telegram: { async sendMessage(message) { sent.push(message) } },
+      opencode: { async abortSession() { steps.push("abort") } },
+      promptQueue,
+      multipartPrompts: {
+        discardKey() {
+          steps.push("multipart")
+          return true
+        },
+      },
+      discardAttachmentBatch: async () => {
+        steps.push("attachments")
+        return 2
+      },
+      detachBinding: () => steps.push("detach"),
+      createPendingTopic: async () => {},
+    })
+
+    const handled = await handlers.handle(
+      { chat: { id: 123 }, message_thread_id: 456, message_id: 789 },
+      { name: "reset", args: "" },
+      "123:456",
+    )
+    assert.equal(handled, true)
+    assert.deepEqual(steps, ["abort", "multipart", "attachments", "detach"])
+    assert.equal(state.findBinding("nuc", "ses_reset_old"), undefined)
+    assert.equal(state.findAnyBindingByTopic(123, 456).disabledReason, "topic-reset")
+    assert.equal(state.pendingTopic(456).directory, binding.directory)
+    assert.equal(state.pendingTopic(456).chatTemplateName, binding.chatTemplateName)
+    assert.equal(promptQueue.status(binding).length, 0)
+    assert.match(sent.at(-1).text, /Fresh session ready/)
+    assert.match(sent.at(-1).text, /preserved in OpenCodez/)
+
+    steps.length = 0
+    await handlers.handle(
+      { chat: { id: 123 }, message_thread_id: 456, message_id: 790 },
+      { name: "reset", args: "" },
+      "123:456",
+    )
+    assert.deepEqual(steps, ["multipart", "attachments"])
+    assert.match(sent.at(-1).text, /already waiting for its first prompt/)
+
+    const reloaded = new StateStore(statePath)
+    await reloaded.load()
+    assert.equal(reloaded.pendingTopic(456).topicTitle, binding.topicTitle)
+    assert.equal(reloaded.findAnyBindingByTopic(123, 456).disabled, true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 }
 
 async function smokeQueuedAttachmentPayload() {

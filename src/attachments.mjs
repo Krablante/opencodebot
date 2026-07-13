@@ -51,6 +51,15 @@ export class AttachmentBuffer {
     return this.pending.has(key)
   }
 
+  async discard(key) {
+    const entry = this.pending.get(key)
+    if (!entry) return 0
+    this.clearTimers(entry)
+    this.pending.delete(key)
+    await cleanupFiles(entry.files)
+    return entry.files.length
+  }
+
   async flushKey(key) {
     const entry = this.pending.get(key)
     if (!entry) return false

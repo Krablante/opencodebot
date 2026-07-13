@@ -17,6 +17,7 @@ The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/eve
 - User-provided topic titles stay user-owned; placeholder titles can be renamed from OpenCodez session titles.
 - `/q` in-memory per-session prompt queue, with status/delete commands.
 - `/kill` to stop the current OpenCodez run for a topic and clear queued prompts.
+- `/reset` to preserve the old session and start fresh in the same Telegram topic.
 - Rich assistant messages sent as completed blocks instead of noisy token streaming.
 - Single-choice OpenCodez questions mirrored into the bound topic with Telegram buttons; configured recipients receive a direct notification linking to the question.
 - Global `/mode full|economy` mirror modes: full keeps compact expandable tool quotes, while economy shows assistant progress and final answers without Telegram tool traffic.
@@ -144,7 +145,9 @@ If a run becomes idle without producing a terminal assistant answer or an explic
 
 Use `/kill` inside an existing OpenCodez topic when you want to stop the current run. It sends OpenCodez's session abort request and clears that topic's queued prompts, but it does not delete the session or the Telegram topic.
 
-Use `/session` inside a topic when you want to see what Telegram topic is bound to which OpenCodez server/session. It also shows the web session URL and whether the current topic is the artifacts target.
+Use `/reset` when the Telegram thread should stay but its OpenCodez context should start over. The bot aborts the old run, clears queued or partially buffered input, atomically disables the old binding, and leaves the same topic waiting for its first prompt. That prompt creates a new OpenCodez session with the previous server, directory, chat profile, topic title, and icon metadata. The old session is preserved in OpenCodez. Reset is idempotent while the topic is already waiting and is rejected in `#General`, artifacts, sounds, or otherwise unbound topics.
+
+Use `/session` inside a topic when you want to see what Telegram topic is bound to which OpenCodez server/session. It also shows the web session URL, a pending reset waiting for its first prompt, and whether the current topic is the artifacts target.
 
 Use `/artifacts_here` inside a forum topic when you want that topic to become the single Telegram target for agent-sent artifacts. After that, `opencodebot_send_artifact` sends files, screenshots, logs, or text to that topic. Files dropped by a user in the same topic are saved under `artifactUploads.root` on the default server, or on the server named by the file caption. Docker deployments must also mount that local artifact root; see [Docker](docs/docker.md#artifact-dropbox-paths).
 
@@ -160,7 +163,7 @@ Default chat profiles are `d4flash`, `d4pro`, `luna`, `terra`, and `sol`. Each p
 
 ## Docs
 
-- [Telegram Workflow](docs/telegram-workflow.md) covers topics, `/new`, `/q`, `/kill`, attachments, multipart prompts, rich messages, tools, user-prompt pins, final notifications, and reconcile.
+- [Telegram Workflow](docs/telegram-workflow.md) covers topics, `/new`, `/reset`, `/q`, `/kill`, attachments, multipart prompts, rich messages, tools, user-prompt pins, final notifications, and reconcile.
 - [Config And Runtime](docs/config-runtime.md) covers config loading, token handling, chat profiles, mirror settings, attachments, and state.
 - [Artifact Gateway](docs/artifact-gateway.md) covers `/artifacts_here`, the LAN gateway, user-dropped artifact uploads, the OpenCodez plugin, and the bundled skill.
 - [Docker](docs/docker.md) covers the recommended Compose deployment path.

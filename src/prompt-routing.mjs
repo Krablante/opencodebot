@@ -251,6 +251,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     createPendingPromptQueue: () => promptQueue,
     flushAttachmentText,
     handleAttachmentMessage,
+    discardAttachmentBatch: (key) => attachmentBuffer.discard(key),
     hasPendingAttachmentBatch: (key) => attachmentBuffer.has(key),
     maybeExtendBindingActivity,
     multipartPrompts,
