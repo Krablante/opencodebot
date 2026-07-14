@@ -1,6 +1,7 @@
 import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
 import { textFromPrompt, visibleTextFromParts } from "./opencode.mjs"
 import { formatToolLine } from "./render.mjs"
+import { runAfterFlight, runSingleFlight } from "./single-flight.mjs"
 import { escapeHtml } from "./telegram.mjs"
 
 export function createSessionReconciler({
@@ -23,6 +24,8 @@ export function createSessionReconciler({
   incompleteRunGraceMs = 1500,
 }) {
   const activeRuns = new Map()
+  const bindingOperations = new Map()
+  const reconcileTimers = new Map()
 
   function activeBinding(binding) {
     const current = state.findBinding(binding.serverID, binding.sessionID)
@@ -31,7 +34,17 @@ export function createSessionReconciler({
     return current
   }
 
-  async function handleOpenCodeEvent(server, event) {
+  function handleOpenCodeEvent(server, event) {
+    const sessionID = event.properties?.sessionID
+    if (!sessionID) return Promise.resolve()
+    return runAfterFlight(
+      bindingOperations,
+      `${server.id}:${sessionID}`,
+      () => handleOpenCodeEventNow(server, event),
+    )
+  }
+
+  async function handleOpenCodeEventNow(server, event) {
     const startedAt = Date.now()
     const properties = event.properties || {}
     const sessionID = properties.sessionID
@@ -152,7 +165,7 @@ export function createSessionReconciler({
   async function handleSessionIdle(server, binding) {
     const queued = promptQueue.status(binding).queued
     const result = await promptQueue.markBackendIdle(binding)
-    if (queued && result.status !== "sent") await reconcileBinding(binding)
+    if (queued && result.status !== "sent") await reconcileBindingNow(binding)
     if (promptQueue.hasExpectedStop(binding)) {
       clearRun(binding)
       promptQueue.clearExpectedStop(binding)
@@ -246,11 +259,18 @@ export function createSessionReconciler({
 
   function scheduleReconcile(binding, delayMs) {
     if (config.reconcile.enabled === false) return
-    setTimeout(() => {
+    const key = bindingKey(binding)
+    const pending = reconcileTimers.get(key)
+    if (pending) clearTimeout(pending)
+    const timer = setTimeout(() => {
+      if (reconcileTimers.get(key) !== timer) return
+      reconcileTimers.delete(key)
       const current = activeBinding(binding)
       if (!current) return
       reconcileBinding(current).catch(logError)
-    }, delayMs).unref?.()
+    }, delayMs)
+    timer.unref?.()
+    reconcileTimers.set(key, timer)
   }
 
   async function reconcileLoop() {
@@ -302,7 +322,6 @@ export function createSessionReconciler({
           continue
         }
         if (state.hasSeenSession(server.id, session.id)) continue
-        await state.markSeenSession(server.id, session.id)
         await createTopicForSession(server.id, session)
       }
     }
@@ -338,7 +357,11 @@ export function createSessionReconciler({
     }
   }
 
-  async function reconcileBinding(binding) {
+  function reconcileBinding(binding) {
+    return runSingleFlight(bindingOperations, bindingKey(binding), () => reconcileBindingNow(binding))
+  }
+
+  async function reconcileBindingNow(binding) {
     const current = activeBinding(binding)
     if (!current) return
     binding = current
@@ -473,7 +496,16 @@ export function createSessionReconciler({
     })
   }
 
-  return { handleOpenCodeEvent, reconcileLoop, scheduleReconcile, seedExistingSessions, detachBinding: clearRun }
+  function detachBinding(binding) {
+    clearRun(binding)
+    const key = bindingKey(binding)
+    const timer = reconcileTimers.get(key)
+    if (!timer) return
+    clearTimeout(timer)
+    reconcileTimers.delete(key)
+  }
+
+  return { handleOpenCodeEvent, reconcileLoop, scheduleReconcile, seedExistingSessions, detachBinding }
 }
 
 function isUnavailableTopicError(error) {

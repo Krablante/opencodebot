@@ -20,6 +20,7 @@ import { SpeechModule, transcriptMessage } from "../src/speech/index.mjs"
 import { OpenRouterSpeechClient, audioFormat } from "../src/speech/openrouter-client.mjs"
 import { StateStore } from "../src/state.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
+import { createTopicLifecycle } from "../src/topic-lifecycle.mjs"
 import { OpencodebotArtifactsPlugin } from "../plugins/opencodebot-artifacts/src/index.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -46,6 +47,9 @@ async function smokeLocalInvariants() {
   await smokeAttachmentTextChunksWaitForIdle()
   smokeExpiredBindingReconcileRefresh()
   smokeCatchupAssistantGate()
+  await smokeTopicCreationSingleFlight()
+  await smokeReconcileTopicRetry()
+  await smokeReconcileSingleFlight()
   await smokeMirrorModeCommands()
   await smokeMirrorModeRendering()
   smokeFinalToolSummary()
@@ -961,6 +965,183 @@ function smokeCatchupAssistantGate() {
   assert.equal(shouldSkipAssistantForCatchup(false, false), false)
   assert.equal(shouldSkipAssistantForCatchup(true, false), true)
   assert.equal(shouldSkipAssistantForCatchup(true, true), false)
+}
+
+async function smokeTopicCreationSingleFlight() {
+  const bindings = new Map()
+  const operations = []
+  let createCalls = 0
+  let releaseTopic
+  const topicGate = new Promise((resolve) => {
+    releaseTopic = resolve
+  })
+  const lifecycle = createTopicLifecycle({
+    config: { telegram: { chatId: -1001, randomTopicIcon: false } },
+    state: {
+      chatId: -1001,
+      findBinding: (serverID, sessionID) => bindings.get(`${serverID}:${sessionID}`) || null,
+      bindTopic: async (binding) => {
+        operations.push("bind")
+        bindings.set(`${binding.serverID}:${binding.sessionID}`, binding)
+      },
+      markSeenSession: async () => operations.push("seen"),
+    },
+    telegram: {
+      createForumTopic: async () => {
+        createCalls += 1
+        if (createCalls === 1) throw new Error("temporary Telegram failure")
+        await topicGate
+        return { message_thread_id: 77 }
+      },
+    },
+    opencode: { getSession: async () => assert.fail("concurrent web lookup should join the active topic creation") },
+    activateBindingForPrompt: async () => operations.push("activate"),
+    clearPromptFeedback: async () => {},
+  })
+  const session = { id: "ses_single_flight", title: "Single flight", directory: "/tmp/project" }
+
+  await assert.rejects(lifecycle.createTopicForSession("nuc", session), /temporary Telegram failure/)
+  assert.equal(bindings.size, 0)
+  assert.deepEqual(operations, [])
+
+  const fromReconcile = lifecycle.createTopicForSession("nuc", session)
+  const fromEvent = lifecycle.createTopicForWebSession("nuc", session.id, "hello")
+  releaseTopic()
+  const [reconciledBinding, eventBinding] = await Promise.all([fromReconcile, fromEvent])
+
+  assert.equal(createCalls, 2)
+  assert.equal(reconciledBinding, eventBinding)
+  assert.deepEqual(operations, ["bind", "seen", "activate"])
+}
+
+async function smokeReconcileTopicRetry() {
+  const errors = []
+  let listCalls = 0
+  let seenCalls = 0
+  let stopped = false
+  const session = { id: "ses_topic_retry", title: "Retry topic", directory: "/tmp/project" }
+  const reconciler = createSessionReconciler({
+    config: {
+      opencode: { servers: [{ id: "nuc" }] },
+      reconcile: { enabled: true, intervalMs: 0, activeWindowMs: 60_000 },
+      telegram: { chatId: -1001, autocreateTopics: true },
+    },
+    state: {
+      chatId: -1001,
+      data: { bindings: [] },
+      seedSeenSessions: async () => 0,
+      mirrorEnabled: () => true,
+      findBinding: () => null,
+      hasSeenSession: () => false,
+      markSeenSession: async () => {
+        seenCalls += 1
+      },
+    },
+    telegram: {},
+    opencode: {
+      listSessions: async () => {
+        listCalls += 1
+        return listCalls === 1 ? [] : [session]
+      },
+    },
+    renderer: {},
+    promptQueue: {},
+    questionManager: {},
+    backendRequest: async (_serverID, _label, operation) => operation(),
+    skippedBackendRequest: Symbol("skipped"),
+    createTopicForSession: async () => {
+      stopped = true
+      throw new Error("temporary Telegram failure")
+    },
+    createTopicForWebSession: async () => null,
+    isInternalSession: () => false,
+    activateBindingForPrompt: async () => {},
+    maybeExtendBindingActivity: async () => {},
+    logError: (error) => errors.push(error),
+    shouldStop: () => stopped,
+  })
+
+  await reconciler.reconcileLoop()
+  assert.equal(seenCalls, 0)
+  assert.equal(errors.length, 1)
+}
+
+async function smokeReconcileSingleFlight() {
+  const now = Date.now()
+  const binding = {
+    serverID: "nuc",
+    sessionID: "ses_reconcile_single_flight",
+    directory: "/tmp/project",
+    chatId: -1001,
+    topicId: 88,
+    reconcileAfter: new Date(now - 1000).toISOString(),
+    reconcileUntil: new Date(now + 60_000).toISOString(),
+  }
+  let messageCalls = 0
+  let releaseMessages
+  let markStarted
+  const messagesGate = new Promise((resolve) => {
+    releaseMessages = resolve
+  })
+  const messagesStarted = new Promise((resolve) => {
+    markStarted = resolve
+  })
+  const errors = []
+  const reconciler = createSessionReconciler({
+    config: { reconcile: { enabled: true } },
+    state: { findBinding: () => binding, mirrorEnabled: () => true },
+    telegram: {},
+    opencode: {
+      messages: async () => {
+        messageCalls += 1
+        markStarted()
+        await messagesGate
+        return []
+      },
+    },
+    renderer: {},
+    promptQueue: {},
+    questionManager: {},
+    backendRequest: async (_serverID, _label, operation) => operation(),
+    skippedBackendRequest: Symbol("skipped"),
+    createTopicForSession: async () => null,
+    createTopicForWebSession: async () => null,
+    isInternalSession: () => false,
+    activateBindingForPrompt: async () => {},
+    maybeExtendBindingActivity: async () => {},
+    logError: (error) => errors.push(error),
+    shouldStop: () => false,
+  })
+
+  reconciler.scheduleReconcile(binding, 0)
+  let startTimeout
+  await Promise.race([
+    messagesStarted,
+    new Promise((_, reject) => {
+      startTimeout = setTimeout(() => reject(new Error("scheduled reconcile did not start")), 1000)
+    }),
+  ])
+  clearTimeout(startTimeout)
+  reconciler.scheduleReconcile(binding, 0)
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(messageCalls, 1)
+
+  let eventHandled = false
+  const event = reconciler.handleOpenCodeEvent(
+    { id: "nuc" },
+    { type: "session.updated", properties: { sessionID: binding.sessionID } },
+  ).then(() => {
+    eventHandled = true
+  })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(eventHandled, false)
+
+  releaseMessages()
+  await event
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(messageCalls, 1)
+  assert.equal(eventHandled, true)
+  assert.deepEqual(errors, [])
 }
 
 async function smokeChunkedWebPromptMirror() {

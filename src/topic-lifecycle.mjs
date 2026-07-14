@@ -1,8 +1,11 @@
 import { logInfo } from "./logger.mjs"
 import { titleFromText } from "./opencode.mjs"
+import { runSingleFlight } from "./single-flight.mjs"
 import { topicId } from "./telegram.mjs"
 
 export function createTopicLifecycle({ config, state, telegram, opencode, activateBindingForPrompt, clearPromptFeedback }) {
+  const topicCreations = new Map()
+
   async function handleTopicLifecycleMessage(message) {
     if (message.forum_topic_edited) {
       const metadata = { title: message.forum_topic_edited.name }
@@ -39,14 +42,18 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
     return Boolean(binding)
   }
 
-  async function createTopicForWebSession(serverID, sessionID, promptText) {
+  function createTopicForWebSession(serverID, sessionID, promptText) {
+    return runTopicCreation(serverID, sessionID, () => createTopicForWebSessionNow(serverID, sessionID, promptText))
+  }
+
+  async function createTopicForWebSessionNow(serverID, sessionID, promptText) {
     const session = await opencode.getSession(serverID, sessionID).catch(() => null)
     if (session) {
       if (isInternalSession(session)) {
         await state.markSeenSession(serverID, sessionID)
         return null
       }
-      return createTopicForSession(serverID, session, promptText)
+      return createTopicForSessionNow(serverID, session, promptText)
     }
     const chatId = state.chatId || config.telegram.chatId
     if (!chatId) return null
@@ -55,12 +62,16 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
     const topic = await telegram.createForumTopic({ chatId, name: title, iconCustomEmojiId: topicIcon?.customEmojiId })
     const binding = { chatId, topicId: topic.message_thread_id, topicTitle: title, topicIconCustomEmojiId: topic.icon_custom_emoji_id || topicIcon?.customEmojiId, topicIconEmoji: topicIcon?.emoji, serverID, sessionID, title, titleSource: "auto" }
     await state.bindTopic(binding)
-    await activateBindingForPrompt(binding, "web-topic-created")
     await state.markSeenSession(serverID, sessionID)
+    await activateBindingForPrompt(binding, "web-topic-created")
     return binding
   }
 
-  async function createTopicForSession(serverID, session, fallbackText = "") {
+  function createTopicForSession(serverID, session, fallbackText = "") {
+    return runTopicCreation(serverID, session.id, () => createTopicForSessionNow(serverID, session, fallbackText))
+  }
+
+  async function createTopicForSessionNow(serverID, session, fallbackText = "") {
     if (isInternalSession(session)) {
       await state.markSeenSession(serverID, session.id)
       return null
@@ -83,9 +94,17 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
       titleSource: session.title ? "opencode" : "auto",
     }
     await state.bindTopic(binding)
-    await activateBindingForPrompt(binding, "web-topic-created")
     await state.markSeenSession(serverID, session.id)
+    await activateBindingForPrompt(binding, "web-topic-created")
     return binding
+  }
+
+  function runTopicCreation(serverID, sessionID, task) {
+    return runSingleFlight(
+      topicCreations,
+      bindingKey(serverID, sessionID),
+      () => state.findBinding(serverID, sessionID) || task(),
+    )
   }
 
   async function randomTopicIcon() {
@@ -125,4 +144,8 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
 
 export function isInternalSession(session) {
   return Boolean(session?.parentID || /\(@.+ subagent\)/i.test(session?.title || ""))
+}
+
+function bindingKey(serverID, sessionID) {
+  return `${serverID}:${sessionID}`
 }
