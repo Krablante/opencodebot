@@ -317,6 +317,7 @@ export class StateStore {
       if (!binding) return false
       if (reconcileAfter) binding.reconcileAfter = toIso(reconcileAfter)
       if (reconcileUntil) binding.reconcileUntil = toIso(reconcileUntil)
+      delete binding.reconcileUsersOnlyUntil
       binding.lastActiveAt = new Date().toISOString()
       if (reason) binding.lastActiveReason = reason
       return true

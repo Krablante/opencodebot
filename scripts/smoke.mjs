@@ -49,6 +49,7 @@ async function smokeLocalInvariants() {
   await smokeAttachmentTextChunksWaitForIdle()
   smokeExpiredBindingReconcileRefresh()
   smokeCatchupAssistantGate()
+  await smokeActiveBindingLeavesUsersOnlyCatchup()
   await smokeTopicCreationSingleFlight()
   await smokeReconcileTopicRetry()
   await smokeReconcileSingleFlight()
@@ -1042,6 +1043,29 @@ function smokeCatchupAssistantGate() {
   assert.equal(shouldSkipAssistantForCatchup(false, false), false)
   assert.equal(shouldSkipAssistantForCatchup(true, false), true)
   assert.equal(shouldSkipAssistantForCatchup(true, true), false)
+}
+
+async function smokeActiveBindingLeavesUsersOnlyCatchup() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-active-binding-"))
+  try {
+    const state = new StateStore(path.join(root, "state.json"))
+    await state.load()
+    await state.bindTopic({ chatId: 1, topicId: 2, serverID: "dima", sessionID: "ses_active", directory: "/tmp" })
+    await state.extendBindingActivity("dima", "ses_active", {
+      reconcileUntil: Date.now() + 60_000,
+      reconcileUsersOnlyUntil: Date.now() + 60_000,
+      reason: "startup-catchup",
+    })
+    assert.ok(state.findBinding("dima", "ses_active").reconcileUsersOnlyUntil)
+    await state.activateBinding("dima", "ses_active", {
+      reconcileAfter: Date.now() - 1000,
+      reconcileUntil: Date.now() + 60_000,
+      reason: "telegram-prompt",
+    })
+    assert.equal(state.findBinding("dima", "ses_active").reconcileUsersOnlyUntil, undefined)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 }
 
 async function smokeTopicCreationSingleFlight() {
