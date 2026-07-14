@@ -34,8 +34,14 @@ test("/new resolves a profile and rejects the retired gpt55p alias", async () =>
   assert.equal(parsed.title, "opencodebot-first")
 
   const calls = []
-  await applyChatTemplate({ selectSystemPrompt: (...args) => calls.push(args) }, "nuc", "ses_test", parsed.chatTemplate)
-  assert.deepEqual(calls, [["nuc", "ses_test", "codex_gpt_5_6_sol", {}]])
+  await applyChatTemplate({
+    switchSessionModel: (...args) => calls.push(["model", ...args]),
+    selectSystemPrompt: (...args) => calls.push(["system", ...args]),
+  }, "nuc", "ses_test", parsed.chatTemplate)
+  assert.deepEqual(calls, [
+    ["model", "nuc", "ses_test", profiles.sol.model, {}],
+    ["system", "nuc", "ses_test", "codex_gpt_5_6_sol", {}],
+  ])
   assert.throws(() => parseNewTopicArgs("nuc gpt55p old-chat", options), /Profile gpt55p was removed/)
 })
 

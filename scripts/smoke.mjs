@@ -238,6 +238,7 @@ function smokeFinalToolSummary() {
 async function smokeCoreFailureInvariants() {
   await smokeOpenCodeEventOrdering()
   await smokeOpenCodeRequestTimeout()
+  await smokeOpenCodeSessionModelSwitch()
   await smokeStatePruning()
   await smokeStateWriteRecovery()
   await smokeStrictConfigLoading()
@@ -280,6 +281,32 @@ async function smokeOpenCodeRequestTimeout() {
   try {
     const client = new OpenCodeClient({ opencode: { password: "", mirrorScope: "global", servers: [{ id: "local", url }] } })
     await assert.rejects(() => client.listSessions("local", { timeoutMs: 20 }), /timed out after/)
+  } finally {
+    await close()
+  }
+}
+
+async function smokeOpenCodeSessionModelSwitch() {
+  let captured = null
+  const server = createServer(async (request, response) => {
+    let body = ""
+    for await (const chunk of request) body += chunk
+    captured = { method: request.method, url: request.url, body: JSON.parse(body) }
+    response.writeHead(204).end()
+  })
+  const { url, close } = await listen(server)
+  try {
+    const client = new OpenCodeClient({ opencode: { password: "", mirrorScope: "global", servers: [{ id: "local", url }] } })
+    await client.switchSessionModel("local", "ses_model", {
+      providerID: "openai",
+      modelID: "gpt-5.6-sol-fast",
+      variant: "max",
+    }, { directory: "/tmp/work" })
+    assert.equal(captured.method, "POST")
+    assert.equal(captured.url, "/api/session/ses_model/model?directory=%2Ftmp%2Fwork")
+    assert.deepEqual(captured.body, {
+      model: { providerID: "openai", id: "gpt-5.6-sol-fast", variant: "max" },
+    })
   } finally {
     await close()
   }

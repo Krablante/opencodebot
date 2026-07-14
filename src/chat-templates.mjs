@@ -36,8 +36,8 @@ export function parseResetProfileArg(args, { chatTemplates }) {
 }
 
 export async function applyChatTemplate(opencode, serverID, sessionID, chatTemplate, options = {}) {
-  if (!chatTemplate?.opencodezSystem) return
-  await opencode.selectSystemPrompt(serverID, sessionID, chatTemplate.opencodezSystem, options)
+  if (chatTemplate?.model) await opencode.switchSessionModel(serverID, sessionID, chatTemplate.model, options)
+  if (chatTemplate?.opencodezSystem) await opencode.selectSystemPrompt(serverID, sessionID, chatTemplate.opencodezSystem, options)
 }
 
 function tokenizeNewTopicArgs(args) {

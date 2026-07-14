@@ -91,6 +91,21 @@ export class OpenCodeClient {
     })
   }
 
+  async switchSessionModel(serverID, sessionID, model, options = {}) {
+    if (!model?.providerID || !model?.modelID) throw new Error("Session model requires providerID and modelID")
+    return this.request(this.server(serverID), `/api/session/${encodeURIComponent(sessionID)}/model`, {
+      ...options,
+      method: "POST",
+      body: {
+        model: {
+          providerID: model.providerID,
+          id: model.modelID,
+          ...(model.variant ? { variant: model.variant } : {}),
+        },
+      },
+    })
+  }
+
   async request(server, pathname, options = {}) {
     const url = this.url(server, pathname, options)
     const headers = { ...(options.headers || {}) }
