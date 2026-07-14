@@ -345,6 +345,28 @@ async function smokeStrictConfigLoading() {
     const strict = loadConfig(configPath)
     assert.equal(strict.telegram.token, process.env.OPENCODEBOT_SMOKE_TOKEN)
     assert.deepEqual(strict.telegram.allowedUserIds, [42, 43])
+    assert.equal(strict.opencode.servers[0].transfer.type, "local")
+
+    await writeFile(path.join(root, "servers.example.json"), JSON.stringify([
+      { id: "nuc", url: "http://127.0.0.1:40999" },
+      { id: "nuc", url: "ftp://invalid", pathStyle: "plan9", offline_ok: "false", transfer: { type: "shh" } },
+      { id: "ssh", url: "https://example.test", transfer: { type: "ssh", user: "", port: 70000 } },
+      null,
+      { id: "", url: "" },
+    ]))
+    assert.throws(() => loadConfig(configPath), (error) => {
+      assert.match(error.message, /Invalid servers config:/)
+      assert.match(error.message, /servers\[1\]\.id duplicates servers\[0\]\.id \("nuc"\)/)
+      assert.match(error.message, /servers\[1\]\.url must be an absolute HTTP\(S\) URL/)
+      assert.match(error.message, /servers\[1\]\.transfer\.type must be "local" or "ssh"/)
+      assert.match(error.message, /servers\[1\]\.pathStyle must be "posix" or "windows"/)
+      assert.match(error.message, /servers\[1\]\.offline_ok must be a boolean/)
+      assert.match(error.message, /servers\[2\]\.transfer\.host is required for SSH transfer/)
+      assert.match(error.message, /servers\[2\]\.transfer\.port must be an integer from 1 to 65535/)
+      assert.match(error.message, /servers\[3\] must be an object/)
+      assert.match(error.message, /servers\[4\]\.id must be a non-empty string/)
+      return true
+    })
   } finally {
     restoreEnv("OPENCODEBOT_SMOKE_TOKEN", oldToken)
     restoreEnv("OPENCODEBOT_SMOKE_ALLOWED", oldAllowed)
