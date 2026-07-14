@@ -28,20 +28,24 @@
     "maxFileBytes": 25000000,
     "queueConcurrency": 1,
     "statusMessage": "Transcribing voice...",
+    "defaultModel": "openai/whisper-large-v3-turbo",
+    "language": "auto",
+    "temperature": 0,
+    "responseFormat": "json",
+    "prompt": "Русская голосовая заметка. Сохраняй технические названия, команды, пути и сокращения латиницей.",
     "openrouter": {
       "apiKeyEnv": "OPENROUTER_API_KEY",
-      "model": "openai/whisper-large-v3-turbo",
-      "models": [
-        { "id": "openai/whisper-large-v3-turbo", "label": "Whisper V3 Turbo", "provider": "Groq", "price": "0.04" },
-        { "id": "openai/gpt-4o-mini-transcribe", "label": "GPT-4o Mini", "provider": "OpenAI", "price": "input 0.00000125, output 0.000005" },
-        { "id": "openai/gpt-4o-transcribe", "label": "GPT-4o", "provider": "OpenAI", "price": "input 0.0000025, output 0.00001" },
-        { "id": "qwen/qwen3-asr-flash-2026-02-10", "label": "Qwen3 ASR Flash", "provider": "Alibaba", "price": "0.000035" }
-      ],
-      "language": "ru",
-      "temperature": 0,
-      "responseFormat": "json",
-      "prompt": "Русская голосовая заметка. Сохраняй технические названия, команды, пути и сокращения латиницей."
-    }
+      "url": "https://openrouter.ai/api/v1/audio/transcriptions"
+    },
+    "groq": {
+      "apiKeyEnv": "GROQ_API_KEY",
+      "url": "https://api.groq.com/openai/v1/audio/transcriptions"
+    },
+    "models": [
+      { "id": "openai/whisper-large-v3-turbo", "apiProvider": "openrouter", "apiModel": "openai/whisper-large-v3-turbo", "label": "Whisper V3 Turbo", "upstreamProvider": "Groq", "price": "$0.04/hour" },
+      { "id": "groq/whisper-large-v3", "apiProvider": "groq", "apiModel": "whisper-large-v3", "label": "Whisper V3", "price": "Free tier · $0.111/hour paid" },
+      { "id": "groq/whisper-large-v3-turbo", "apiProvider": "groq", "apiModel": "whisper-large-v3-turbo", "label": "Whisper V3 Turbo", "price": "Free tier · $0.04/hour paid" }
+    ]
   },
   "artifactUploads": {
     "enabled": true,

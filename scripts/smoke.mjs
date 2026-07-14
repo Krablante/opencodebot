@@ -17,6 +17,7 @@ import { normalizeNestedRichLists } from "../src/rich-list-normalization.mjs"
 import { bindingSessionReconcileRefresh, createSessionReconciler, shouldSkipAssistantForCatchup } from "../src/session-reconcile.mjs"
 import { normalizeSpeechConfig } from "../src/config/speech.mjs"
 import { SpeechModule, transcriptMessage } from "../src/speech/index.mjs"
+import { GroqSpeechClient } from "../src/speech/groq-client.mjs"
 import { OpenRouterSpeechClient, audioFormat } from "../src/speech/openrouter-client.mjs"
 import { StateStore } from "../src/state.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
@@ -38,6 +39,7 @@ async function smokeLocalInvariants() {
   await smokeArtifactDropbox()
   await smokeArtifactPluginBatchCaptions()
   await smokeSpeechOpenRouterRequest()
+  await smokeSpeechGroqRequest()
   await smokeSpeechTopicRouting()
   await smokeSpeechModelMenu()
   smokeSpeechTranscriptMessage()
@@ -427,8 +429,10 @@ function smokeConfigExample() {
   assert.equal(example.attachments.maxFileBytes, 20000000)
   assert.equal(example.attachments.maxTotalBytes, 60000000)
   assert.equal(example.speech.enabled, false)
-  assert.equal(example.speech.openrouter.model, "openai/whisper-large-v3-turbo")
-  assert.equal(example.speech.openrouter.language, "ru")
+  assert.equal(example.speech.defaultModel, "openai/whisper-large-v3-turbo")
+  assert.equal(example.speech.models.length, 3)
+  assert.equal(example.speech.models[1].apiProvider, "groq")
+  assert.equal(example.speech.models[1].apiModel, "whisper-large-v3")
   assert.ok(example.opencode.servers.length > 0)
 }
 
@@ -437,14 +441,26 @@ async function smokeSpeechOpenRouterRequest() {
   const audioPath = path.join(root, "voice.oga")
   await writeFile(audioPath, "fake audio bytes")
   const requests = []
-  const normalized = normalizeSpeechConfig({ enabled: true }, { OPENROUTER_API_KEY: "test-key" })
-  assert.equal(normalized.openrouter.apiKey, "test-key")
-  assert.equal(normalized.openrouter.language, "ru")
-  assert.deepEqual(normalizeSpeechConfig({ enabled: true, openrouter: { models: ["openai/gpt-4o-mini-transcribe", { id: "qwen/qwen3-asr-flash-2026-02-10", label: "Qwen3", provider: "Alibaba" }] } }).openrouter.models.map((model) => model.id), ["openai/gpt-4o-mini-transcribe", "qwen/qwen3-asr-flash-2026-02-10"])
-  assert.equal(normalizeSpeechConfig({ enabled: true, openrouter: { language: "EN" } }).openrouter.language, "en")
-  assert.equal(normalizeSpeechConfig({ enabled: true, language: "uk" }).openrouter.language, "uk")
-  assert.equal(normalizeSpeechConfig({ enabled: true, openrouter: { language: null } }).openrouter.language, null)
-  assert.equal(normalizeSpeechConfig({ enabled: true, openrouter: { language: "auto" } }).openrouter.language, null)
+  const normalized = normalizeSpeechConfig({
+    enabled: true,
+    language: "ru",
+    prompt: "short prompt",
+    openrouter: { apiKeyEnv: "OPENROUTER_API_KEY" },
+    groq: { apiKeyEnv: "GROQ_API_KEY" },
+    models: [
+      { id: "openai/whisper-large-v3-turbo", apiProvider: "openrouter", label: "Whisper V3 Turbo", upstreamProvider: "Groq" },
+      { id: "groq/whisper-large-v3", apiProvider: "groq", apiModel: "whisper-large-v3", label: "Whisper V3" },
+    ],
+  }, { OPENROUTER_API_KEY: "test-key", GROQ_API_KEY: "groq-key" })
+  assert.equal(normalized.providers.openrouter.apiKey, "test-key")
+  assert.equal(normalized.providers.groq.apiKey, "groq-key")
+  assert.equal(normalized.models[0].language, "ru")
+  assert.equal(normalized.models[0].provider, "OpenRouter")
+  assert.equal(normalized.models[0].upstreamProvider, "Groq")
+  assert.equal(normalized.models[1].provider, "Groq")
+  assert.equal(normalizeSpeechConfig({ enabled: true, language: "EN" }).models[0].language, "en")
+  assert.equal(normalizeSpeechConfig({ enabled: true, language: null }).models[0].language, null)
+  assert.equal(normalizeSpeechConfig({ enabled: true, language: "auto" }).models[0].language, null)
   const fetchImpl = async (url, options) => {
     requests.push({ url: String(url), options, body: JSON.parse(options.body) })
     return {
@@ -456,19 +472,8 @@ async function smokeSpeechOpenRouterRequest() {
     }
   }
   try {
-    const client = new OpenRouterSpeechClient({
-      apiKeyEnv: "OPENROUTER_API_KEY",
-      url: "https://openrouter.ai/api/v1/audio/transcriptions",
-      model: "openai/whisper-large-v3-turbo",
-      language: "ru",
-      temperature: 0,
-      responseFormat: "json",
-      prompt: "short prompt",
-      referer: "https://example.test/opencodebot",
-      title: "opencodebot smoke",
-      timeoutMs: 5000,
-    }, { OPENROUTER_API_KEY: "test-key" }, fetchImpl)
-    const result = await client.transcribeFile({ localPath: audioPath, filename: "voice.oga", mime: "audio/ogg" })
+    const client = new OpenRouterSpeechClient(normalized.providers.openrouter, {}, fetchImpl)
+    const result = await client.transcribeFile({ localPath: audioPath, filename: "voice.oga", mime: "audio/ogg" }, normalized.models[0])
     assert.equal(result.text, "готовый transcript")
     assert.equal(audioFormat({ filename: "voice.oga" }), "ogg")
     assert.equal(requests.length, 1)
@@ -480,11 +485,40 @@ async function smokeSpeechOpenRouterRequest() {
     assert.equal(requests[0].body.language, "ru")
     assert.equal(requests[0].body.temperature, 0)
     assert.equal(requests[0].body.provider.options.groq.prompt, "short prompt")
-    const autoBody = new OpenRouterSpeechClient({ ...client.config, language: null }, {}, fetchImpl).requestBody(Buffer.from("audio"), "ogg")
+    const autoBody = client.requestBody(Buffer.from("audio"), "ogg", { ...normalized.models[0], language: null })
     assert.equal(Object.hasOwn(autoBody, "language"), false)
-    const gptBody = client.requestBody(Buffer.from("audio"), "ogg", { id: "openai/gpt-4o-mini-transcribe", label: "GPT-4o Mini", provider: "OpenAI" })
-    assert.equal(gptBody.model, "openai/gpt-4o-mini-transcribe")
-    assert.equal(Object.hasOwn(gptBody, "provider"), false)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+async function smokeSpeechGroqRequest() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-groq-smoke-"))
+  const audioPath = path.join(root, "voice.oga")
+  await writeFile(audioPath, "fake audio bytes")
+  const normalized = normalizeSpeechConfig({
+    enabled: true,
+    language: "auto",
+    prompt: "Проверка терминов.",
+    groq: { apiKeyEnv: "GROQ_API_KEY" },
+    models: [{ id: "groq/whisper-large-v3", apiProvider: "groq", apiModel: "whisper-large-v3", label: "Whisper V3" }],
+  }, { GROQ_API_KEY: "groq-key" })
+  let request = null
+  const fetchImpl = async (url, options) => {
+    request = { url: String(url), options }
+    return new Response(JSON.stringify({ text: "Прямой ответ Groq." }), { status: 200, headers: { "content-type": "application/json" } })
+  }
+  try {
+    const client = new GroqSpeechClient(normalized.providers.groq, {}, fetchImpl)
+    const result = await client.transcribeFile({ localPath: audioPath, filename: "voice.oga", mime: "audio/ogg" }, normalized.models[0])
+    assert.equal(request.url, "https://api.groq.com/openai/v1/audio/transcriptions")
+    assert.equal(request.options.headers.Authorization, "Bearer groq-key")
+    assert.equal(request.options.body.get("model"), "whisper-large-v3")
+    assert.equal(request.options.body.get("language"), null)
+    assert.equal(request.options.body.get("prompt"), "Проверка терминов.")
+    assert.equal(request.options.body.get("response_format"), "json")
+    assert.equal(request.options.body.get("file").name, "voice.ogg")
+    assert.equal(result.text, "Прямой ответ Groq.")
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -493,22 +527,13 @@ async function smokeSpeechOpenRouterRequest() {
 async function smokeSpeechTopicRouting() {
   const jobs = []
   const speech = new SpeechModule({
-    config: {
+    config: normalizeSpeechConfig({
       enabled: true,
       maxFileBytes: 25_000_000,
       queueConcurrency: 1,
       statusMessage: "Transcribing voice...",
-      openrouter: {
-        apiKeyEnv: "OPENROUTER_API_KEY",
-        apiKey: "test-key",
-        model: "openai/whisper-large-v3-turbo",
-        language: "ru",
-        temperature: 0,
-        responseFormat: "json",
-        prompt: "",
-        timeoutMs: 5000,
-      },
-    },
+      openrouter: { apiKeyEnv: "OPENROUTER_API_KEY", timeoutMs: 5000 },
+    }, { OPENROUTER_API_KEY: "test-key" }),
     telegram: {},
     state: {
       isSoundsTopic: (chatId, topicID) => String(chatId) === "100" && Number(topicID || 0) === 7,
@@ -530,7 +555,7 @@ async function smokeSpeechTopicRouting() {
   assert.equal(jobs[1].message.message_thread_id, 8)
   assert.equal(await speech.handleVoiceMessage({ ...regularTopicVoice, voice: undefined, audio: regularTopicVoice.voice }), false)
   assert.equal(speech.status().language, "ru")
-  speech.config.openrouter.language = null
+  speech.config.models[0].language = null
   assert.equal(speech.status().language, "auto")
 }
 
@@ -548,15 +573,14 @@ async function smokeSpeechModelMenu() {
     const speech = new SpeechModule({
       config: normalizeSpeechConfig({
         enabled: true,
-        openrouter: {
-          apiKeyEnv: "OPENROUTER_API_KEY",
-          models: [
-            { id: "openai/whisper-large-v3-turbo", label: "Whisper V3 Turbo", provider: "Groq", price: "0.04" },
-            { id: "openai/gpt-4o-mini-transcribe", label: "GPT-4o Mini", provider: "OpenAI", price: "input 0.00000125, output 0.000005" },
-            { id: "qwen/qwen3-asr-flash-2026-02-10", label: "Qwen3 ASR Flash", provider: "Alibaba", price: "0.000035" },
-          ],
-        },
-      }, { OPENROUTER_API_KEY: "test-key" }),
+        openrouter: { apiKeyEnv: "OPENROUTER_API_KEY" },
+        groq: { apiKeyEnv: "GROQ_API_KEY" },
+        models: [
+          { id: "openai/whisper-large-v3-turbo", apiProvider: "openrouter", label: "Whisper V3 Turbo", upstreamProvider: "Groq", price: "$0.04/hour" },
+          { id: "groq/whisper-large-v3", apiProvider: "groq", apiModel: "whisper-large-v3", label: "Whisper V3", price: "Free tier" },
+          { id: "groq/whisper-large-v3-turbo", apiProvider: "groq", apiModel: "whisper-large-v3-turbo", label: "Whisper V3 Turbo", price: "Free tier" },
+        ],
+      }, { OPENROUTER_API_KEY: "test-key", GROQ_API_KEY: "groq-key" }),
       telegram: {
         async sendMessage(message) { sent.push(message); return { message_id: sent.length + 10 } },
         async editMessageText(message) {
@@ -581,16 +605,20 @@ async function smokeSpeechModelMenu() {
     assert.equal(sent[0].replyMarkup.inline_keyboard.length, 4)
     assert.deepEqual(pinned, [{ chatId: 100, messageId: 11, disableNotification: true }])
     assert.equal(state.soundsMenuMessageId(), 11)
-    await speech.handleCallbackQuery({ id: "cb1", data: "sounds:model:openai%2Fgpt-4o-mini-transcribe", message: { chat: { id: 100 }, message_thread_id: 7, message_id: 11 } })
-    assert.equal(state.speechModelId(), "openai/gpt-4o-mini-transcribe")
-    assert.match(edited.at(-1).text, /GPT-4o Mini/)
+    await speech.handleCallbackQuery({ id: "cb1", data: "sounds:model:groq%2Fwhisper-large-v3", message: { chat: { id: 100 }, message_thread_id: 7, message_id: 11 } })
+    assert.equal(state.speechModelId(), "groq/whisper-large-v3")
+    assert.match(edited.at(-1).text, /Whisper V3<\/code> · Groq/)
     assert.equal(edited.at(-1).replyMarkup.inline_keyboard[1][0].text.startsWith("✓ "), true)
-    assert.match(answered.at(-1).text, /GPT-4o Mini/)
+    assert.match(answered.at(-1).text, /Whisper V3/)
     rejectNextEditAsUnchanged = true
     await speech.handleCallbackQuery({ id: "cb2", data: "sounds:refresh", message: { chat: { id: 100 }, message_thread_id: 7, message_id: 11 } })
     assert.match(answered.at(-1).text, /refreshed/)
     assert.equal(sent.length, 1)
     assert.equal(state.soundsMenuMessageId(), 11)
+    const groqKey = speech.clients.groq.config.apiKey
+    speech.clients.groq.config.apiKey = null
+    assert.deepEqual(speech.models().map((model) => model.id), ["openai/whisper-large-v3-turbo"])
+    speech.clients.groq.config.apiKey = groqKey
   } finally {
     await rm(root, { recursive: true, force: true })
   }

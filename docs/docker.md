@@ -29,6 +29,9 @@ cp token.env.example token.env
 OPENCODEBOT_TOKEN=123456:telegram-token
 OPENCODEBOT_ALLOWED_USER_IDS=123456789
 OPENCODEZ_SERVER_PASSWORD=your-opencodez-password
+# Optional STT providers; configure either or both.
+OPENROUTER_API_KEY=your-openrouter-api-key
+GROQ_API_KEY=your-groq-api-key
 ```
 
 These files stay local and are ignored by git. The Compose file mounts them into the container read-only and mounts `state/` for durable bot state and uploads.

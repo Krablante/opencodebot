@@ -296,13 +296,14 @@ export function createTelegramCommandHandlers({
 
   async function handleSoundsStatus(message) {
     const status = speech?.status?.() || { enabled: false, configured: false, topic: null, queueDepth: 0, active: 0 }
+    const providers = status.providers?.map((provider) => `${escapeHtml(provider.label)}: ${provider.configured ? "configured" : `missing <code>${escapeHtml(provider.apiKeyEnv)}</code>`}`)
     await telegram.sendMessage({
       chatId: message.chat.id,
       topicId: topicId(message),
       text: [
         "<b>Voice transcription</b>",
         `enabled: ${status.enabled ? "yes" : "no"}`,
-        `api_key: ${status.configured ? "configured" : status.apiKeyEnv ? `missing <code>${escapeHtml(status.apiKeyEnv)}</code>` : "not configured"}`,
+        providers?.length ? `providers: ${providers.join("; ")}` : `api_key: ${status.configured ? "configured" : status.apiKeyEnv ? `missing <code>${escapeHtml(status.apiKeyEnv)}</code>` : "not configured"}`,
         status.model ? `model: <code>${escapeHtml(status.modelLabel || status.model)}</code>${status.modelProvider ? ` · ${escapeHtml(status.modelProvider)}` : ""}` : null,
         status.language ? `language: <code>${escapeHtml(status.language)}</code>` : null,
         "voice_messages: all non-artifact topics when enabled",

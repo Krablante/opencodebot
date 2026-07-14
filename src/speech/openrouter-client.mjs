@@ -46,7 +46,7 @@ export class OpenRouterSpeechClient {
       if (!text) throw new Error("OpenRouter STT returned an empty transcript")
       return {
         text,
-        model: modelProfile?.id || this.config.model,
+        model: modelProfile?.apiModel || this.config.model,
         modelProfile,
         format,
         raw: parsed,
@@ -57,19 +57,23 @@ export class OpenRouterSpeechClient {
   }
 
   requestBody(audio, format, modelProfile = null) {
-    const model = modelProfile?.id || this.config.model
+    const model = modelProfile?.apiModel || this.config.model
+    const temperature = modelProfile?.temperature ?? this.config.temperature ?? 0
+    const responseFormat = modelProfile?.responseFormat || this.config.responseFormat || "json"
+    const language = modelProfile ? modelProfile.language : this.config.language
+    const prompt = modelProfile?.prompt ?? this.config.prompt
     const body = {
       model,
       input_audio: {
         data: audio.toString("base64"),
         format,
       },
-      temperature: this.config.temperature,
-      response_format: this.config.responseFormat,
+      temperature,
+      response_format: responseFormat,
     }
-    if (this.config.language) body.language = this.config.language
-    if (this.config.prompt && isGroqModel(modelProfile)) {
-      body.provider = { options: { groq: { prompt: this.config.prompt } } }
+    if (language) body.language = language
+    if (prompt && isGroqModel(modelProfile)) {
+      body.provider = { options: { groq: { prompt } } }
     }
     return body
   }
@@ -77,7 +81,7 @@ export class OpenRouterSpeechClient {
 
 function isGroqModel(modelProfile) {
   if (!modelProfile) return true
-  return String(modelProfile.provider || "").toLowerCase() === "groq"
+  return String(modelProfile.upstreamProvider || "").toLowerCase() === "groq"
 }
 
 export function audioFormat(file) {

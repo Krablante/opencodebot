@@ -1,16 +1,20 @@
 import { cleanupFiles, downloadTelegramFiles, extractTelegramFiles } from "../attachments.mjs"
 import { logErrorEvent, logInfo } from "../logger.mjs"
 import { clampTelegram, escapeHtml, topicId } from "../telegram.mjs"
+import { GroqSpeechClient } from "./groq-client.mjs"
 import { OpenRouterSpeechClient } from "./openrouter-client.mjs"
 
 export class SpeechModule {
-  constructor({ config, telegram, state, uploadDir, attachmentSettings, env = process.env }) {
+  constructor({ config, telegram, state, uploadDir, attachmentSettings, env = process.env, clients = null }) {
     this.config = config
     this.telegram = telegram
     this.state = state
     this.uploadDir = uploadDir
     this.attachmentSettings = { ...attachmentSettings, maxFileBytes: config.maxFileBytes, maxInlineBytes: config.maxFileBytes }
-    this.client = new OpenRouterSpeechClient(config.openrouter, env)
+    this.clients = clients || {
+      openrouter: new OpenRouterSpeechClient(config.providers.openrouter, env),
+      groq: new GroqSpeechClient(config.providers.groq, env),
+    }
     this.queue = []
     this.active = 0
   }
@@ -20,7 +24,7 @@ export class SpeechModule {
   }
 
   configured() {
-    return this.enabled() && this.client.isConfigured()
+    return this.enabled() && this.models().length > 0
   }
 
   isSoundsTopic(message) {
@@ -28,13 +32,13 @@ export class SpeechModule {
   }
 
   async handleMessage(message) {
-    if (!this.enabled() || !this.isSoundsTopic(message)) return false
+    if (!this.configured() || !this.isSoundsTopic(message)) return false
 
     return this.enqueueAudioMessage(message)
   }
 
   async handleVoiceMessage(message) {
-    if (!this.enabled() || !message?.voice) return false
+    if (!this.configured() || !message?.voice) return false
 
     return this.enqueueAudioMessage(message)
   }
@@ -81,24 +85,35 @@ export class SpeechModule {
       topic: this.state.soundsTopic(),
       queueDepth: this.queue.length,
       active: this.active,
-      model: model.id,
-      modelLabel: model.label,
-      modelProvider: model.provider,
+      model: model?.id || null,
+      modelLabel: model?.label || null,
+      modelProvider: model?.provider || null,
       models: this.models(),
-      language: this.config.openrouter.language ?? "auto",
-      apiKeyEnv: this.config.openrouter.apiKeyEnv,
+      language: model?.language ?? "auto",
+      apiKeyEnv: model ? this.config.providers[model.apiProvider]?.apiKeyEnv : null,
+      providers: Object.values(this.config.providers).map((provider) => ({
+        id: provider.id,
+        label: provider.label,
+        apiKeyEnv: provider.apiKeyEnv,
+        configured: this.clientConfigured(provider.id),
+      })),
     }
   }
 
   models() {
-    return this.config.openrouter.models?.length ? this.config.openrouter.models : [{ id: this.config.openrouter.model, label: this.config.openrouter.model, provider: "", price: "" }]
+    return this.config.models.filter((model) => this.clientConfigured(model.apiProvider))
+  }
+
+  clientConfigured(providerId) {
+    const client = this.clients[providerId]
+    return Boolean(client && client.isConfigured())
   }
 
   selectedModel() {
     const models = this.models()
-    const defaultModelId = models[0]?.id || this.config.openrouter.model
+    const defaultModelId = models.some((model) => model.id === this.config.defaultModel) ? this.config.defaultModel : models[0]?.id
     const selected = this.state.speechModelId?.(defaultModelId) || defaultModelId
-    return models.find((model) => model.id === selected) || models[0]
+    return models.find((model) => model.id === selected) || models[0] || this.config.models[0] || null
   }
 
   async createOrRefreshMenu({ chatId, topicId: currentTopicId, messageId = null } = {}) {
@@ -160,6 +175,7 @@ export class SpeechModule {
 
   menuText() {
     const model = this.selectedModel()
+    if (!model) return "🎙 <b>Audio transcription model</b>\nNo configured STT models."
     const parts = [
       "🎙 <b>Audio transcription model</b>",
       `Current: <code>${escapeHtml(model.label)}</code>${model.provider ? ` · ${escapeHtml(model.provider)}` : ""}`,
@@ -170,7 +186,7 @@ export class SpeechModule {
   }
 
   menuMarkup() {
-    const selected = this.selectedModel().id
+    const selected = this.selectedModel()?.id
     const rows = this.models().map((model) => [{
       text: `${model.id === selected ? "✓ " : ""}${model.label}${model.provider ? ` · ${model.provider}` : ""}`,
       callback_data: `sounds:model:${encodeURIComponent(model.id)}`,
@@ -195,12 +211,14 @@ export class SpeechModule {
   async runJob({ message, descriptors }) {
     const chatId = message.chat.id
     const currentTopicId = topicId(message)
-    if (!this.client.isConfigured()) {
+    const model = this.selectedModel()
+    const client = model ? this.clients[model.apiProvider] : null
+    if (!model || !client?.isConfigured()) {
       await this.telegram.replyMessage({
         chatId,
         topicId: currentTopicId,
         replyToMessageId: message.message_id,
-        text: `Speech module is enabled but <code>${escapeHtml(this.config.openrouter.apiKeyEnv)}</code> is not set.`,
+        text: "Speech module is enabled but no configured STT provider is available.",
       })
       return
     }
@@ -215,8 +233,7 @@ export class SpeechModule {
     try {
       downloads = await downloadTelegramFiles(this.telegram, descriptors, this.uploadDir, this.attachmentSettings)
       const file = downloads[0]
-      const model = this.selectedModel()
-      const result = await this.client.transcribeFile(file, model)
+      const result = await client.transcribeFile(file, model)
       const elapsedMs = Date.now() - startedAt
       logInfo("speech.transcribed", {
         chatId,
