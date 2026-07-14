@@ -9,7 +9,7 @@ import { artifactTargetPath, handleArtifactUploadMessage, resolveUploadTarget } 
 import { AttachmentBuffer } from "../src/attachments.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "../src/commands.mjs"
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
-import { finalNotificationMarkdown, toolSummaryBeforeAssistant } from "../src/final-notifications.mjs"
+import { finalNotificationMarkdown, formatDuration, toolSummaryBeforeAssistant, turnMetadataBeforeAssistant } from "../src/final-notifications.mjs"
 import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { MirrorRenderer, webPromptMessages } from "../src/render.mjs"
@@ -230,9 +230,16 @@ function smokeFinalToolSummary() {
     { name: "Write", count: 1, failed: 1 },
   ])
   assert.deepEqual(summary.patchedFiles, ["/home/bloob/repo/src/a.mjs", "/home/bloob/repo/src/moved.mjs", "/home/bloob/repo/src/new.mjs", "C:\\repo\\src\\edit.mjs"])
-  const notification = finalNotificationMarkdown({ topicSource: { title: "topic" }, serverID: "nuc", promptText: "change files", ...summary })
+  const turnMetadata = turnMetadataBeforeAssistant([
+    { info: { id: "user-meta", role: "user", time: { created: 1000 }, model: { providerID: "openai", modelID: "gpt-5.6-sol-fast" }, variant: "max" } },
+    { info: { id: "assistant-meta", role: "assistant", time: { created: 2000, completed: 8_295_000 }, modelID: "gpt-5.6-sol-fast" } },
+  ], "assistant-meta")
+  assert.deepEqual(turnMetadata, { durationMs: 8_294_000, modelID: "gpt-5.6-sol-fast", variant: "max" })
+  assert.equal(formatDuration(turnMetadata.durationMs), "2h 18m 14s")
+  const notification = finalNotificationMarkdown({ topicSource: { title: "topic" }, serverID: "nuc", promptText: "change files", ...summary, ...turnMetadata })
   assert.ok(notification.includes(">🔧 Tools: Read × 2; Patch × 1; Edit × 1; Write × 1 \\(1 failed\\)"))
   assert.ok(notification.includes(">🩹 Patched: a\\.mjs; moved\\.mjs; new\\.mjs; edit\\.mjs||"))
+  assert.ok(notification.includes("⏱️ 2h 18m 14s · 🤖 gpt\\-5\\.6\\-sol\\-fast \\(max\\)"))
   assert.doesNotMatch(notification, /\/home\/bloob|C:\\repo|old\.txt|failed\.mjs|Explore|Todo/)
 }
 

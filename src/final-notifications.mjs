@@ -56,27 +56,32 @@ async function sendFinalNotificationMessage({ telegram, userId, text, fallbackTe
   }
 }
 
-export function finalNotificationMarkdown({ topicSource, serverID, promptText, completedTodos = [], tools = [], patchedFiles = [] }) {
+export function finalNotificationMarkdown({ topicSource, serverID, promptText, completedTodos = [], tools = [], patchedFiles = [], durationMs, modelID, variant }) {
   const lines = [
     "🏁 *Final answer is ready*",
     finalNotificationTopicMarkdown(topicSource),
     `🖥️ Server: ${escapeMarkdownV2(serverID)}`,
   ]
+  const telemetry = finalNotificationTelemetryLine({ durationMs, modelID, variant })
+  if (telemetry) lines.push(escapeMarkdownV2(telemetry))
+  const headerLines = lines.length
   const prompt = truncateNotificationText(promptText, FINAL_NOTIFICATION_PROMPT_CHARS)
   if (prompt) lines.push("", toolQuoteMarkdownV2(prompt))
   const todoLines = formatCompletedTodoMarkdown(completedTodos, { maxItems: FINAL_NOTIFICATION_TODO_ITEMS, maxItemChars: FINAL_NOTIFICATION_TODO_CHARS })
   if (todoLines.length) lines.push("", ...todoLines)
   const toolLines = formatToolSummaryMarkdown(tools, patchedFiles)
   if (toolLines.length) lines.push("", ...toolLines)
-  return clampNotificationMarkdown(lines, toolLines)
+  return clampNotificationMarkdown(lines, toolLines, headerLines)
 }
 
-function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos = [], tools = [], patchedFiles = [] }) {
+function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos = [], tools = [], patchedFiles = [], durationMs, modelID, variant }) {
   const lines = [
     "🏁 Final answer is ready",
     finalNotificationTopicHtml(topicSource),
     `🖥️ Server: <code>${escapeHtml(serverID)}</code>`,
   ]
+  const telemetry = finalNotificationTelemetryLine({ durationMs, modelID, variant })
+  if (telemetry) lines.push(escapeHtml(telemetry))
   const todoLines = formatCompletedTodoHtml(completedTodos, { maxItems: FINAL_NOTIFICATION_TODO_ITEMS, maxItemChars: FINAL_NOTIFICATION_TODO_CHARS })
   if (todoLines.length) lines.push("", ...todoLines)
   const toolLines = formatToolSummaryHtml(tools, patchedFiles)
@@ -84,21 +89,23 @@ function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos =
   return lines.join("\n")
 }
 
-function finalNotificationCompactHtml({ topicSource, serverID, tools = [], patchedFiles = [] }) {
+function finalNotificationCompactHtml({ topicSource, serverID, tools = [], patchedFiles = [], durationMs, modelID, variant }) {
   const lines = [
     "🏁 Final answer is ready",
     finalNotificationTopicHtml(topicSource),
     `🖥️ Server: <code>${escapeHtml(serverID)}</code>`,
   ]
+  const telemetry = finalNotificationTelemetryLine({ durationMs, modelID, variant })
+  if (telemetry) lines.push(escapeHtml(telemetry))
   const toolLines = formatToolSummaryHtml(tools, patchedFiles)
   if (toolLines.length) lines.push("", ...toolLines)
   return lines.join("\n")
 }
 
-function clampNotificationMarkdown(lines, importantTail = []) {
+function clampNotificationMarkdown(lines, importantTail = [], headerLines = 3) {
   let text = lines.join("\n")
   if (text.length <= FINAL_NOTIFICATION_SAFE_CHARS) return text
-  const compact = lines.slice(0, 3)
+  const compact = lines.slice(0, headerLines)
   compact.push("", toolQuoteMarkdownV2("Notification context was too long and was trimmed. Open the topic for full context."))
   if (importantTail.length) compact.push("", ...importantTail)
   text = compact.join("\n")
@@ -160,6 +167,29 @@ function truncateNotificationText(value, maxChars) {
   return `${text.slice(0, Math.max(0, maxChars - 16)).trimEnd()}... [trimmed]`
 }
 
+function finalNotificationTelemetryLine({ durationMs, modelID, variant }) {
+  const values = []
+  const duration = formatDuration(durationMs)
+  if (duration) values.push(`⏱️ ${duration}`)
+  const model = String(modelID || "").trim()
+  if (model) values.push(`🤖 ${model}${variant ? ` (${String(variant).trim()})` : ""}`)
+  return values.join(" · ")
+}
+
+export function formatDuration(value) {
+  if (!Number.isFinite(value) || value < 0) return ""
+  let seconds = Math.max(0, Math.round(value / 1000))
+  const hours = Math.floor(seconds / 3600)
+  seconds -= hours * 3600
+  const minutes = Math.floor(seconds / 60)
+  seconds -= minutes * 60
+  const parts = []
+  if (hours) parts.push(`${hours}h`)
+  if (minutes || hours) parts.push(`${minutes}m`)
+  parts.push(`${seconds}s`)
+  return parts.join(" ")
+}
+
 function finalNotificationReplyMarkup(link) {
   if (!link) return undefined
   return { inline_keyboard: [[{ text: "Open topic", url: link }]] }
@@ -202,6 +232,7 @@ async function finalSessionSummary({ opencode, binding, assistantMessageID, hidd
       promptText: promptTextBeforeAssistant(messages, assistantMessageID),
       completedTodos: completedTodosBeforeAssistant(messages, assistantMessageID),
       ...toolSummaryBeforeAssistant(messages, assistantMessageID, hiddenTools),
+      ...turnMetadataBeforeAssistant(messages, assistantMessageID),
     }
   } catch (error) {
     logErrorEvent("final_notification.session_summary_lookup_failed", error, {
@@ -209,8 +240,35 @@ async function finalSessionSummary({ opencode, binding, assistantMessageID, hidd
       sessionID: binding.sessionID,
       assistantMessageID,
     })
-    return { promptText: "", completedTodos: [], tools: [], patchedFiles: [] }
+    return { promptText: "", completedTodos: [], tools: [], patchedFiles: [], durationMs: null, modelID: "", variant: "" }
   }
+}
+
+export function turnMetadataBeforeAssistant(messages, assistantMessageID) {
+  if (!Array.isArray(messages) || !messages.length) return { durationMs: null, modelID: "", variant: "" }
+  const stopIndex = assistantMessageIndex(messages, assistantMessageID)
+  const assistant = messageInfo(messages[stopIndex])
+  let user = null
+  for (let index = stopIndex - 1; index >= 0; index -= 1) {
+    if (messageRole(messages[index]) !== "user") continue
+    user = messageInfo(messages[index])
+    break
+  }
+  const startedAt = timestampMs(user?.time?.created)
+  const completedAt = timestampMs(assistant?.time?.completed)
+  const assistantModel = assistant?.model || {}
+  const userModel = user?.model || {}
+  return {
+    durationMs: startedAt !== null && completedAt !== null && completedAt >= startedAt ? completedAt - startedAt : null,
+    modelID: String(assistant?.modelID || assistantModel.modelID || user?.modelID || userModel.modelID || ""),
+    variant: String(assistant?.variant || assistantModel.variant || user?.variant || userModel.variant || ""),
+  }
+}
+
+function timestampMs(value) {
+  if (Number.isFinite(value)) return value
+  const parsed = Date.parse(String(value || ""))
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 export function toolSummaryBeforeAssistant(messages, assistantMessageID, hiddenToolNames = []) {
@@ -266,6 +324,10 @@ function messageID(message) {
 
 function messageRole(message) {
   return String(message?.info?.role || message?.role || "")
+}
+
+function messageInfo(message) {
+  return message?.info || message || {}
 }
 
 function promptTextBeforeAssistant(messages, assistantMessageID) {
