@@ -503,6 +503,16 @@ export class StateStore {
 
   // Final-answer DM notification preferences and dedupe markers.
 
+  debugEnabled() {
+    return this.data.debugEnabled === true
+  }
+
+  async setDebugEnabled(enabled) {
+    return this.update((data) => {
+      data.debugEnabled = enabled === true
+    })
+  }
+
   finalNotificationUserIds() {
     return [...new Set((this.data.finalNotifications?.enabledUserIds || []).map(String))]
   }
@@ -627,6 +637,7 @@ function defaultState() {
     pendingPrompts: [],
     mirroredAssistantBySession: {},
     mirroredUserBySession: {},
+    debugEnabled: false,
     finalNotifications: { enabledUserIds: [], sentMessages: [] },
     questionMessages: [],
     seenSessions: [],

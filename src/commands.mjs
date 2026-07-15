@@ -15,6 +15,9 @@ export const telegramBotCommands = [
   { command: "notify_on", description: "Enable final-answer DMs" },
   { command: "notify_off", description: "Disable final-answer DMs" },
   { command: "notify_status", description: "Show final-answer DM status" },
+  { command: "debug_on", description: "Enable global final-DM diagnostics" },
+  { command: "debug_off", description: "Disable global final-DM diagnostics" },
+  { command: "debug_status", description: "Show global diagnostics status" },
   { command: "mode", description: "Show or set full/economy mirror mode" },
   { command: "mirror_on", description: "Enable web-to-Telegram mirroring" },
   { command: "mirror_off", description: "Disable web-to-Telegram mirroring" },
@@ -58,6 +61,9 @@ export function createTelegramCommandHandlers({
     notify_on: handleNotifyOn,
     notify_off: handleNotifyOff,
     notify_status: handleNotifyStatus,
+    debug_on: (message) => handleDebugMode(message, true),
+    debug_off: (message) => handleDebugMode(message, false),
+    debug_status: handleDebugStatus,
     mode: handleMirrorMode,
   }
 
@@ -374,6 +380,28 @@ export function createTelegramCommandHandlers({
     })
   }
 
+  async function handleDebugMode(message, enabled) {
+    const currentTopicId = topicId(message)
+    await state.setDebugEnabled(enabled)
+    await telegram.sendMessage({
+      chatId: message.chat.id,
+      topicId: currentTopicId || undefined,
+      text: enabled
+        ? "🐛 Global debug diagnostics enabled. Every final DM will end with an expandable run-diagnostics block."
+        : "Global debug diagnostics disabled.",
+    })
+  }
+
+  async function handleDebugStatus(message) {
+    const currentTopicId = topicId(message)
+    const enabled = state.debugEnabled()
+    await telegram.sendMessage({
+      chatId: message.chat.id,
+      topicId: currentTopicId || undefined,
+      text: `🐛 Global debug diagnostics: <code>${enabled ? "enabled" : "disabled"}</code>.`,
+    })
+  }
+
   function configuredFinalNotificationUserIds() {
     return [...new Set((config.finalNotifications?.userIds || []).map(String))]
   }
@@ -518,6 +546,8 @@ export function createTelegramCommandHandlers({
       "<code>/sounds_off</code> / <code>/sounds_status</code> - manage the dedicated inbox and show speech status.",
       "<code>/notify_on</code> / <code>/notify_off</code> - toggle final-answer DMs for configured recipients.",
       "<code>/notify_status</code> - show configured final-answer DM status.",
+      "<code>/debug_on</code> / <code>/debug_off</code> - toggle global final-DM run diagnostics.",
+      "<code>/debug_status</code> - show global diagnostics status.",
       "<code>/mode [full|economy]</code> - show or set the global mirror mode.",
       "<code>/mirror_on</code> / <code>/mirror_off</code> - toggle web-to-Telegram mirroring.",
       "",

@@ -20,7 +20,13 @@ export function createFinalNotifier({ config, state, telegram, opencode }) {
       if (!userIds.length) return
       const link = telegramMessageLink(binding.chatId, messageId)
       const topicSource = finalNotificationTopicSource(binding)
-      const summary = await finalSessionSummary({ opencode, binding, assistantMessageID, hiddenTools: config.mirror?.hiddenTools })
+      const summary = await finalSessionSummary({
+        opencode,
+        binding,
+        assistantMessageID,
+        hiddenTools: config.mirror?.hiddenTools,
+        debugEnabled: state.debugEnabled(),
+      })
       const replyMarkup = finalNotificationReplyMarkup(link)
       const text = finalNotificationMarkdown({ topicSource, serverID: binding.serverID, ...summary })
       const fallbackText = finalNotificationFallbackHtml({ topicSource, serverID: binding.serverID, ...summary })
@@ -56,7 +62,7 @@ async function sendFinalNotificationMessage({ telegram, userId, text, fallbackTe
   }
 }
 
-export function finalNotificationMarkdown({ topicSource, serverID, promptText, completedTodos = [], tools = [], patchedFiles = [], durationMs, modelID, variant, tokenUsage }) {
+export function finalNotificationMarkdown({ topicSource, serverID, promptText, completedTodos = [], tools = [], patchedFiles = [], durationMs, modelID, variant, tokenUsage, debugDiagnostics }) {
   const lines = [
     "🏁 *Final answer is ready*",
     finalNotificationTopicMarkdown(topicSource),
@@ -73,10 +79,12 @@ export function finalNotificationMarkdown({ topicSource, serverID, promptText, c
   if (todoLines.length) lines.push("", ...todoLines)
   const toolLines = formatToolSummaryMarkdown(tools, patchedFiles)
   if (toolLines.length) lines.push("", ...toolLines)
-  return clampNotificationMarkdown(lines, toolLines, headerLines)
+  const debugLines = formatDebugDiagnosticsMarkdown(debugDiagnostics)
+  if (debugLines.length) lines.push("", ...debugLines)
+  return clampNotificationMarkdown(lines, toolLines, debugLines, headerLines)
 }
 
-function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos = [], tools = [], patchedFiles = [], durationMs, modelID, variant, tokenUsage }) {
+function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos = [], tools = [], patchedFiles = [], durationMs, modelID, variant, tokenUsage, debugDiagnostics }) {
   const lines = [
     "🏁 Final answer is ready",
     finalNotificationTopicHtml(topicSource),
@@ -90,10 +98,12 @@ function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos =
   if (todoLines.length) lines.push("", ...todoLines)
   const toolLines = formatToolSummaryHtml(tools, patchedFiles)
   if (toolLines.length) lines.push("", ...toolLines)
+  const debugLines = formatDebugDiagnosticsHtml(debugDiagnostics)
+  if (debugLines.length) lines.push("", ...debugLines)
   return lines.join("\n")
 }
 
-function finalNotificationCompactHtml({ topicSource, serverID, tools = [], patchedFiles = [], durationMs, modelID, variant, tokenUsage }) {
+function finalNotificationCompactHtml({ topicSource, serverID, tools = [], patchedFiles = [], durationMs, modelID, variant, tokenUsage, debugDiagnostics }) {
   const lines = [
     "🏁 Final answer is ready",
     finalNotificationTopicHtml(topicSource),
@@ -105,15 +115,18 @@ function finalNotificationCompactHtml({ topicSource, serverID, tools = [], patch
   if (tokens) lines.push(escapeHtml(tokens))
   const toolLines = formatToolSummaryHtml(tools, patchedFiles)
   if (toolLines.length) lines.push("", ...toolLines)
+  const debugLines = formatDebugDiagnosticsHtml(debugDiagnostics)
+  if (debugLines.length) lines.push("", ...debugLines)
   return lines.join("\n")
 }
 
-function clampNotificationMarkdown(lines, importantTail = [], headerLines = 3) {
+function clampNotificationMarkdown(lines, importantTail = [], debugTail = [], headerLines = 3) {
   let text = lines.join("\n")
   if (text.length <= FINAL_NOTIFICATION_SAFE_CHARS) return text
   const compact = lines.slice(0, headerLines)
   compact.push("", toolQuoteMarkdownV2("Notification context was too long and was trimmed. Open the topic for full context."))
   if (importantTail.length) compact.push("", ...importantTail)
+  if (debugTail.length) compact.push("", ...debugTail)
   text = compact.join("\n")
   return text.length <= FINAL_NOTIFICATION_SAFE_CHARS ? text : text.slice(0, FINAL_NOTIFICATION_SAFE_CHARS - 3) + "..."
 }
@@ -140,6 +153,39 @@ function formatToolSummaryHtml(tools, patchedFiles) {
   if (toolText) lines.push(`🔧 Tools: ${toolText}`)
   if (patchedText) lines.push(`🩹 Patched: ${patchedText}`)
   return lines.length ? [`<blockquote>${lines.map((line) => escapeHtml(line)).join("\n")}</blockquote>`] : []
+}
+
+function formatDebugDiagnosticsMarkdown(debugDiagnostics) {
+  const text = formatDebugDiagnosticsText(debugDiagnostics)
+  return text ? toolQuoteMarkdownV2(text).split("\n") : []
+}
+
+function formatDebugDiagnosticsHtml(debugDiagnostics) {
+  const text = formatDebugDiagnosticsText(debugDiagnostics)
+  return text ? [`<blockquote expandable>${escapeHtml(text)}</blockquote>`] : []
+}
+
+export function formatDebugDiagnosticsText(debugDiagnostics) {
+  if (!debugDiagnostics) return ""
+  const lines = ["🐛 Run diagnostics"]
+  if (Number.isFinite(debugDiagnostics.wallMs)) lines.push(`⏱ Wall: ${formatDebugDuration(debugDiagnostics.wallMs)}`)
+  if (debugDiagnostics.steps?.count) {
+    lines.push(`🧠 Agent steps: ${debugDiagnostics.steps.count} · p50 ${formatDebugDuration(debugDiagnostics.steps.p50Ms)} · p95 ${formatDebugDuration(debugDiagnostics.steps.p95Ms)} · max ${formatDebugDuration(debugDiagnostics.steps.maxMs)}`)
+  }
+  if (debugDiagnostics.tools) {
+    lines.push(`🧰 Tools/MCP: ${debugDiagnostics.tools.count} · Σ${formatDebugDuration(debugDiagnostics.tools.totalMs)} · ${debugDiagnostics.tools.failed} failed`)
+  }
+  if (debugDiagnostics.slowest?.length) {
+    lines.push(`🐢 Slowest: ${debugDiagnostics.slowest.map((item) => `${item.name} ${formatDebugDuration(item.maxMs)}`).join("; ")}`)
+  }
+  return lines.join("\n")
+}
+
+function formatDebugDuration(value) {
+  if (!Number.isFinite(value) || value < 0) return "0s"
+  if (value < 1000) return `${Math.round(value)}ms`
+  if (value < 60_000) return `${(value / 1000).toFixed(1)}s`
+  return formatDuration(value)
 }
 
 function summarizeItems(values, maxChars) {
@@ -250,15 +296,17 @@ function normalizeTopicIconEmoji(value) {
   return emoji.length <= 8 ? emoji : ""
 }
 
-async function finalSessionSummary({ opencode, binding, assistantMessageID, hiddenTools }) {
+async function finalSessionSummary({ opencode, binding, assistantMessageID, hiddenTools, debugEnabled = false }) {
   try {
     const messages = await opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory })
+    const turnMetadata = turnMetadataBeforeAssistant(messages, assistantMessageID)
     return {
       promptText: promptTextBeforeAssistant(messages, assistantMessageID),
       completedTodos: completedTodosBeforeAssistant(messages, assistantMessageID),
       ...toolSummaryBeforeAssistant(messages, assistantMessageID, hiddenTools),
-      ...turnMetadataBeforeAssistant(messages, assistantMessageID),
+      ...turnMetadata,
       tokenUsage: turnTokenUsageBeforeAssistant(messages, assistantMessageID),
+      debugDiagnostics: debugEnabled ? runDiagnosticsBeforeAssistant(messages, assistantMessageID, turnMetadata.durationMs) : null,
     }
   } catch (error) {
     logErrorEvent("final_notification.session_summary_lookup_failed", error, {
@@ -266,7 +314,7 @@ async function finalSessionSummary({ opencode, binding, assistantMessageID, hidd
       sessionID: binding.sessionID,
       assistantMessageID,
     })
-    return { promptText: "", completedTodos: [], tools: [], patchedFiles: [], durationMs: null, modelID: "", variant: "", tokenUsage: null }
+    return { promptText: "", completedTodos: [], tools: [], patchedFiles: [], durationMs: null, modelID: "", variant: "", tokenUsage: null, debugDiagnostics: null }
   }
 }
 
@@ -315,6 +363,65 @@ export function turnTokenUsageBeforeAssistant(messages, assistantMessageID) {
   if (!usage.calls) return null
   usage.total = usage.input + usage.output + usage.reasoning + usage.cacheRead + usage.cacheWrite
   return usage
+}
+
+export function runDiagnosticsBeforeAssistant(messages, assistantMessageID, wallMs = null) {
+  if (!Array.isArray(messages) || !messages.length) return null
+  const stopIndex = assistantMessageIndex(messages, assistantMessageID)
+  let startIndex = -1
+  for (let index = stopIndex - 1; index >= 0; index -= 1) {
+    if (messageRole(messages[index]) !== "user") continue
+    startIndex = index
+    break
+  }
+  const stepDurations = []
+  const toolCalls = []
+  for (let index = startIndex + 1; index <= stopIndex; index += 1) {
+    const message = messages[index]
+    if (messageRole(message) !== "assistant") continue
+    const info = messageInfo(message)
+    const stepMs = durationBetween(info.time?.created, info.time?.completed)
+    if (stepMs !== null) stepDurations.push(stepMs)
+    for (const part of message.parts || []) {
+      if (part?.type !== "tool") continue
+      const toolMs = durationBetween(part.state?.time?.start, part.state?.time?.end)
+      if (toolMs === null) continue
+      toolCalls.push({ name: String(part.tool || "tool"), status: String(part.state?.status || ""), ms: toolMs })
+    }
+  }
+  stepDurations.sort((left, right) => left - right)
+  const slowestByTool = new Map()
+  for (const call of toolCalls) {
+    const current = slowestByTool.get(call.name)
+    if (!current || call.ms > current.maxMs) slowestByTool.set(call.name, { name: call.name, maxMs: call.ms })
+  }
+  return {
+    wallMs: Number.isFinite(wallMs) ? wallMs : null,
+    steps: stepDurations.length ? {
+      count: stepDurations.length,
+      p50Ms: percentile(stepDurations, 0.5),
+      p95Ms: percentile(stepDurations, 0.95),
+      maxMs: stepDurations.at(-1),
+    } : null,
+    tools: {
+      count: toolCalls.length,
+      totalMs: toolCalls.reduce((total, call) => total + call.ms, 0),
+      failed: toolCalls.filter((call) => call.status === "error").length,
+    },
+    slowest: [...slowestByTool.values()].sort((left, right) => right.maxMs - left.maxMs).slice(0, 3),
+  }
+}
+
+function durationBetween(start, end) {
+  const startedAt = timestampMs(start)
+  const endedAt = timestampMs(end)
+  return startedAt !== null && endedAt !== null && endedAt >= startedAt ? endedAt - startedAt : null
+}
+
+function percentile(sortedValues, quantile) {
+  if (!sortedValues.length) return 0
+  const index = Math.max(0, Math.min(sortedValues.length - 1, Math.ceil(sortedValues.length * quantile) - 1))
+  return sortedValues[index]
 }
 
 function tokenCount(value) {

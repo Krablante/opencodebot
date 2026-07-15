@@ -9,7 +9,7 @@ import { artifactTargetPath, handleArtifactUploadMessage, resolveUploadTarget } 
 import { AttachmentBuffer } from "../src/attachments.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "../src/commands.mjs"
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
-import { finalNotificationMarkdown, formatDuration, formatTokenCount, toolSummaryBeforeAssistant, turnMetadataBeforeAssistant, turnTokenUsageBeforeAssistant } from "../src/final-notifications.mjs"
+import { finalNotificationMarkdown, formatDebugDiagnosticsText, formatDuration, formatTokenCount, runDiagnosticsBeforeAssistant, toolSummaryBeforeAssistant, turnMetadataBeforeAssistant, turnTokenUsageBeforeAssistant } from "../src/final-notifications.mjs"
 import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { MirrorRenderer, webPromptMessages } from "../src/render.mjs"
@@ -232,20 +232,30 @@ function smokeFinalToolSummary() {
   assert.deepEqual(summary.patchedFiles, ["/home/bloob/repo/src/a.mjs", "/home/bloob/repo/src/moved.mjs", "/home/bloob/repo/src/new.mjs", "C:\\repo\\src\\edit.mjs"])
   const turnMessages = [
     { info: { id: "user-meta", role: "user", time: { created: 1000 }, model: { providerID: "openai", modelID: "gpt-5.6-sol-fast" }, variant: "max" } },
-    { info: { id: "assistant-tool", role: "assistant", time: { created: 2000, completed: 4000 }, modelID: "gpt-5.6-sol-fast", tokens: { input: 12_000_000, output: 40_000, reasoning: 20_000, cache: { read: 18_000_000, write: 0 } } } },
-    { info: { id: "assistant-meta", role: "assistant", time: { created: 5000, completed: 8_295_000 }, modelID: "gpt-5.6-sol-fast", tokens: { input: 12_000_000, output: 33_300, reasoning: 27_200, cache: { read: 18_500_000, write: 0 } } } },
+    { info: { id: "assistant-tool", role: "assistant", time: { created: 2000, completed: 4000 }, modelID: "gpt-5.6-sol-fast", tokens: { input: 12_000_000, output: 40_000, reasoning: 20_000, cache: { read: 18_000_000, write: 0 } } }, parts: [
+      { type: "tool", tool: "bash", state: { status: "completed", time: { start: 2200, end: 4700 } } },
+      { type: "tool", tool: "figma_metadata", state: { status: "error", time: { start: 2300, end: 3800 } } },
+    ] },
+    { info: { id: "assistant-meta", role: "assistant", time: { created: 5000, completed: 8_295_000 }, modelID: "gpt-5.6-sol-fast", tokens: { input: 12_000_000, output: 33_300, reasoning: 27_200, cache: { read: 18_500_000, write: 0 } } }, parts: [
+      { type: "tool", tool: "context7_query-docs", state: { status: "completed", time: { start: 6000, end: 9000 } } },
+    ] },
   ]
   const turnMetadata = turnMetadataBeforeAssistant(turnMessages, "assistant-meta")
   const tokenUsage = turnTokenUsageBeforeAssistant(turnMessages, "assistant-meta")
+  const debugDiagnostics = runDiagnosticsBeforeAssistant(turnMessages, "assistant-meta", turnMetadata.durationMs)
   assert.deepEqual(turnMetadata, { durationMs: 8_294_000, modelID: "gpt-5.6-sol-fast", variant: "max" })
   assert.deepEqual(tokenUsage, { input: 24_000_000, output: 73_300, reasoning: 47_200, cacheRead: 36_500_000, cacheWrite: 0, total: 60_620_500, calls: 2 })
   assert.equal(formatDuration(turnMetadata.durationMs), "2h 18m 14s")
   assert.equal(formatTokenCount(tokenUsage.total), "60.6M")
-  const notification = finalNotificationMarkdown({ topicSource: { title: "topic" }, serverID: "nuc", promptText: "change files", ...summary, ...turnMetadata, tokenUsage })
+  assert.deepEqual(debugDiagnostics.tools, { count: 3, totalMs: 7000, failed: 1 })
+  assert.match(formatDebugDiagnosticsText(debugDiagnostics), /Tools\/MCP: 3 · Σ7\.0s · 1 failed/)
+  const notification = finalNotificationMarkdown({ topicSource: { title: "topic" }, serverID: "nuc", promptText: "change files", ...summary, ...turnMetadata, tokenUsage, debugDiagnostics })
   assert.ok(notification.includes(">🔧 Tools: Read × 2; Patch × 1; Edit × 1; Write × 1 \\(1 failed\\)"))
   assert.ok(notification.includes(">🩹 Patched: a\\.mjs; moved\\.mjs; new\\.mjs; edit\\.mjs||"))
   assert.ok(notification.includes("⏱️ 2h 18m 14s · 🤖 gpt\\-5\\.6\\-sol\\-fast \\(max\\)"))
   assert.ok(notification.includes("🪙 Tokens: 60\\.6M · in 24\\.0M · out 120\\.5K · cache 36\\.5M"))
+  assert.ok(notification.lastIndexOf("🐛 Run diagnostics") > notification.lastIndexOf("🩹 Patched"))
+  assert.ok(notification.endsWith("||"))
   assert.doesNotMatch(notification, /\/home\/bloob|C:\\repo|old\.txt|failed\.mjs|Explore|Todo/)
 }
 
@@ -773,11 +783,13 @@ async function smokeArtifactPluginBatchCaptions() {
 
 async function smokeKillCommand() {
   assert.ok(telegramBotCommands.some((command) => command.command === "kill"))
+  assert.ok(telegramBotCommands.some((command) => command.command === "debug_on"))
 
   const binding = { serverID: "nuc", sessionID: "ses_kill", directory: "/home/bloob/politia/projects/tg/opencodebot" }
   const sent = []
   const aborted = []
   const discarded = []
+  let debugEnabled = false
   const promptQueue = new PromptQueue({
     onPrompt: async () => {},
     onQueued: async () => {},
@@ -792,6 +804,12 @@ async function smokeKillCommand() {
         assert.equal(chatId, 123)
         assert.equal(threadId, 456)
         return binding
+      },
+      async setDebugEnabled(enabled) {
+        debugEnabled = enabled
+      },
+      debugEnabled() {
+        return debugEnabled
       },
     },
     telegram: {
@@ -809,6 +827,7 @@ async function smokeKillCommand() {
       discardKey(promptKey) {
         discarded.push(promptKey)
       },
+      async flushKey() {},
     },
     createPendingTopic: async () => {},
   })
@@ -824,6 +843,13 @@ async function smokeKillCommand() {
   assert.equal(sent[0].topicId, 456)
   assert.match(sent[0].text, /Stop signal sent/)
   assert.match(sent[0].text, /Cleared 1 queued prompt/)
+  await handlers.handle({ chat: { id: 123 }, message_thread_id: 456 }, { name: "debug_on", args: "" }, "123:456")
+  assert.equal(debugEnabled, true)
+  assert.match(sent.at(-1).text, /Global debug diagnostics enabled/)
+  await handlers.handle({ chat: { id: 123 }, message_thread_id: 456 }, { name: "debug_status", args: "" }, "123:456")
+  assert.match(sent.at(-1).text, /enabled/)
+  await handlers.handle({ chat: { id: 123 }, message_thread_id: 456 }, { name: "debug_off", args: "" }, "123:456")
+  assert.equal(debugEnabled, false)
 }
 
 async function smokeResetCommand() {
@@ -1064,6 +1090,11 @@ async function smokeActiveBindingLeavesUsersOnlyCatchup() {
     const state = new StateStore(path.join(root, "state.json"))
     await state.load()
     await state.bindTopic({ chatId: 1, topicId: 2, serverID: "dima", sessionID: "ses_active", directory: "/tmp" })
+    assert.equal(state.debugEnabled(), false)
+    await state.setDebugEnabled(true)
+    assert.equal(state.debugEnabled(), true)
+    await state.setDebugEnabled(false)
+    assert.equal(state.debugEnabled(), false)
     await state.extendBindingActivity("dima", "ses_active", {
       reconcileUntil: Date.now() + 60_000,
       reconcileUsersOnlyUntil: Date.now() + 60_000,
