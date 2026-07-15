@@ -14,7 +14,7 @@ import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } fro
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { MirrorRenderer, webPromptMessages } from "../src/render.mjs"
 import { normalizeNestedRichLists } from "../src/rich-list-normalization.mjs"
-import { bindingSessionReconcileRefresh, createSessionReconciler, shouldSkipAssistantForCatchup } from "../src/session-reconcile.mjs"
+import { bindingSessionReconcileRefresh, createSessionReconciler, shouldSkipAssistantForCatchup, shouldSyncManagedTopicTitle } from "../src/session-reconcile.mjs"
 import { normalizeSpeechConfig } from "../src/config/speech.mjs"
 import { SpeechModule, transcriptMessage } from "../src/speech/index.mjs"
 import { GroqSpeechClient } from "../src/speech/groq-client.mjs"
@@ -49,6 +49,7 @@ async function smokeLocalInvariants() {
   await smokeAttachmentTextChunksWaitForIdle()
   smokeExpiredBindingReconcileRefresh()
   smokeCatchupAssistantGate()
+  smokeManagedTopicMigrationGate()
   await smokeActiveBindingLeavesUsersOnlyCatchup()
   await smokeTopicCreationSingleFlight()
   await smokeReconcileTopicRetry()
@@ -871,6 +872,7 @@ async function smokeResetCommand() {
     chatTemplate: { model: "openai/test" },
   }
   const sent = []
+  const renamed = []
   const steps = []
   const preservedTopicTitle = "Current visible topic"
   const chatTemplates = {
@@ -894,8 +896,19 @@ async function smokeResetCommand() {
     const handlers = createTelegramCommandHandlers({
       config: { chatTemplates, opencode: { servers: [{ id: "nuc", url: "http://127.0.0.1:4098" }] } },
       state,
-      telegram: { async sendMessage(message) { sent.push(message) } },
-      opencode: { async abortSession() { steps.push("abort") } },
+      telegram: {
+        async sendMessage(message) { sent.push(message) },
+        async editForumTopic(message) { renamed.push(message) },
+      },
+      opencode: {
+        servers: new Map([
+          ["nuc", { id: "nuc", home: "/home/bloob" }],
+          ["dima", { id: "dima", home: "/home/dima" }],
+        ]),
+        defaultNewSessionDirectory(serverID) { return this.servers.get(serverID)?.home },
+        async sessionStatus(serverID) { steps.push(`preflight:${serverID}`); return { type: "idle" } },
+        async abortSession() { steps.push("abort") },
+      },
       promptQueue,
       multipartPrompts: {
         async flushKey() {},
@@ -919,7 +932,7 @@ async function smokeResetCommand() {
     )
     assert.deepEqual(steps, [])
     assert.equal(state.findBinding("nuc", "ses_reset_old").disabled, undefined)
-    assert.match(sent.at(-1).text, /Unknown profile unknown/)
+    assert.match(sent.at(-1).text, /Unknown reset profile or server: unknown/)
 
     const handled = await handlers.handle(
       { chat: { id: 123 }, message_thread_id: 456, message_id: 789 },
@@ -934,12 +947,17 @@ async function smokeResetCommand() {
     assert.equal(state.pendingTopic(456).chatTemplateName, "sol")
     assert.deepEqual(state.pendingTopic(456).chatTemplate, chatTemplates.sol)
     assert.equal(state.pendingTopic(456).title, preservedTopicTitle)
+    assert.equal(state.pendingTopic(456).topicBaseTitle, preservedTopicTitle)
+    assert.equal(state.pendingTopic(456).topicTitle, `${preservedTopicTitle} (nuc)`)
     assert.equal(state.pendingTopic(456).titleSource, "user")
     assert.equal(promptQueue.status(binding).length, 0)
     assert.match(sent.at(-1).text, /Fresh session ready/)
-    assert.match(sent.at(-1).text, /preserved in OpenCodez/)
-    assert.match(sent.at(-1).text, /New session profile: <code>sol<\/code>/)
-    assert.match(sent.at(-1).text, /topic name will be preserved/)
+    assert.match(sent.at(-1).text, /Profile: <code>sol<\/code>/)
+    assert.match(sent.at(-1).text, /Server: <code>nuc<\/code>/)
+    assert.match(sent.at(-1).text, /Directory: <code>\/tmp\/work<\/code>/)
+    assert.match(sent.at(-1).text, /Topic: Current visible topic \(nuc\)/)
+    assert.match(sent.at(-1).text, /Preserved: <code>ses_reset_old<\/code>/)
+    assert.equal(renamed.at(-1).name, `${preservedTopicTitle} (nuc)`)
 
     await handlers.handle(
       { chat: { id: 123 }, message_thread_id: 456, message_id: 789 },
@@ -956,13 +974,26 @@ async function smokeResetCommand() {
     )
     assert.deepEqual(steps, ["multipart", "attachments"])
     assert.match(sent.at(-1).text, /already waiting for its first prompt/)
-    assert.match(sent.at(-1).text, /New session profile: <code>terra<\/code>/)
+    assert.match(sent.at(-1).text, /Profile: <code>terra<\/code>/)
     assert.equal(state.pendingTopic(456).chatTemplateName, "terra")
     assert.deepEqual(state.pendingTopic(456).chatTemplate, chatTemplates.terra)
 
+    steps.length = 0
+    await handlers.handle(
+      { chat: { id: 123 }, message_thread_id: 456, message_id: 791 },
+      { name: "reset", args: "sol dima" },
+      "123:456",
+    )
+    assert.deepEqual(steps, ["preflight:dima", "multipart", "attachments"])
+    assert.equal(state.pendingTopic(456).serverID, "dima")
+    assert.equal(state.pendingTopic(456).directory, "/home/dima")
+    assert.equal(state.pendingTopic(456).topicTitle, `${preservedTopicTitle} (dima)`)
+    assert.match(sent.at(-1).text, /Server: <code>nuc<\/code> → <code>dima<\/code>/)
+    assert.match(sent.at(-1).text, /Directory: <code>\/home\/dima<\/code>/)
+
     const reloaded = new StateStore(statePath)
     await reloaded.load()
-    assert.equal(reloaded.pendingTopic(456).topicTitle, preservedTopicTitle)
+    assert.equal(reloaded.pendingTopic(456).topicTitle, `${preservedTopicTitle} (dima)`)
     assert.equal(reloaded.pendingTopic(456).titleSource, "user")
     assert.equal(reloaded.findAnyBindingByTopic(123, 456).disabled, true)
     reloaded.data.pendingTopics["456"].titleSource = "opencode"
@@ -974,7 +1005,7 @@ async function smokeResetCommand() {
     const pending = migratedPending.pendingTopic(456)
     await migratedPending.bindTopic({ ...pending, chatId: 123, topicId: 456, sessionID: "ses_reset_new", title: "Generated session title" })
     assert.equal(migratedPending.findBindingByTopic(123, 456).titleSource, "user")
-    assert.equal(migratedPending.findBindingByTopic(123, 456).topicTitle, preservedTopicTitle)
+    assert.equal(migratedPending.findBindingByTopic(123, 456).topicTitle, `${preservedTopicTitle} (dima)`)
     migratedPending.findBindingByTopic(123, 456).titleSource = "opencode"
     await migratedPending.save()
     const migratedActive = new StateStore(statePath)
@@ -1082,6 +1113,13 @@ function smokeCatchupAssistantGate() {
   assert.equal(shouldSkipAssistantForCatchup(false, false), false)
   assert.equal(shouldSkipAssistantForCatchup(true, false), true)
   assert.equal(shouldSkipAssistantForCatchup(true, true), false)
+}
+
+function smokeManagedTopicMigrationGate() {
+  assert.equal(shouldSyncManagedTopicTitle({ title: "legacy", titleSource: "auto" }, "legacy"), false)
+  assert.equal(shouldSyncManagedTopicTitle({ title: "legacy", titleSource: "auto" }, "renamed"), true)
+  assert.equal(shouldSyncManagedTopicTitle({ title: "manual", titleSource: "user" }, "backend"), false)
+  assert.equal(shouldSyncManagedTopicTitle({ title: "managed", titleSource: "user", topicBaseTitle: "managed" }, "backend"), true)
 }
 
 async function smokeActiveBindingLeavesUsersOnlyCatchup() {

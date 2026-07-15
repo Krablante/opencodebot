@@ -53,6 +53,8 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       chatId: context.message.chat.id,
       topicId: topicId(context.message),
       topicTitle: context.pending.topicTitle || context.pending.title,
+      topicBaseTitle: context.pending.topicBaseTitle || context.pending.title,
+      topicServerSuffixManaged: context.pending.topicServerSuffixManaged === true,
       topicIconCustomEmojiId: context.pending.topicIconCustomEmojiId,
       topicIconEmoji: context.pending.topicIconEmoji,
       serverID: context.pending.serverID,

@@ -35,6 +35,31 @@ export function parseResetProfileArg(args, { chatTemplates }) {
   return { chatTemplateName: profile, chatTemplate: templates[profile] }
 }
 
+export function parseResetArgs(args, { chatTemplates, servers }) {
+  const templates = chatTemplates || {}
+  const serverIds = new Set(servers instanceof Map ? servers.keys() : (servers || []).map((server) => server.id))
+  const tokens = String(args || "").trim().split(/\s+/).filter(Boolean)
+  if (!tokens.length) return { chatTemplateName: null, chatTemplate: null, serverID: null }
+  if (tokens.length > 2) throw new Error("Usage: /reset [profile] [server]")
+
+  if (tokens.length === 1) {
+    const [token] = tokens
+    if (token === "gpt55p") throw new Error("Profile gpt55p was removed. Use luna, terra, or sol.")
+    const profileMatch = Boolean(templates[token])
+    const serverMatch = serverIds.has(token)
+    if (profileMatch && serverMatch) throw new Error(`Reset target ${token} is ambiguous. Use /reset <profile> <server>.`)
+    if (profileMatch) return { chatTemplateName: token, chatTemplate: templates[token], serverID: null }
+    if (serverMatch) return { chatTemplateName: null, chatTemplate: null, serverID: token }
+    throw new Error(`Unknown reset profile or server: ${token}`)
+  }
+
+  const [profileName, serverID] = tokens
+  if (profileName === "gpt55p") throw new Error("Profile gpt55p was removed. Use luna, terra, or sol.")
+  if (!templates[profileName]) throw new Error(`Unknown chat profile: ${profileName}`)
+  if (!serverIds.has(serverID)) throw new Error(`Unknown OpenCodez server: ${serverID}`)
+  return { chatTemplateName: profileName, chatTemplate: templates[profileName], serverID }
+}
+
 export async function applyChatTemplate(opencode, serverID, sessionID, chatTemplate, options = {}) {
   if (chatTemplate?.model) await opencode.switchSessionModel(serverID, sessionID, chatTemplate.model, options)
   if (chatTemplate?.opencodezSystem) await opencode.selectSystemPrompt(serverID, sessionID, chatTemplate.opencodezSystem, options)

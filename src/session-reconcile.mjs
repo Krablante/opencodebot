@@ -3,6 +3,7 @@ import { textFromPrompt, visibleTextFromParts } from "./opencode.mjs"
 import { formatToolLine } from "./render.mjs"
 import { runAfterFlight, runSingleFlight } from "./single-flight.mjs"
 import { escapeHtml } from "./telegram.mjs"
+import { managedTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
 
 export function createSessionReconciler({
   config,
@@ -346,12 +347,16 @@ export function createSessionReconciler({
   }
 
   async function maybeSyncTopicTitle(binding, title) {
-    if (!title || title === binding.title) return
-    if (binding.titleSource === "user") return
-    if (title.startsWith("New session -") && binding.title && !binding.title.startsWith("New session -")) return
+    if (!title) return
+    const userOwned = binding.titleSource === "user"
+    if (!shouldSyncManagedTopicTitle(binding, title)) return
+    const baseTitle = userOwned ? topicBaseTitle(binding) : title
+    const titleFields = managedTopicTitle(baseTitle, binding.serverID, opencode.servers)
+    if (binding.title === baseTitle && binding.topicTitle === titleFields.topicTitle) return
+    if (!userOwned && title.startsWith("New session -") && binding.title && !binding.title.startsWith("New session -")) return
     try {
-      await telegram.editForumTopic({ chatId: binding.chatId, topicId: binding.topicId, name: title })
-      await state.updateBindingTitle(binding.serverID, binding.sessionID, title)
+      await telegram.editForumTopic({ chatId: binding.chatId, topicId: binding.topicId, name: titleFields.topicTitle })
+      await state.updateBindingTitle(binding.serverID, binding.sessionID, baseTitle, userOwned ? "user" : "opencode", titleFields)
     } catch (error) {
       console.warn(`[opencodebot] topic title sync failed for ${binding.serverID}/${binding.sessionID}: ${error.message}`)
     }
@@ -580,6 +585,12 @@ export function bindingSessionReconcileRefresh(binding, session, nowMs = Date.no
   const untilMs = Date.parse(binding?.reconcileUntil || "")
   if (!Number.isFinite(untilMs) || updatedMs <= untilMs) return null
   return { updatedMs, untilMs }
+}
+
+export function shouldSyncManagedTopicTitle(binding, backendTitle) {
+  const managed = binding?.topicServerSuffixManaged === true || Boolean(binding?.topicBaseTitle)
+  if (managed) return true
+  return binding?.titleSource !== "user" && backendTitle !== binding?.title
 }
 
 export function shouldSkipAssistantForCatchup(usersOnlyCatchup, catchupUserSeen) {

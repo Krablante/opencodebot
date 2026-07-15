@@ -16,6 +16,7 @@ import { StateStore } from "./state.mjs"
 import { escapeHtml, TelegramClient } from "./telegram.mjs"
 import { createTelegramPolling } from "./telegram-polling.mjs"
 import { createTopicLifecycle } from "./topic-lifecycle.mjs"
+import { managedTopicTitle } from "./topic-titles.mjs"
 
 const config = loadConfig()
 assertRuntimeConfig(config)
@@ -166,8 +167,9 @@ async function createPendingTopic(message, args) {
   const directory = requestedDirectory || opencode.defaultNewSessionDirectory(serverID)
   const chatId = state.chatId || message.chat.id
   const topicIcon = await randomTopicIcon()
-  const topic = await telegram.createForumTopic({ chatId, name: title, iconCustomEmojiId: topicIcon?.customEmojiId })
-  await state.addPendingTopic(topic.message_thread_id, { serverID, topicTitle: title, topicIconCustomEmojiId: topic.icon_custom_emoji_id || topicIcon?.customEmojiId, topicIconEmoji: topicIcon?.emoji, title, titleSource, chatTemplateName, chatTemplate, directory })
+  const titleFields = managedTopicTitle(title, serverID, opencode.servers)
+  const topic = await telegram.createForumTopic({ chatId, name: titleFields.topicTitle, iconCustomEmojiId: topicIcon?.customEmojiId })
+  await state.addPendingTopic(topic.message_thread_id, { serverID, ...titleFields, topicIconCustomEmojiId: topic.icon_custom_emoji_id || topicIcon?.customEmojiId, topicIconEmoji: topicIcon?.emoji, title: titleFields.topicBaseTitle, titleSource, chatTemplateName, chatTemplate, directory })
   const suffix = chatTemplateName ? ` using <code>${escapeHtml(chatTemplateName)}</code>` : ""
   const directoryLine = directory ? `\nDirectory: <code>${escapeHtml(directory)}</code>` : ""
   await telegram.sendMessage({

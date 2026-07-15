@@ -2,6 +2,7 @@ import { logInfo } from "./logger.mjs"
 import { titleFromText } from "./opencode.mjs"
 import { runSingleFlight } from "./single-flight.mjs"
 import { topicId } from "./telegram.mjs"
+import { baseTitleFromTelegramTitle, managedTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
 
 export function createTopicLifecycle({ config, state, telegram, opencode, activateBindingForPrompt, clearPromptFeedback }) {
   const topicCreations = new Map()
@@ -9,12 +10,35 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
   async function handleTopicLifecycleMessage(message) {
     if (message.forum_topic_edited) {
       const metadata = { title: message.forum_topic_edited.name }
+      const binding = state.findBindingByTopic(message.chat.id, topicId(message))
+      const pending = binding ? null : state.pendingTopic(topicId(message))
+      const record = binding || pending
+      if (record && metadata.title) {
+        const expectedTitle = managedTopicTitle(topicBaseTitle(record), record.serverID, opencode.servers).topicTitle
+        const userEdited = metadata.title !== expectedTitle
+        const baseTitle = baseTitleFromTelegramTitle(metadata.title, record.serverID, opencode.servers)
+        const titleFields = managedTopicTitle(baseTitle, record.serverID, opencode.servers)
+        metadata.title = titleFields.topicTitle
+        Object.assign(metadata, titleFields)
+        if (userEdited) metadata.titleSource = "user"
+        if (titleFields.topicTitle !== message.forum_topic_edited.name) {
+          try {
+            await telegram.editForumTopic({ chatId: message.chat.id, topicId: topicId(message), name: titleFields.topicTitle })
+          } catch (error) {
+            console.warn(`[opencodebot] managed topic suffix restore failed for ${record.serverID}/${record.sessionID || `pending:${topicId(message)}`}: ${error.message}`)
+            metadata.title = message.forum_topic_edited.name
+            metadata.topicTitle = message.forum_topic_edited.name
+            metadata.topicServerSuffixManaged = false
+          }
+        }
+      }
       if (Object.hasOwn(message.forum_topic_edited, "icon_custom_emoji_id")) {
         const topicIcon = await topicIconForId(message.forum_topic_edited.icon_custom_emoji_id)
         metadata.topicIconCustomEmojiId = topicIcon?.customEmojiId || message.forum_topic_edited.icon_custom_emoji_id
         metadata.topicIconEmoji = topicIcon?.emoji
       }
-      await state.updateBindingTopicMetadata(message.chat.id, topicId(message), metadata)
+      if (binding) await state.updateBindingTopicMetadata(message.chat.id, topicId(message), metadata)
+      else if (pending) await state.updatePendingTopicProfile(topicId(message), { ...metadata, title: metadata.topicBaseTitle || metadata.title })
       return true
     }
     if (message.forum_topic_deleted) {
@@ -58,9 +82,10 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
     const chatId = state.chatId || config.telegram.chatId
     if (!chatId) return null
     const title = titleFromText(promptText, `${serverID} ${sessionID}`)
+    const titleFields = managedTopicTitle(title, serverID, opencode.servers)
     const topicIcon = await randomTopicIcon()
-    const topic = await telegram.createForumTopic({ chatId, name: title, iconCustomEmojiId: topicIcon?.customEmojiId })
-    const binding = { chatId, topicId: topic.message_thread_id, topicTitle: title, topicIconCustomEmojiId: topic.icon_custom_emoji_id || topicIcon?.customEmojiId, topicIconEmoji: topicIcon?.emoji, serverID, sessionID, title, titleSource: "auto" }
+    const topic = await telegram.createForumTopic({ chatId, name: titleFields.topicTitle, iconCustomEmojiId: topicIcon?.customEmojiId })
+    const binding = { chatId, topicId: topic.message_thread_id, ...titleFields, topicIconCustomEmojiId: topic.icon_custom_emoji_id || topicIcon?.customEmojiId, topicIconEmoji: topicIcon?.emoji, serverID, sessionID, title: titleFields.topicBaseTitle, titleSource: "auto" }
     await state.bindTopic(binding)
     await state.markSeenSession(serverID, sessionID)
     await activateBindingForPrompt(binding, "web-topic-created")
@@ -79,18 +104,19 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
     const chatId = state.chatId || config.telegram.chatId
     if (!chatId) return null
     const title = session.title || titleFromText(fallbackText, `${serverID} ${session.id}`)
+    const titleFields = managedTopicTitle(title, serverID, opencode.servers)
     const topicIcon = await randomTopicIcon()
-    const topic = await telegram.createForumTopic({ chatId, name: title, iconCustomEmojiId: topicIcon?.customEmojiId })
+    const topic = await telegram.createForumTopic({ chatId, name: titleFields.topicTitle, iconCustomEmojiId: topicIcon?.customEmojiId })
     const binding = {
       chatId,
       topicId: topic.message_thread_id,
-      topicTitle: title,
+      ...titleFields,
       topicIconCustomEmojiId: topic.icon_custom_emoji_id || topicIcon?.customEmojiId,
       topicIconEmoji: topicIcon?.emoji,
       serverID,
       sessionID: session.id,
       directory: session.directory,
-      title,
+      title: titleFields.topicBaseTitle,
       titleSource: session.title ? "opencode" : "auto",
     }
     await state.bindTopic(binding)

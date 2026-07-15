@@ -2,9 +2,10 @@ import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import test from "node:test"
 
-import { applyChatTemplate, parseNewTopicArgs, parseResetProfileArg } from "../src/chat-templates.mjs"
+import { applyChatTemplate, parseNewTopicArgs, parseResetArgs, parseResetProfileArg } from "../src/chat-templates.mjs"
 import { normalizeChatTemplates } from "../src/config/chat-templates.mjs"
 import { OpenCodeClient, profileFromMessages } from "../src/opencode.mjs"
+import { baseTitleFromTelegramTitle, managedTopicTitle } from "../src/topic-titles.mjs"
 
 test("built-in chat profiles use current models, variants, and System prompts", () => {
   const profiles = normalizeChatTemplates()
@@ -68,6 +69,33 @@ test("/reset accepts exactly one configured profile", () => {
   assert.throws(() => parseResetProfileArg("unknown", { chatTemplates: profiles }), /Unknown profile unknown/)
   assert.throws(() => parseResetProfileArg("sol extra", { chatTemplates: profiles }), /Usage: \/reset \[profile\]/)
   assert.throws(() => parseResetProfileArg("gpt55p", { chatTemplates: profiles }), /Profile gpt55p was removed/)
+})
+
+test("/reset resolves optional profile and server overrides", () => {
+  const profiles = normalizeChatTemplates()
+  const servers = new Map([["nuc", { id: "nuc" }], ["dima", { id: "dima" }]])
+  const options = { chatTemplates: profiles, servers }
+  assert.deepEqual(parseResetArgs("", options), { chatTemplateName: null, chatTemplate: null, serverID: null })
+  assert.deepEqual(parseResetArgs("dima", options), { chatTemplateName: null, chatTemplate: null, serverID: "dima" })
+  assert.equal(parseResetArgs("solh", options).chatTemplate.model.variant, "high")
+  assert.deepEqual(parseResetArgs("solh dima", options), { chatTemplateName: "solh", chatTemplate: profiles.solh, serverID: "dima" })
+  assert.throws(() => parseResetArgs("solh unknown", options), /Unknown OpenCodez server: unknown/)
+  assert.throws(() => parseResetArgs("unknown", options), /Unknown reset profile or server: unknown/)
+  assert.throws(() => parseResetArgs("solh dima extra", options), /Usage: \/reset \[profile\] \[server\]/)
+  assert.throws(() => parseResetArgs("solh", { chatTemplates: profiles, servers: new Map([["solh", { id: "solh" }]]) }), /ambiguous/)
+})
+
+test("managed topic titles add server suffix only for multi-server deployments", () => {
+  const oneServer = new Map([["nuc", { id: "nuc" }]])
+  const twoServers = new Map([["nuc", { id: "nuc" }], ["dima", { id: "dima" }]])
+  assert.deepEqual(managedTopicTitle("opencodebot_t2", "nuc", oneServer), {
+    topicBaseTitle: "opencodebot_t2",
+    topicTitle: "opencodebot_t2",
+    topicServerSuffixManaged: false,
+  })
+  assert.equal(managedTopicTitle("opencodebot_t2", "nuc", twoServers).topicTitle, "opencodebot_t2 (nuc)")
+  assert.equal(managedTopicTitle("x".repeat(128), "dima", twoServers).topicTitle.length, 128)
+  assert.equal(baseTitleFromTelegramTitle("opencodebot_t2 (dima)", "dima", twoServers), "opencodebot_t2")
 })
 
 test("OpenCodez System selection sends the current minimal payload", async (context) => {

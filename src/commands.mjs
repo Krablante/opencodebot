@@ -1,10 +1,11 @@
 import { summarizeWords } from "./prompt-queue.mjs"
 import { escapeHtml, topicId } from "./telegram.mjs"
-import { parseResetProfileArg } from "./chat-templates.mjs"
+import { parseResetArgs } from "./chat-templates.mjs"
+import { managedTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
 
 export const telegramBotCommands = [
   { command: "new", description: "Create a new OpenCodez session topic" },
-  { command: "reset", description: "Start fresh, optionally change profile" },
+  { command: "reset", description: "Start fresh; optionally change profile/server" },
   { command: "session", description: "Show topic, session, and special topic status" },
   { command: "artifacts_here", description: "Use this topic for agent artifact uploads" },
   { command: "sounds_here", description: "Use this topic as the speech inbox" },
@@ -186,9 +187,9 @@ export function createTelegramCommandHandlers({
       return
     }
 
-    let profile
+    let requested
     try {
-      profile = parseResetProfileArg(args, { chatTemplates: config.chatTemplates })
+      requested = parseResetArgs(args, { chatTemplates: config.chatTemplates, servers: opencode.servers })
     } catch (error) {
       await telegram.sendMessage({
         chatId: message.chat.id,
@@ -201,7 +202,33 @@ export function createTelegramCommandHandlers({
     const binding = state.findBindingByTopic(message.chat.id, currentTopicId)
     if (!binding) {
       const pending = state.pendingTopic(currentTopicId)
-      if (pending && profile) await state.updatePendingTopicProfile(currentTopicId, profile)
+      if (!pending) {
+        await telegram.sendMessage({
+          chatId: message.chat.id,
+          topicId: currentTopicId,
+          text: "No active OpenCodez session is bound here. Use /new to create a session topic.",
+        })
+        return
+      }
+      const profile = requested.chatTemplateName ? requested : {
+        chatTemplateName: pending.chatTemplateName,
+        chatTemplate: pending.chatTemplate,
+      }
+      const previousServerID = pending.serverID
+      const previousTopicTitle = pending.topicTitle
+      const targetServerID = requested.serverID || pending.serverID
+      const serverChanged = targetServerID !== pending.serverID
+      const targetDirectory = serverChanged ? opencode.defaultNewSessionDirectory(targetServerID) : pending.directory
+      if (serverChanged && !(await preflightResetServer(message, currentTopicId, targetServerID, targetDirectory))) return
+      const titleFields = managedTopicTitle(topicBaseTitle(pending), targetServerID, opencode.servers)
+      const updated = await state.updatePendingTopicProfile(currentTopicId, {
+        ...profile,
+        serverID: targetServerID,
+        directory: targetDirectory,
+        title: titleFields.topicBaseTitle,
+        titleSource: "user",
+        ...titleFields,
+      })
       const discardedMultipart = pending ? multipartPrompts.discardKey?.(promptKey) || false : false
       const discardedAttachments = pending ? await discardAttachmentBatch(promptKey) : 0
       const discarded = [
@@ -210,18 +237,28 @@ export function createTelegramCommandHandlers({
           ? `${discardedAttachments} buffered attachment${discardedAttachments === 1 ? "" : "s"}`
           : null,
       ].filter(Boolean)
+      let topicRenameWarning = null
+      if (updated.topicTitle !== previousTopicTitle) {
+        try {
+          await telegram.editForumTopic({ chatId: message.chat.id, topicId: currentTopicId, name: updated.topicTitle })
+        } catch (error) {
+          topicRenameWarning = `⚠️ Topic rename failed: ${escapeHtml(error.message)}`
+        }
+      }
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: pending
-          ? [
-              "🟡 This topic is already waiting for its first prompt.",
-              profile ? `New session profile: <code>${escapeHtml(profile.chatTemplateName)}</code>.` : null,
-              discarded.length ? `Discarded: ${escapeHtml(discarded.join(", "))}.` : null,
-            ]
-              .filter(Boolean)
-              .join("\n")
-          : "No active OpenCodez session is bound here. Use /new to create a session topic.",
+        text: [
+          "🟡 <b>This topic is already waiting for its first prompt</b>",
+          `🧠 Profile: <code>${escapeHtml(updated.chatTemplateName || "current")}</code>`,
+          serverChanged
+            ? `🔀 Server: <code>${escapeHtml(previousServerID)}</code> → <code>${escapeHtml(updated.serverID)}</code>`
+            : `🖥️ Server: <code>${escapeHtml(updated.serverID)}</code>`,
+          `📁 Directory: ${updated.directory ? `<code>${escapeHtml(updated.directory)}</code>` : "<i>server default</i>"}`,
+          `💬 Topic: ${escapeHtml(updated.topicTitle)}`,
+          discarded.length ? `🧹 Discarded: ${escapeHtml(discarded.join(", "))}` : null,
+          topicRenameWarning,
+        ].filter(Boolean).join("\n"),
       })
       return
     }
@@ -229,6 +266,12 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: "OpenCodez abort API is not available." })
       return
     }
+
+    const profile = requested.chatTemplateName ? requested : bindingToTemplate(binding)
+    const targetServerID = requested.serverID || binding.serverID
+    const serverChanged = targetServerID !== binding.serverID
+    const targetDirectory = serverChanged ? opencode.defaultNewSessionDirectory(targetServerID) : binding.directory
+    if (serverChanged && !(await preflightResetServer(message, currentTopicId, targetServerID, targetDirectory))) return
 
     promptQueue.markExpectedStop(binding)
     try {
@@ -246,7 +289,15 @@ export function createTelegramCommandHandlers({
     const cleared = promptQueue.clear(binding, "Discarded by /reset")
     const discardedMultipart = multipartPrompts.discardKey?.(promptKey) || false
     const discardedAttachments = await discardAttachmentBatch(promptKey)
-    const reset = await state.resetBindingToPending(binding, profile)
+    const titleFields = managedTopicTitle(topicBaseTitle(binding), targetServerID, opencode.servers)
+    const reset = await state.resetBindingToPending(binding, {
+      ...profile,
+      serverID: targetServerID,
+      directory: targetDirectory,
+      title: titleFields.topicBaseTitle,
+      titleSource: "user",
+      ...titleFields,
+    })
     if (!reset) {
       promptQueue.clearExpectedStop(binding)
       await telegram.sendMessage({
@@ -257,6 +308,15 @@ export function createTelegramCommandHandlers({
       return
     }
     detachBinding(binding)
+
+    let topicRenameWarning = null
+    if (titleFields.topicTitle !== binding.topicTitle) {
+      try {
+        await telegram.editForumTopic({ chatId: message.chat.id, topicId: currentTopicId, name: titleFields.topicTitle })
+      } catch (error) {
+        topicRenameWarning = `⚠️ Topic rename failed: ${escapeHtml(error.message)}`
+      }
+    }
 
     const discarded = []
     if (cleared.length) discarded.push(`${cleared.length} queued prompt${cleared.length === 1 ? "" : "s"}`)
@@ -269,15 +329,36 @@ export function createTelegramCommandHandlers({
       topicId: currentTopicId,
       text: [
         "🆕 <b>Fresh session ready</b>",
-        `Previous session <code>${escapeHtml(binding.sessionID)}</code> was preserved in OpenCodez and detached from this topic.`,
-        discarded.length ? `Discarded: ${escapeHtml(discarded.join(", "))}.` : null,
-        profile ? `New session profile: <code>${escapeHtml(profile.chatTemplateName)}</code>.` : null,
-        "The current Telegram topic name will be preserved.",
-        "Send the first prompt to create a new session here.",
+        "",
+        `🧠 Profile: <code>${escapeHtml(reset.pending.chatTemplateName || "current")}</code>`,
+        serverChanged
+          ? `🔀 Server: <code>${escapeHtml(binding.serverID)}</code> → <code>${escapeHtml(reset.pending.serverID)}</code>`
+          : `🖥️ Server: <code>${escapeHtml(reset.pending.serverID)}</code>`,
+        `📁 Directory: ${reset.pending.directory ? `<code>${escapeHtml(reset.pending.directory)}</code>` : "<i>server default</i>"}`,
+        `💬 Topic: ${escapeHtml(reset.pending.topicTitle)}`,
+        "",
+        `♻️ Preserved: <code>${escapeHtml(binding.sessionID)}</code>`,
+        discarded.length ? `🧹 Discarded: ${escapeHtml(discarded.join(", "))}` : null,
+        "✍️ Send the first prompt to create the new session.",
+        topicRenameWarning,
       ]
         .filter(Boolean)
         .join("\n"),
     })
+  }
+
+  async function preflightResetServer(message, currentTopicId, serverID, directory) {
+    try {
+      await opencode.sessionStatus(serverID, "__opencodebot_preflight__", { directory })
+      return true
+    } catch (error) {
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: currentTopicId,
+        text: `❌ Cannot switch to <code>${escapeHtml(serverID)}</code>: ${escapeHtml(error.message)}`,
+      })
+      return false
+    }
   }
 
   async function handleSoundsHere(message) {
@@ -533,7 +614,7 @@ export function createTelegramCommandHandlers({
       "<b>OpenCodez Bot</b>",
       "",
       "<code>/new [server] [profile] [dir:&lt;path&gt;] [title]</code> - create a topic and wait for the first prompt.",
-      "<code>/reset [profile]</code> - preserve the old session and start fresh here, optionally with another profile.",
+      "<code>/reset [profile] [server]</code> - preserve the old session and start fresh here, optionally changing profile and/or server.",
       "<code>/session</code> - show current topic, binding, session URL, and special topic status.",
       "<code>/q &lt;prompt&gt;</code> - queue a prompt for this topic/session.",
       "<code>/q status</code> - show queued prompts.",

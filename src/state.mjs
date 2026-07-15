@@ -258,15 +258,18 @@ export class StateStore {
     })
   }
 
-  async updateBindingTitle(serverID, sessionID, title, titleSource = "opencode") {
+  async updateBindingTitle(serverID, sessionID, title, titleSource = "opencode", topicMetadata = {}) {
     return this.update((data) => {
       const binding = data.bindings.find((item) => item.serverID === serverID && item.sessionID === sessionID)
       if (!binding) return false
-      if (binding.title === title && binding.titleSource === titleSource && binding.topicTitle === title) return false
+      const topicTitle = topicMetadata.topicTitle || title
+      if (binding.title === title && binding.titleSource === titleSource && binding.topicTitle === topicTitle) return false
       binding.title = title
       binding.titleSource = titleSource
       binding.titleUpdatedAt = new Date().toISOString()
-      binding.topicTitle = title
+      binding.topicTitle = topicTitle
+      binding.topicBaseTitle = topicMetadata.topicBaseTitle || title
+      binding.topicServerSuffixManaged = topicMetadata.topicServerSuffixManaged === true
       binding.topicTitleUpdatedAt = binding.titleUpdatedAt
       return true
     })
@@ -283,6 +286,20 @@ export class StateStore {
         binding.topicTitle = title
         binding.topicTitleUpdatedAt = new Date().toISOString()
         changed = true
+      }
+      const topicBaseTitle = String(metadata.topicBaseTitle || "").trim()
+      if (topicBaseTitle && binding.topicBaseTitle !== topicBaseTitle) {
+        binding.topicBaseTitle = topicBaseTitle
+        changed = true
+      }
+      if (Object.hasOwn(metadata, "topicServerSuffixManaged") && binding.topicServerSuffixManaged !== (metadata.topicServerSuffixManaged === true)) {
+        binding.topicServerSuffixManaged = metadata.topicServerSuffixManaged === true
+        changed = true
+      }
+      if (metadata.titleSource === "user") {
+        if (binding.titleSource !== "user") changed = true
+        binding.titleSource = "user"
+        binding.title = topicBaseTitle || title || binding.title
       }
 
       if (Object.hasOwn(metadata, "topicIconCustomEmojiId")) {
@@ -357,16 +374,19 @@ export class StateStore {
       current.disabled = true
       current.disabledReason = reason
       current.disabledAt = now
-      const topicTitle = current.topicTitle || current.title || "New session"
+      const topicTitle = profile?.topicTitle || current.topicTitle || current.title || "New session"
+      const topicBaseTitle = profile?.topicBaseTitle || current.topicBaseTitle || current.topicTitle || current.title || "New session"
       const pending = compactObject({
         chatId: current.chatId,
         topicTitle,
+        topicBaseTitle,
+        topicServerSuffixManaged: profile?.topicServerSuffixManaged === true,
         topicIconCustomEmojiId: current.topicIconCustomEmojiId,
         topicIconEmoji: current.topicIconEmoji,
-        title: topicTitle,
-        titleSource: "user",
-        serverID: current.serverID,
-        directory: current.directory,
+        title: profile?.title || topicBaseTitle,
+        titleSource: profile?.titleSource || "user",
+        serverID: profile?.serverID || current.serverID,
+        directory: Object.hasOwn(profile || {}, "directory") ? profile.directory : current.directory,
         chatTemplateName: profile?.chatTemplateName || current.chatTemplateName,
         chatTemplate: profile?.chatTemplate || current.chatTemplate,
         createdAt: now,
@@ -380,8 +400,16 @@ export class StateStore {
     return this.update((data) => {
       const pending = data.pendingTopics[String(topicId ?? 0)]
       if (!pending) return null
-      pending.chatTemplateName = profile.chatTemplateName
-      pending.chatTemplate = profile.chatTemplate
+      if (Object.hasOwn(profile, "chatTemplateName")) pending.chatTemplateName = profile.chatTemplateName
+      if (Object.hasOwn(profile, "chatTemplate")) pending.chatTemplate = profile.chatTemplate
+      if (profile.serverID) pending.serverID = profile.serverID
+      if (Object.hasOwn(profile, "directory")) {
+        if (profile.directory === undefined) delete pending.directory
+        else pending.directory = profile.directory
+      }
+      for (const key of ["title", "titleSource", "topicTitle", "topicBaseTitle", "topicServerSuffixManaged"]) {
+        if (Object.hasOwn(profile, key)) pending[key] = profile[key]
+      }
       pending.updatedAt = new Date().toISOString()
       return { ...pending }
     })
