@@ -19,11 +19,18 @@ const defaultChatTemplates = {
     model: { providerID: "openai", modelID: "gpt-5.6-terra", variant: "xhigh" },
     opencodezSystem: "codex_gpt_5_6_luna_terra",
   },
-  sol: {
+  solm: solTemplate("medium"),
+  solh: solTemplate("high"),
+  sol: solTemplate("xhigh"),
+  solmax: solTemplate("max"),
+}
+
+function solTemplate(variant) {
+  return {
     agent: "build",
-    model: { providerID: "openai", modelID: "gpt-5.6-sol", variant: "xhigh" },
+    model: { providerID: "openai", modelID: "gpt-5.6-sol", variant },
     opencodezSystem: "codex_gpt_5_6_sol",
-  },
+  }
 }
 
 export function normalizeChatTemplates(value = {}) {

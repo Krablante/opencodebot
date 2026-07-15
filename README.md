@@ -170,7 +170,7 @@ Use `/mode`, `/mode full`, or `/mode economy` to inspect or change the persisten
 
 Use `/mirror_on` and `/mirror_off` when you need to pause or resume web-to-Telegram mirroring without stopping the bot.
 
-Default chat profiles are `d4flash`, `d4pro`, `luna`, `terra`, and `sol`. Each profile keeps its agent, model, variant, and OpenCodez System prompt in `chatTemplates`; local deployments can override those values in runtime config without changing code. DeepSeek profiles use the OpenCodez `default` System prompt, Luna and Terra share `codex_gpt_5_6_luna_terra`, and Sol uses `codex_gpt_5_6_sol`.
+Default chat profiles are `d4flash`, `d4pro`, `luna`, `terra`, `solm`, `solh`, `sol`, and `solmax`. Each profile keeps its agent, model, variant, and OpenCodez System prompt in `chatTemplates`; local deployments can override those values in runtime config without changing code. DeepSeek profiles use the OpenCodez `default` System prompt, Luna and Terra share `codex_gpt_5_6_luna_terra`, and all four Sol profiles use `codex_gpt_5_6_sol`. They select the same Sol model with `medium`, `high`, `xhigh`, and `max` variants respectively.
 
 ## Docs
 

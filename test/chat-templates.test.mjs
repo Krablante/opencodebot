@@ -9,7 +9,7 @@ import { OpenCodeClient, profileFromMessages } from "../src/opencode.mjs"
 test("built-in chat profiles use current models, variants, and System prompts", () => {
   const profiles = normalizeChatTemplates()
 
-  assert.deepEqual(Object.keys(profiles).sort(), ["d4flash", "d4pro", "luna", "sol", "terra"])
+  assert.deepEqual(Object.keys(profiles).sort(), ["d4flash", "d4pro", "luna", "sol", "solh", "solm", "solmax", "terra"])
   assert.deepEqual(profiles.sol, {
     agent: "build",
     model: { providerID: "openai", modelID: "gpt-5.6-sol", variant: "xhigh" },
@@ -19,6 +19,13 @@ test("built-in chat profiles use current models, variants, and System prompts", 
   assert.equal(profiles.terra.opencodezSystem, "codex_gpt_5_6_luna_terra")
   assert.equal(profiles.d4flash.opencodezSystem, "default")
   assert.equal(profiles.d4pro.opencodezSystem, "default")
+  for (const [name, variant] of [["solm", "medium"], ["solh", "high"], ["sol", "xhigh"], ["solmax", "max"]]) {
+    assert.deepEqual(profiles[name], {
+      agent: "build",
+      model: { providerID: "openai", modelID: "gpt-5.6-sol", variant },
+      opencodezSystem: "codex_gpt_5_6_sol",
+    })
+  }
   assert.deepEqual(profileFromMessages([{ info: { role: "user", agent: "build", model: profiles.sol.model } }]), {
     agent: "build",
     model: profiles.sol.model,
@@ -32,6 +39,9 @@ test("/new resolves a profile and rejects the retired gpt55p alias", async () =>
 
   assert.equal(parsed.chatTemplateName, "sol")
   assert.equal(parsed.title, "opencodebot-first")
+  assert.equal(parseNewTopicArgs("solm medium-work", options).chatTemplate.model.variant, "medium")
+  assert.equal(parseNewTopicArgs("solh high-work", options).chatTemplate.model.variant, "high")
+  assert.equal(parseNewTopicArgs("solmax max-work", options).chatTemplate.model.variant, "max")
 
   const calls = []
   await applyChatTemplate({
@@ -52,6 +62,9 @@ test("/reset accepts exactly one configured profile", () => {
     chatTemplateName: "sol",
     chatTemplate: profiles.sol,
   })
+  assert.equal(parseResetProfileArg("solm", { chatTemplates: profiles }).chatTemplate.model.variant, "medium")
+  assert.equal(parseResetProfileArg("solh", { chatTemplates: profiles }).chatTemplate.model.variant, "high")
+  assert.equal(parseResetProfileArg("solmax", { chatTemplates: profiles }).chatTemplate.model.variant, "max")
   assert.throws(() => parseResetProfileArg("unknown", { chatTemplates: profiles }), /Unknown profile unknown/)
   assert.throws(() => parseResetProfileArg("sol extra", { chatTemplates: profiles }), /Usage: \/reset \[profile\]/)
   assert.throws(() => parseResetProfileArg("gpt55p", { chatTemplates: profiles }), /Profile gpt55p was removed/)

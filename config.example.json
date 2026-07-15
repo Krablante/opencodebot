@@ -93,9 +93,24 @@
       "model": { "providerID": "openai", "modelID": "gpt-5.6-terra", "variant": "xhigh" },
       "opencodezSystem": "codex_gpt_5_6_luna_terra"
     },
+    "solm": {
+      "agent": "build",
+      "model": { "providerID": "openai", "modelID": "gpt-5.6-sol", "variant": "medium" },
+      "opencodezSystem": "codex_gpt_5_6_sol"
+    },
+    "solh": {
+      "agent": "build",
+      "model": { "providerID": "openai", "modelID": "gpt-5.6-sol", "variant": "high" },
+      "opencodezSystem": "codex_gpt_5_6_sol"
+    },
     "sol": {
       "agent": "build",
       "model": { "providerID": "openai", "modelID": "gpt-5.6-sol", "variant": "xhigh" },
+      "opencodezSystem": "codex_gpt_5_6_sol"
+    },
+    "solmax": {
+      "agent": "build",
+      "model": { "providerID": "openai", "modelID": "gpt-5.6-sol", "variant": "max" },
       "opencodezSystem": "codex_gpt_5_6_sol"
     }
   },

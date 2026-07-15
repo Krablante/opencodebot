@@ -72,7 +72,7 @@ Examples:
 /reset terra
 ```
 
-The default profiles are `d4flash`, `d4pro`, `luna`, `terra`, and `sol`. They are host-independent Telegram-created-session profiles. Each keeps its agent, model, variant, and OpenCodez System prompt in config. After creating the session and before sending the first prompt, the bot switches the session's next model and selects that System. The retired `gpt55p` profile is rejected with a direct migration hint instead of being misread as a topic title.
+The default profiles are `d4flash`, `d4pro`, `luna`, `terra`, `solm`, `solh`, `sol`, and `solmax`. They are host-independent Telegram-created-session profiles. `solm`, `solh`, `sol`, and `solmax` use the same configured Sol model and System prompt with `medium`, `high`, `xhigh`, and `max` variants respectively. Each profile keeps its agent, model, variant, and OpenCodez System prompt in config. After creating the session and before sending the first prompt, the bot switches the session's next model and selects that System. The retired `gpt55p` profile is rejected with a direct migration hint instead of being misread as a topic title.
 
 ## Prompts
 
