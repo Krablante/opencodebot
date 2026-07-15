@@ -171,6 +171,9 @@ export function formatDebugDiagnosticsText(debugDiagnostics) {
   if (debugDiagnostics.steps?.count) {
     lines.push(`🧠 Agent steps: ${debugDiagnostics.steps.count} · p50 ${formatDebugDuration(debugDiagnostics.steps.p50Ms)} · p95 ${formatDebugDuration(debugDiagnostics.steps.p95Ms)} · max ${formatDebugDuration(debugDiagnostics.steps.maxMs)}`)
   }
+  if (debugDiagnostics.tps) {
+    lines.push(`⚡ TPS: ${formatTps(debugDiagnostics.tps.average)} avg · p50 ${formatTps(debugDiagnostics.tps.p50)} · p95 ${formatTps(debugDiagnostics.tps.p95)}`)
+  }
   if (debugDiagnostics.tools) {
     lines.push(`🧰 Tools/MCP: ${debugDiagnostics.tools.count} · Σ${formatDebugDuration(debugDiagnostics.tools.totalMs)} · ${debugDiagnostics.tools.failed} failed`)
   }
@@ -185,6 +188,10 @@ function formatDebugDuration(value) {
   if (value < 1000) return `${Math.round(value)}ms`
   if (value < 60_000) return `${(value / 1000).toFixed(1)}s`
   return formatDuration(value)
+}
+
+function formatTps(value) {
+  return Number.isFinite(value) && value >= 0 ? value.toFixed(1) : "0.0"
 }
 
 function summarizeItems(values, maxChars) {
@@ -374,6 +381,9 @@ export function runDiagnosticsBeforeAssistant(messages, assistantMessageID) {
     break
   }
   const stepDurations = []
+  const stepTps = []
+  let tpsTokens = 0
+  let tpsEffectiveMs = 0
   const toolCalls = []
   for (let index = startIndex + 1; index <= stopIndex; index += 1) {
     const message = messages[index]
@@ -381,14 +391,26 @@ export function runDiagnosticsBeforeAssistant(messages, assistantMessageID) {
     const info = messageInfo(message)
     const stepMs = durationBetween(info.time?.created, info.time?.completed)
     if (stepMs !== null) stepDurations.push(stepMs)
+    const stepToolIntervals = []
     for (const part of message.parts || []) {
       if (part?.type !== "tool") continue
       const toolMs = durationBetween(part.state?.time?.start, part.state?.time?.end)
       if (toolMs === null) continue
       toolCalls.push({ name: String(part.tool || "tool"), status: String(part.state?.status || ""), ms: toolMs })
+      stepToolIntervals.push([timestampMs(part.state.time.start), timestampMs(part.state.time.end)])
+    }
+    const outputTokens = tokenCount(info.tokens?.output) + tokenCount(info.tokens?.reasoning)
+    if (stepMs !== null && outputTokens > 0) {
+      const effectiveMs = stepMs - intervalUnionMs(stepToolIntervals, timestampMs(info.time?.created), timestampMs(info.time?.completed))
+      if (effectiveMs > 0) {
+        tpsTokens += outputTokens
+        tpsEffectiveMs += effectiveMs
+        stepTps.push(outputTokens / (effectiveMs / 1000))
+      }
     }
   }
   stepDurations.sort((left, right) => left - right)
+  stepTps.sort((left, right) => left - right)
   const slowestByTool = new Map()
   for (const call of toolCalls) {
     const current = slowestByTool.get(call.name)
@@ -400,6 +422,11 @@ export function runDiagnosticsBeforeAssistant(messages, assistantMessageID) {
       p50Ms: percentile(stepDurations, 0.5),
       p95Ms: percentile(stepDurations, 0.95),
       maxMs: stepDurations.at(-1),
+    } : null,
+    tps: stepTps.length ? {
+      average: tpsTokens / (tpsEffectiveMs / 1000),
+      p50: percentile(stepTps, 0.5),
+      p95: percentile(stepTps, 0.95),
     } : null,
     tools: {
       count: toolCalls.length,
@@ -420,6 +447,31 @@ function percentile(sortedValues, quantile) {
   if (!sortedValues.length) return 0
   const index = Math.max(0, Math.min(sortedValues.length - 1, Math.ceil(sortedValues.length * quantile) - 1))
   return sortedValues[index]
+}
+
+function intervalUnionMs(intervals, lowerBound, upperBound) {
+  const sorted = intervals
+    .map(([start, end]) => [Math.max(lowerBound, start), Math.min(upperBound, end)])
+    .filter(([start, end]) => Number.isFinite(start) && Number.isFinite(end) && end >= start)
+    .sort((left, right) => left[0] - right[0])
+  let total = 0
+  let currentStart = null
+  let currentEnd = null
+  for (const [start, end] of sorted) {
+    if (currentStart === null) {
+      currentStart = start
+      currentEnd = end
+      continue
+    }
+    if (start <= currentEnd) {
+      currentEnd = Math.max(currentEnd, end)
+      continue
+    }
+    total += currentEnd - currentStart
+    currentStart = start
+    currentEnd = end
+  }
+  return total + (currentStart === null ? 0 : currentEnd - currentStart)
 }
 
 function tokenCount(value) {

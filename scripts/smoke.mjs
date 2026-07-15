@@ -243,13 +243,21 @@ function smokeFinalToolSummary() {
   ]
   const turnMetadata = turnMetadataBeforeAssistant(turnMessages, "assistant-meta")
   const tokenUsage = turnTokenUsageBeforeAssistant(turnMessages, "assistant-meta")
-  const debugDiagnostics = runDiagnosticsBeforeAssistant(turnMessages, "assistant-meta")
+  const debugMessages = [
+    { info: { id: "debug-user", role: "user", time: { created: 0 } } },
+    { info: { id: "debug-tool", role: "assistant", time: { created: 1000, completed: 11_000 }, tokens: { output: 400, reasoning: 100 } }, parts: [
+      { type: "tool", tool: "bash", state: { status: "completed", time: { start: 3000, end: 5000 } } },
+    ] },
+    { info: { id: "debug-final", role: "assistant", time: { created: 12_000, completed: 22_000 }, tokens: { output: 300, reasoning: 100 } }, parts: [] },
+  ]
+  const debugDiagnostics = runDiagnosticsBeforeAssistant(debugMessages, "debug-final")
   assert.deepEqual(turnMetadata, { durationMs: 8_294_000, modelID: "gpt-5.6-sol-fast", variant: "max" })
   assert.deepEqual(tokenUsage, { input: 24_000_000, output: 73_300, reasoning: 47_200, cacheRead: 36_500_000, cacheWrite: 0, total: 60_620_500, calls: 2 })
   assert.equal(formatDuration(turnMetadata.durationMs), "2h 18m 14s")
   assert.equal(formatTokenCount(tokenUsage.total), "60.6M")
-  assert.deepEqual(debugDiagnostics.tools, { count: 3, totalMs: 7000, failed: 1 })
-  assert.match(formatDebugDiagnosticsText(debugDiagnostics), /Tools\/MCP: 3 · Σ7\.0s · 1 failed/)
+  assert.deepEqual(debugDiagnostics.tools, { count: 1, totalMs: 2000, failed: 0 })
+  assert.match(formatDebugDiagnosticsText(debugDiagnostics), /Tools\/MCP: 1 · Σ2\.0s · 0 failed/)
+  assert.match(formatDebugDiagnosticsText(debugDiagnostics), /⚡ TPS: 50\.0 avg · p50 40\.0 · p95 62\.5/)
   assert.doesNotMatch(formatDebugDiagnosticsText(debugDiagnostics), /Wall:/)
   const notification = finalNotificationMarkdown({ topicSource: { title: "topic" }, serverID: "nuc", promptText: "change files", ...summary, ...turnMetadata, tokenUsage, debugDiagnostics })
   assert.ok(notification.includes(">🔧 Tools: Read × 2; Patch × 1; Edit × 1; Write × 1 \\(1 failed\\)"))
