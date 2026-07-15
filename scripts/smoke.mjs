@@ -9,7 +9,7 @@ import { artifactTargetPath, handleArtifactUploadMessage, resolveUploadTarget } 
 import { AttachmentBuffer } from "../src/attachments.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "../src/commands.mjs"
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
-import { finalNotificationMarkdown, formatDuration, toolSummaryBeforeAssistant, turnMetadataBeforeAssistant } from "../src/final-notifications.mjs"
+import { finalNotificationMarkdown, formatDuration, formatTokenCount, toolSummaryBeforeAssistant, turnMetadataBeforeAssistant, turnTokenUsageBeforeAssistant } from "../src/final-notifications.mjs"
 import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { MirrorRenderer, webPromptMessages } from "../src/render.mjs"
@@ -230,16 +230,22 @@ function smokeFinalToolSummary() {
     { name: "Write", count: 1, failed: 1 },
   ])
   assert.deepEqual(summary.patchedFiles, ["/home/bloob/repo/src/a.mjs", "/home/bloob/repo/src/moved.mjs", "/home/bloob/repo/src/new.mjs", "C:\\repo\\src\\edit.mjs"])
-  const turnMetadata = turnMetadataBeforeAssistant([
+  const turnMessages = [
     { info: { id: "user-meta", role: "user", time: { created: 1000 }, model: { providerID: "openai", modelID: "gpt-5.6-sol-fast" }, variant: "max" } },
-    { info: { id: "assistant-meta", role: "assistant", time: { created: 2000, completed: 8_295_000 }, modelID: "gpt-5.6-sol-fast" } },
-  ], "assistant-meta")
+    { info: { id: "assistant-tool", role: "assistant", time: { created: 2000, completed: 4000 }, modelID: "gpt-5.6-sol-fast", tokens: { input: 12_000_000, output: 40_000, reasoning: 20_000, cache: { read: 18_000_000, write: 0 } } } },
+    { info: { id: "assistant-meta", role: "assistant", time: { created: 5000, completed: 8_295_000 }, modelID: "gpt-5.6-sol-fast", tokens: { input: 12_000_000, output: 33_300, reasoning: 27_200, cache: { read: 18_500_000, write: 0 } } } },
+  ]
+  const turnMetadata = turnMetadataBeforeAssistant(turnMessages, "assistant-meta")
+  const tokenUsage = turnTokenUsageBeforeAssistant(turnMessages, "assistant-meta")
   assert.deepEqual(turnMetadata, { durationMs: 8_294_000, modelID: "gpt-5.6-sol-fast", variant: "max" })
+  assert.deepEqual(tokenUsage, { input: 24_000_000, output: 73_300, reasoning: 47_200, cacheRead: 36_500_000, cacheWrite: 0, total: 60_620_500, calls: 2 })
   assert.equal(formatDuration(turnMetadata.durationMs), "2h 18m 14s")
-  const notification = finalNotificationMarkdown({ topicSource: { title: "topic" }, serverID: "nuc", promptText: "change files", ...summary, ...turnMetadata })
+  assert.equal(formatTokenCount(tokenUsage.total), "60.6M")
+  const notification = finalNotificationMarkdown({ topicSource: { title: "topic" }, serverID: "nuc", promptText: "change files", ...summary, ...turnMetadata, tokenUsage })
   assert.ok(notification.includes(">🔧 Tools: Read × 2; Patch × 1; Edit × 1; Write × 1 \\(1 failed\\)"))
   assert.ok(notification.includes(">🩹 Patched: a\\.mjs; moved\\.mjs; new\\.mjs; edit\\.mjs||"))
   assert.ok(notification.includes("⏱️ 2h 18m 14s · 🤖 gpt\\-5\\.6\\-sol\\-fast \\(max\\)"))
+  assert.ok(notification.includes("🪙 Tokens: 60\\.6M · in 24\\.0M · out 120\\.5K · cache 36\\.5M"))
   assert.doesNotMatch(notification, /\/home\/bloob|C:\\repo|old\.txt|failed\.mjs|Explore|Todo/)
 }
 

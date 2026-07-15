@@ -56,7 +56,7 @@ async function sendFinalNotificationMessage({ telegram, userId, text, fallbackTe
   }
 }
 
-export function finalNotificationMarkdown({ topicSource, serverID, promptText, completedTodos = [], tools = [], patchedFiles = [], durationMs, modelID, variant }) {
+export function finalNotificationMarkdown({ topicSource, serverID, promptText, completedTodos = [], tools = [], patchedFiles = [], durationMs, modelID, variant, tokenUsage }) {
   const lines = [
     "🏁 *Final answer is ready*",
     finalNotificationTopicMarkdown(topicSource),
@@ -64,6 +64,8 @@ export function finalNotificationMarkdown({ topicSource, serverID, promptText, c
   ]
   const telemetry = finalNotificationTelemetryLine({ durationMs, modelID, variant })
   if (telemetry) lines.push(escapeMarkdownV2(telemetry))
+  const tokens = finalNotificationTokenLine(tokenUsage)
+  if (tokens) lines.push(escapeMarkdownV2(tokens))
   const headerLines = lines.length
   const prompt = truncateNotificationText(promptText, FINAL_NOTIFICATION_PROMPT_CHARS)
   if (prompt) lines.push("", toolQuoteMarkdownV2(prompt))
@@ -74,7 +76,7 @@ export function finalNotificationMarkdown({ topicSource, serverID, promptText, c
   return clampNotificationMarkdown(lines, toolLines, headerLines)
 }
 
-function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos = [], tools = [], patchedFiles = [], durationMs, modelID, variant }) {
+function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos = [], tools = [], patchedFiles = [], durationMs, modelID, variant, tokenUsage }) {
   const lines = [
     "🏁 Final answer is ready",
     finalNotificationTopicHtml(topicSource),
@@ -82,6 +84,8 @@ function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos =
   ]
   const telemetry = finalNotificationTelemetryLine({ durationMs, modelID, variant })
   if (telemetry) lines.push(escapeHtml(telemetry))
+  const tokens = finalNotificationTokenLine(tokenUsage)
+  if (tokens) lines.push(escapeHtml(tokens))
   const todoLines = formatCompletedTodoHtml(completedTodos, { maxItems: FINAL_NOTIFICATION_TODO_ITEMS, maxItemChars: FINAL_NOTIFICATION_TODO_CHARS })
   if (todoLines.length) lines.push("", ...todoLines)
   const toolLines = formatToolSummaryHtml(tools, patchedFiles)
@@ -89,7 +93,7 @@ function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos =
   return lines.join("\n")
 }
 
-function finalNotificationCompactHtml({ topicSource, serverID, tools = [], patchedFiles = [], durationMs, modelID, variant }) {
+function finalNotificationCompactHtml({ topicSource, serverID, tools = [], patchedFiles = [], durationMs, modelID, variant, tokenUsage }) {
   const lines = [
     "🏁 Final answer is ready",
     finalNotificationTopicHtml(topicSource),
@@ -97,6 +101,8 @@ function finalNotificationCompactHtml({ topicSource, serverID, tools = [], patch
   ]
   const telemetry = finalNotificationTelemetryLine({ durationMs, modelID, variant })
   if (telemetry) lines.push(escapeHtml(telemetry))
+  const tokens = finalNotificationTokenLine(tokenUsage)
+  if (tokens) lines.push(escapeHtml(tokens))
   const toolLines = formatToolSummaryHtml(tools, patchedFiles)
   if (toolLines.length) lines.push("", ...toolLines)
   return lines.join("\n")
@@ -176,6 +182,25 @@ function finalNotificationTelemetryLine({ durationMs, modelID, variant }) {
   return values.join(" · ")
 }
 
+function finalNotificationTokenLine(tokenUsage) {
+  if (!tokenUsage) return ""
+  const output = tokenUsage.output + tokenUsage.reasoning
+  const cache = tokenUsage.cacheRead + tokenUsage.cacheWrite
+  return `🪙 Tokens: ${formatTokenCount(tokenUsage.total)} · in ${formatTokenCount(tokenUsage.input)} · out ${formatTokenCount(output)} · cache ${formatTokenCount(cache)}`
+}
+
+export function formatTokenCount(value) {
+  if (!Number.isFinite(value) || value < 0) return "0"
+  if (value < 1000) return String(Math.round(value))
+  const units = [
+    [1_000_000_000, "B"],
+    [1_000_000, "M"],
+    [1_000, "K"],
+  ]
+  const [divisor, suffix] = units.find(([divisor]) => value >= divisor)
+  return `${(value / divisor).toFixed(1)}${suffix}`
+}
+
 export function formatDuration(value) {
   if (!Number.isFinite(value) || value < 0) return ""
   let seconds = Math.max(0, Math.round(value / 1000))
@@ -233,6 +258,7 @@ async function finalSessionSummary({ opencode, binding, assistantMessageID, hidd
       completedTodos: completedTodosBeforeAssistant(messages, assistantMessageID),
       ...toolSummaryBeforeAssistant(messages, assistantMessageID, hiddenTools),
       ...turnMetadataBeforeAssistant(messages, assistantMessageID),
+      tokenUsage: turnTokenUsageBeforeAssistant(messages, assistantMessageID),
     }
   } catch (error) {
     logErrorEvent("final_notification.session_summary_lookup_failed", error, {
@@ -240,7 +266,7 @@ async function finalSessionSummary({ opencode, binding, assistantMessageID, hidd
       sessionID: binding.sessionID,
       assistantMessageID,
     })
-    return { promptText: "", completedTodos: [], tools: [], patchedFiles: [], durationMs: null, modelID: "", variant: "" }
+    return { promptText: "", completedTodos: [], tools: [], patchedFiles: [], durationMs: null, modelID: "", variant: "", tokenUsage: null }
   }
 }
 
@@ -263,6 +289,36 @@ export function turnMetadataBeforeAssistant(messages, assistantMessageID) {
     modelID: String(assistant?.modelID || assistantModel.modelID || user?.modelID || userModel.modelID || ""),
     variant: String(assistant?.variant || assistantModel.variant || user?.variant || userModel.variant || ""),
   }
+}
+
+export function turnTokenUsageBeforeAssistant(messages, assistantMessageID) {
+  if (!Array.isArray(messages) || !messages.length) return null
+  const stopIndex = assistantMessageIndex(messages, assistantMessageID)
+  let startIndex = -1
+  for (let index = stopIndex - 1; index >= 0; index -= 1) {
+    if (messageRole(messages[index]) !== "user") continue
+    startIndex = index
+    break
+  }
+  const usage = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, calls: 0 }
+  for (let index = startIndex + 1; index <= stopIndex; index += 1) {
+    if (messageRole(messages[index]) !== "assistant") continue
+    const tokens = messageInfo(messages[index]).tokens
+    if (!tokens || typeof tokens !== "object") continue
+    usage.input += tokenCount(tokens.input)
+    usage.output += tokenCount(tokens.output)
+    usage.reasoning += tokenCount(tokens.reasoning)
+    usage.cacheRead += tokenCount(tokens.cache?.read)
+    usage.cacheWrite += tokenCount(tokens.cache?.write)
+    usage.calls += 1
+  }
+  if (!usage.calls) return null
+  usage.total = usage.input + usage.output + usage.reasoning + usage.cacheRead + usage.cacheWrite
+  return usage
+}
+
+function tokenCount(value) {
+  return Number.isFinite(value) && value > 0 ? value : 0
 }
 
 function timestampMs(value) {
