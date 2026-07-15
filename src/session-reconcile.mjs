@@ -376,7 +376,7 @@ export function createSessionReconciler({
     let mirroredUsers = 0
     let mirroredAssistants = 0
     let skippedAssistants = 0
-    const usersOnlyCatchup = Date.parse(binding.reconcileUsersOnlyUntil || "") > Date.now()
+    let usersOnlyCatchup = Date.parse(binding.reconcileUsersOnlyUntil || "") > Date.now()
     let catchupUserSeen = !usersOnlyCatchup
     const messages = await backendRequest(binding.serverID, "session messages", () => opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory }))
     if (messages === skippedBackendRequest) return
@@ -398,6 +398,10 @@ export function createSessionReconciler({
             await pinConsumedTelegramPrompt(binding, consumed)
           } else {
             await renderer.userPrompt(binding, text, "web")
+          }
+          if (usersOnlyCatchup) {
+            await activateBindingForPrompt(binding, "reconcile-user-prompt")
+            usersOnlyCatchup = false
           }
           await state.markUserMirrored(binding.serverID, binding.sessionID, info.id)
           mirroredUsers += 1
@@ -510,7 +514,7 @@ export function createSessionReconciler({
     reconcileTimers.delete(key)
   }
 
-  return { handleOpenCodeEvent, reconcileLoop, scheduleReconcile, seedExistingSessions, detachBinding }
+  return { handleOpenCodeEvent, reconcileBinding, reconcileLoop, scheduleReconcile, seedExistingSessions, detachBinding }
 }
 
 function isUnavailableTopicError(error) {
