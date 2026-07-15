@@ -12,13 +12,15 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
       const metadata = { title: message.forum_topic_edited.name }
       const binding = state.findBindingByTopic(message.chat.id, topicId(message))
       const pending = binding ? null : state.pendingTopic(topicId(message))
-      const record = binding || pending
+      const record = state.topicRecord(message.chat.id, topicId(message)) || binding || pending
       if (record && metadata.title) {
         const expectedTitle = managedTopicTitle(topicBaseTitle(record), record.serverID, opencode.servers).topicTitle
-        const userEdited = metadata.title !== expectedTitle
-        const baseTitle = baseTitleFromTelegramTitle(metadata.title, record.serverID, opencode.servers)
+        const userEdited = message.from?.is_bot !== true && metadata.title !== expectedTitle
+        const baseTitle = userEdited
+          ? baseTitleFromTelegramTitle(metadata.title, record.serverID, opencode.servers)
+          : topicBaseTitle(record)
         const titleFields = managedTopicTitle(baseTitle, record.serverID, opencode.servers)
-        metadata.title = titleFields.topicTitle
+        metadata.title = titleFields.topicBaseTitle
         Object.assign(metadata, titleFields)
         if (userEdited) metadata.titleSource = "user"
         if (titleFields.topicTitle !== message.forum_topic_edited.name) {
@@ -26,7 +28,6 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
             await telegram.editForumTopic({ chatId: message.chat.id, topicId: topicId(message), name: titleFields.topicTitle })
           } catch (error) {
             console.warn(`[opencodebot] managed topic suffix restore failed for ${record.serverID}/${record.sessionID || `pending:${topicId(message)}`}: ${error.message}`)
-            metadata.title = message.forum_topic_edited.name
             metadata.topicTitle = message.forum_topic_edited.name
             metadata.topicServerSuffixManaged = false
           }
@@ -37,8 +38,7 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
         metadata.topicIconCustomEmojiId = topicIcon?.customEmojiId || message.forum_topic_edited.icon_custom_emoji_id
         metadata.topicIconEmoji = topicIcon?.emoji
       }
-      if (binding) await state.updateBindingTopicMetadata(message.chat.id, topicId(message), metadata)
-      else if (pending) await state.updatePendingTopicProfile(topicId(message), { ...metadata, title: metadata.topicBaseTitle || metadata.title })
+      if (binding || pending) await state.updateTopicMetadata(message.chat.id, topicId(message), metadata)
       return true
     }
     if (message.forum_topic_deleted) {

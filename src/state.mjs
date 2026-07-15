@@ -3,6 +3,14 @@ import path from "node:path"
 
 const MIRRORED_SESSION_BUCKET_LIMIT = 250
 const MAX_PROMPT_ORIGINS = 5_000
+const TOPIC_TITLE_FIELDS = [
+  "titleSource",
+  "topicBaseTitle",
+  "topicTitle",
+  "topicServerSuffixManaged",
+  "topicTitleUpdatedAt",
+]
+const TOPIC_ICON_FIELDS = ["topicIconCustomEmojiId", "topicIconEmoji", "topicIconUpdatedAt"]
 
 export class StateStore {
   constructor(filePath) {
@@ -32,8 +40,9 @@ export class StateStore {
       this.data.telegram.soundsTopic ||= null
       this.data.runtime ||= {}
       const migratedResetTitles = migrateResetTitleOwnership(this.data)
+      const reconciledTopicMetadata = reconcileTopicMetadata(this.data)
       const pruned = pruneState(this.data)
-      if (migratedResetTitles || pruned) await this.save()
+      if (migratedResetTitles || reconciledTopicMetadata || pruned) await this.save()
     } catch (error) {
       if (error.code !== "ENOENT") throw error
       this.data = defaultState()
@@ -168,15 +177,15 @@ export class StateStore {
   }
 
   findBindingByTopic(chatId, topicId) {
-    return this.data.bindings.find(
-      (binding) => !binding.disabled && String(binding.chatId) === String(chatId) && String(binding.topicId ?? 0) === String(topicId ?? 0),
-    )
+    return findLatestBindingByTopic(this.data.bindings, chatId, topicId, { activeOnly: true })
   }
 
   findAnyBindingByTopic(chatId, topicId) {
-    return [...this.data.bindings].reverse().find(
-      (binding) => String(binding.chatId) === String(chatId) && String(binding.topicId ?? 0) === String(topicId ?? 0),
-    )
+    return findLatestBindingByTopic(this.data.bindings, chatId, topicId)
+  }
+
+  topicRecord(chatId, topicId) {
+    return canonicalTopicRecord(this.data, chatId, topicId)
   }
 
   pendingTopic(topicId) {
@@ -262,69 +271,33 @@ export class StateStore {
     return this.update((data) => {
       const binding = data.bindings.find((item) => item.serverID === serverID && item.sessionID === sessionID)
       if (!binding) return false
-      const topicTitle = topicMetadata.topicTitle || title
-      if (binding.title === title && binding.titleSource === titleSource && binding.topicTitle === topicTitle) return false
-      binding.title = title
-      binding.titleSource = titleSource
-      binding.titleUpdatedAt = new Date().toISOString()
-      binding.topicTitle = topicTitle
-      binding.topicBaseTitle = topicMetadata.topicBaseTitle || title
-      binding.topicServerSuffixManaged = topicMetadata.topicServerSuffixManaged === true
-      binding.topicTitleUpdatedAt = binding.titleUpdatedAt
-      return true
+      const nextTitle = String(title || "").trim()
+      if (!nextTitle) return false
+      const now = new Date().toISOString()
+      let changed = assignValue(binding, "title", nextTitle)
+      changed = assignValue(binding, "titleSource", titleSource === "user" ? "user" : "opencode") || changed
+      if (changed) binding.titleUpdatedAt = now
+      const topicChanged = applyTopicMetadata(
+        topicRecords(data, binding.chatId, binding.topicId),
+        {
+          titleSource: binding.titleSource,
+          topicBaseTitle: topicMetadata.topicBaseTitle || nextTitle,
+          topicTitle: topicMetadata.topicTitle || nextTitle,
+          ...(typeof topicMetadata.topicServerSuffixManaged === "boolean"
+            ? { topicServerSuffixManaged: topicMetadata.topicServerSuffixManaged }
+            : {}),
+        },
+        { now },
+      )
+      return changed || topicChanged
     })
   }
 
-  async updateBindingTopicMetadata(chatId, targetTopicId, metadata = {}) {
+  async updateTopicMetadata(chatId, targetTopicId, metadata = {}) {
     return this.update((data) => {
-      const binding = data.bindings.find((item) => String(item.chatId) === String(chatId) && String(item.topicId) === String(targetTopicId))
-      if (!binding) return false
-      let changed = false
-
-      const title = String(metadata.title || "").trim()
-      if (title && binding.topicTitle !== title) {
-        binding.topicTitle = title
-        binding.topicTitleUpdatedAt = new Date().toISOString()
-        changed = true
-      }
-      const topicBaseTitle = String(metadata.topicBaseTitle || "").trim()
-      if (topicBaseTitle && binding.topicBaseTitle !== topicBaseTitle) {
-        binding.topicBaseTitle = topicBaseTitle
-        changed = true
-      }
-      if (Object.hasOwn(metadata, "topicServerSuffixManaged") && binding.topicServerSuffixManaged !== (metadata.topicServerSuffixManaged === true)) {
-        binding.topicServerSuffixManaged = metadata.topicServerSuffixManaged === true
-        changed = true
-      }
-      if (metadata.titleSource === "user") {
-        if (binding.titleSource !== "user") changed = true
-        binding.titleSource = "user"
-        binding.title = topicBaseTitle || title || binding.title
-      }
-
-      if (Object.hasOwn(metadata, "topicIconCustomEmojiId")) {
-        const icon = String(metadata.topicIconCustomEmojiId || "").trim()
-        if (icon && binding.topicIconCustomEmojiId !== icon) {
-          binding.topicIconCustomEmojiId = icon
-          changed = true
-        } else if (!icon && binding.topicIconCustomEmojiId) {
-          delete binding.topicIconCustomEmojiId
-          changed = true
-        }
-      }
-
-      if (Object.hasOwn(metadata, "topicIconEmoji")) {
-        const emoji = String(metadata.topicIconEmoji || "").trim()
-        if (emoji && binding.topicIconEmoji !== emoji) {
-          binding.topicIconEmoji = emoji
-          changed = true
-        } else if (!emoji && binding.topicIconEmoji) {
-          delete binding.topicIconEmoji
-          changed = true
-        }
-      }
-
-      return changed
+      const records = topicRecords(data, chatId, targetTopicId)
+      if (!records.length) return false
+      return applyTopicMetadata(records, metadata, { includeTitle: true })
     })
   }
 
@@ -359,7 +332,9 @@ export class StateStore {
 
   async addPendingTopic(topicId, pending) {
     return this.update((data) => {
-      data.pendingTopics[String(topicId ?? 0)] = { createdAt: new Date().toISOString(), ...pending }
+      const record = { createdAt: new Date().toISOString(), ...pending }
+      data.pendingTopics[String(topicId ?? 0)] = record
+      applyTopicMetadata(topicRecords(data, record.chatId, topicId), record, { includeTitle: true })
     })
   }
 
@@ -392,6 +367,7 @@ export class StateStore {
         createdAt: now,
       })
       data.pendingTopics[String(current.topicId ?? 0)] = pending
+      applyTopicMetadata(topicRecords(data, current.chatId, current.topicId), pending, { includeTitle: true, now })
       return { binding: { ...current }, pending: { ...pending } }
     })
   }
@@ -411,6 +387,10 @@ export class StateStore {
         if (Object.hasOwn(profile, key)) pending[key] = profile[key]
       }
       pending.updatedAt = new Date().toISOString()
+      applyTopicMetadata(topicRecords(data, pending.chatId, topicId), profile, {
+        includeTitle: true,
+        now: pending.updatedAt,
+      })
       return { ...pending }
     })
   }
@@ -740,6 +720,188 @@ function toMillis(value) {
 
 function compactObject(value) {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined))
+}
+
+function assignValue(record, key, value) {
+  if (record[key] === value) return false
+  record[key] = value
+  return true
+}
+
+function topicMatches(record, chatId, topicId) {
+  return String(record?.chatId) === String(chatId) && String(record?.topicId ?? 0) === String(topicId ?? 0)
+}
+
+function findLatestBindingByTopic(bindings, chatId, topicId, { activeOnly = false } = {}) {
+  for (let index = bindings.length - 1; index >= 0; index -= 1) {
+    const binding = bindings[index]
+    if (activeOnly && binding.disabled) continue
+    if (topicMatches(binding, chatId, topicId)) return binding
+  }
+  return undefined
+}
+
+function topicRecords(data, chatId, topicId) {
+  const records = data.bindings.filter((binding) => topicMatches(binding, chatId, topicId))
+  const pending = data.pendingTopics?.[String(topicId ?? 0)]
+  if (pending && String(pending.chatId) === String(chatId)) records.push(pending)
+  return records
+}
+
+function recordTimestamp(record, field) {
+  return toMillis(record?.[field] || record?.titleUpdatedAt || record?.updatedAt || record?.createdAt)
+}
+
+function latestTopicRecord(records, field, predicate) {
+  let selected
+  let selectedTimestamp = -1
+  for (const record of records) {
+    if (!predicate(record)) continue
+    const timestamp = recordTimestamp(record, field)
+    if (timestamp < selectedTimestamp) continue
+    selected = record
+    selectedTimestamp = timestamp
+  }
+  return selected
+}
+
+function latestTitleRecord(records) {
+  const userOwned = records.filter((record) => record.titleSource === "user")
+  const candidates = userOwned.length ? userOwned : records
+  const explicitlyUpdated = candidates.filter((record) => Boolean(record.topicTitleUpdatedAt))
+  const timestamped = explicitlyUpdated.length ? explicitlyUpdated : candidates
+  return latestTopicRecord(
+    timestamped,
+    "topicTitleUpdatedAt",
+    (record) => Boolean(record.topicTitle || record.topicBaseTitle || record.title),
+  )
+}
+
+function canonicalTopicRecord(data, chatId, topicId) {
+  const records = topicRecords(data, chatId, topicId)
+  if (!records.length) return undefined
+  const pending = data.pendingTopics?.[String(topicId ?? 0)]
+  const context =
+    (pending && String(pending.chatId) === String(chatId) ? pending : undefined) ||
+    findLatestBindingByTopic(data.bindings, chatId, topicId, { activeOnly: true }) ||
+    findLatestBindingByTopic(data.bindings, chatId, topicId)
+  const titleRecord = latestTitleRecord(records)
+  const iconRecord = latestTopicRecord(
+    records,
+    "topicIconUpdatedAt",
+    (record) => Boolean(record.topicIconUpdatedAt) || Object.hasOwn(record, "topicIconCustomEmojiId") || Object.hasOwn(record, "topicIconEmoji"),
+  )
+  const canonical = { ...context }
+  for (const key of TOPIC_TITLE_FIELDS) {
+    if (titleRecord && Object.hasOwn(titleRecord, key)) canonical[key] = titleRecord[key]
+  }
+  if (titleRecord?.titleSource === "user") canonical.title = titleRecord.topicBaseTitle || titleRecord.title
+  if (iconRecord) {
+    delete canonical.topicIconCustomEmojiId
+    delete canonical.topicIconEmoji
+    for (const key of TOPIC_ICON_FIELDS) {
+      if (Object.hasOwn(iconRecord, key)) canonical[key] = iconRecord[key]
+    }
+  }
+  return canonical
+}
+
+function applyTopicMetadata(records, metadata, { includeTitle = false, now = new Date().toISOString() } = {}) {
+  if (!records.length) return false
+  const titleTimestamp = metadata.topicTitleUpdatedAt || now
+  const iconTimestamp = metadata.topicIconUpdatedAt || now
+  let changed = false
+
+  for (const record of records) {
+    let titleChanged = false
+    let iconChanged = false
+    if (includeTitle) {
+      const title = String(metadata.title || "").trim()
+      if (title) titleChanged = assignValue(record, "title", title) || titleChanged
+    }
+    if (metadata.titleSource === "user" || metadata.titleSource === "opencode") {
+      titleChanged = assignValue(record, "titleSource", metadata.titleSource) || titleChanged
+    }
+    for (const key of ["topicBaseTitle", "topicTitle"]) {
+      const value = String(metadata[key] || "").trim()
+      if (value) titleChanged = assignValue(record, key, value) || titleChanged
+    }
+    if (Object.hasOwn(metadata, "topicServerSuffixManaged")) {
+      titleChanged = assignValue(record, "topicServerSuffixManaged", metadata.topicServerSuffixManaged === true) || titleChanged
+    }
+    if (titleChanged) {
+      record.topicTitleUpdatedAt = titleTimestamp
+      if (includeTitle) record.titleUpdatedAt = titleTimestamp
+    } else if (metadata.topicTitleUpdatedAt && record.topicTitleUpdatedAt !== metadata.topicTitleUpdatedAt) {
+      record.topicTitleUpdatedAt = metadata.topicTitleUpdatedAt
+      titleChanged = true
+    }
+
+    for (const key of ["topicIconCustomEmojiId", "topicIconEmoji"]) {
+      if (!Object.hasOwn(metadata, key)) continue
+      const value = String(metadata[key] || "").trim()
+      if (value) iconChanged = assignValue(record, key, value) || iconChanged
+      else if (Object.hasOwn(record, key)) {
+        delete record[key]
+        iconChanged = true
+      }
+    }
+    if (iconChanged) record.topicIconUpdatedAt = iconTimestamp
+    else if (metadata.topicIconUpdatedAt && record.topicIconUpdatedAt !== metadata.topicIconUpdatedAt) {
+      record.topicIconUpdatedAt = metadata.topicIconUpdatedAt
+      iconChanged = true
+    }
+    changed = titleChanged || iconChanged || changed
+  }
+  return changed
+}
+
+function reconcileTopicMetadata(data) {
+  const groups = new Map()
+  for (const binding of data.bindings) {
+    const key = bindingTopicKey(binding)
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(binding)
+  }
+  for (const [topicId, pending] of Object.entries(data.pendingTopics || {})) {
+    const key = `${String(pending.chatId ?? data.telegram?.chatId ?? "")}:${Number(topicId || 0)}`
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(pending)
+  }
+
+  let changed = false
+  for (const records of groups.values()) {
+    if (records.length < 2) continue
+    const titleRecord = latestTitleRecord(records)
+    if (titleRecord) {
+      const titlePatch = Object.fromEntries(
+        TOPIC_TITLE_FIELDS.filter((key) => Object.hasOwn(titleRecord, key)).map((key) => [key, titleRecord[key]]),
+      )
+      if (titleRecord.titleSource === "user") titlePatch.title = titleRecord.topicBaseTitle || titleRecord.title
+      changed =
+        applyTopicMetadata(records, titlePatch, {
+          includeTitle: titleRecord.titleSource === "user",
+          now: titleRecord.topicTitleUpdatedAt || titleRecord.titleUpdatedAt || new Date().toISOString(),
+        }) || changed
+    }
+    const iconRecord = latestTopicRecord(
+      records,
+      "topicIconUpdatedAt",
+      (record) => Boolean(record.topicIconUpdatedAt) || Object.hasOwn(record, "topicIconCustomEmojiId") || Object.hasOwn(record, "topicIconEmoji"),
+    )
+    if (iconRecord) {
+      const iconPatch = {
+        topicIconCustomEmojiId: iconRecord.topicIconCustomEmojiId || "",
+        topicIconEmoji: iconRecord.topicIconEmoji || "",
+        ...(iconRecord.topicIconUpdatedAt ? { topicIconUpdatedAt: iconRecord.topicIconUpdatedAt } : {}),
+      }
+      changed =
+        applyTopicMetadata(records, iconPatch, {
+          now: iconRecord.topicIconUpdatedAt || iconRecord.updatedAt || new Date().toISOString(),
+        }) || changed
+    }
+  }
+  return changed
 }
 
 function migrateResetTitleOwnership(data) {

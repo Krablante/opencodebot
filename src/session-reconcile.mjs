@@ -30,7 +30,7 @@ export function createSessionReconciler({
 
   function activeBinding(binding) {
     const current = state.findBinding(binding.serverID, binding.sessionID)
-    if (!current) return null
+    if (!current || current.disabled) return null
     if (String(current.chatId) !== String(binding.chatId) || String(current.topicId) !== String(binding.topicId)) return null
     return current
   }
@@ -318,8 +318,10 @@ export function createSessionReconciler({
           continue
         }
         if (binding) {
-          await maybeSyncTopicTitle(binding, session.title)
-          await maybeExtendExpiredBindingFromSession(binding, session)
+          if (!binding.disabled) {
+            await maybeSyncTopicTitle(binding, session.title)
+            await maybeExtendExpiredBindingFromSession(binding, session)
+          }
           continue
         }
         if (state.hasSeenSession(server.id, session.id)) continue
@@ -348,12 +350,15 @@ export function createSessionReconciler({
 
   async function maybeSyncTopicTitle(binding, title) {
     if (!title) return
-    const userOwned = binding.titleSource === "user"
-    if (!shouldSyncManagedTopicTitle(binding, title)) return
-    const baseTitle = userOwned ? topicBaseTitle(binding) : title
+    const active = state.findBindingByTopic(binding.chatId, binding.topicId)
+    if (!active || active.serverID !== binding.serverID || active.sessionID !== binding.sessionID) return
+    const topic = state.topicRecord?.(binding.chatId, binding.topicId) || binding
+    const userOwned = topic.titleSource === "user"
+    if (!shouldSyncManagedTopicTitle(topic, title)) return
+    const baseTitle = userOwned ? topicBaseTitle(topic) : title
     const titleFields = managedTopicTitle(baseTitle, binding.serverID, opencode.servers)
-    if (binding.title === baseTitle && binding.topicTitle === titleFields.topicTitle) return
-    if (!userOwned && title.startsWith("New session -") && binding.title && !binding.title.startsWith("New session -")) return
+    if (topic.title === baseTitle && topic.topicTitle === titleFields.topicTitle) return
+    if (!userOwned && title.startsWith("New session -") && topic.title && !topic.title.startsWith("New session -")) return
     try {
       await telegram.editForumTopic({ chatId: binding.chatId, topicId: binding.topicId, name: titleFields.topicTitle })
       await state.updateBindingTitle(binding.serverID, binding.sessionID, baseTitle, userOwned ? "user" : "opencode", titleFields)

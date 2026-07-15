@@ -210,17 +210,18 @@ export function createTelegramCommandHandlers({
         })
         return
       }
+      const topic = state.topicRecord(message.chat.id, currentTopicId) || pending
       const profile = requested.chatTemplateName ? requested : {
         chatTemplateName: pending.chatTemplateName,
         chatTemplate: pending.chatTemplate,
       }
       const previousServerID = pending.serverID
-      const previousTopicTitle = pending.topicTitle
+      const previousTopicTitle = topic.topicTitle
       const targetServerID = requested.serverID || pending.serverID
       const serverChanged = targetServerID !== pending.serverID
       const targetDirectory = serverChanged ? opencode.defaultNewSessionDirectory(targetServerID) : pending.directory
       if (serverChanged && !(await preflightResetServer(message, currentTopicId, targetServerID, targetDirectory))) return
-      const titleFields = managedTopicTitle(topicBaseTitle(pending), targetServerID, opencode.servers)
+      const titleFields = managedTopicTitle(topicBaseTitle(topic), targetServerID, opencode.servers)
       const updated = await state.updatePendingTopicProfile(currentTopicId, {
         ...profile,
         serverID: targetServerID,
@@ -267,6 +268,7 @@ export function createTelegramCommandHandlers({
       return
     }
 
+    const topic = state.topicRecord(message.chat.id, currentTopicId) || binding
     const profile = requested.chatTemplateName ? requested : bindingToTemplate(binding)
     const targetServerID = requested.serverID || binding.serverID
     const serverChanged = targetServerID !== binding.serverID
@@ -289,7 +291,7 @@ export function createTelegramCommandHandlers({
     const cleared = promptQueue.clear(binding, "Discarded by /reset")
     const discardedMultipart = multipartPrompts.discardKey?.(promptKey) || false
     const discardedAttachments = await discardAttachmentBatch(promptKey)
-    const titleFields = managedTopicTitle(topicBaseTitle(binding), targetServerID, opencode.servers)
+    const titleFields = managedTopicTitle(topicBaseTitle(topic), targetServerID, opencode.servers)
     const reset = await state.resetBindingToPending(binding, {
       ...profile,
       serverID: targetServerID,
@@ -310,7 +312,7 @@ export function createTelegramCommandHandlers({
     detachBinding(binding)
 
     let topicRenameWarning = null
-    if (titleFields.topicTitle !== binding.topicTitle) {
+    if (titleFields.topicTitle !== topic.topicTitle) {
       try {
         await telegram.editForumTopic({ chatId: message.chat.id, topicId: currentTopicId, name: titleFields.topicTitle })
       } catch (error) {

@@ -19,7 +19,7 @@ export function createFinalNotifier({ config, state, telegram, opencode }) {
       const userIds = state.finalNotificationUserIds().filter((userId) => configuredUserIds.has(String(userId)))
       if (!userIds.length) return
       const link = telegramMessageLink(binding.chatId, messageId)
-      const topicSource = finalNotificationTopicSource(binding)
+      const topicSource = finalNotificationTopicSource(state.topicRecord?.(binding.chatId, binding.topicId) || binding)
       const summary = await finalSessionSummary({
         opencode,
         binding,

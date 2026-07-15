@@ -9,7 +9,7 @@ import { artifactTargetPath, handleArtifactUploadMessage, resolveUploadTarget } 
 import { AttachmentBuffer } from "../src/attachments.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "../src/commands.mjs"
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
-import { finalNotificationMarkdown, formatDebugDiagnosticsText, formatDuration, formatTokenCount, runDiagnosticsBeforeAssistant, toolSummaryBeforeAssistant, turnMetadataBeforeAssistant, turnTokenUsageBeforeAssistant } from "../src/final-notifications.mjs"
+import { finalNotificationMarkdown, finalNotificationTopicSource, formatDebugDiagnosticsText, formatDuration, formatTokenCount, runDiagnosticsBeforeAssistant, toolSummaryBeforeAssistant, turnMetadataBeforeAssistant, turnTokenUsageBeforeAssistant } from "../src/final-notifications.mjs"
 import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { MirrorRenderer, webPromptMessages } from "../src/render.mjs"
@@ -50,6 +50,7 @@ async function smokeLocalInvariants() {
   smokeExpiredBindingReconcileRefresh()
   smokeCatchupAssistantGate()
   smokeManagedTopicMigrationGate()
+  await smokeCanonicalTopicMetadata()
   await smokeActiveBindingLeavesUsersOnlyCatchup()
   await smokeTopicCreationSingleFlight()
   await smokeReconcileTopicRetry()
@@ -1020,6 +1021,121 @@ async function smokeResetCommand() {
     const migratedActive = new StateStore(statePath)
     await migratedActive.load()
     assert.equal(migratedActive.findBindingByTopic(123, 456).titleSource, "user")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+async function smokeCanonicalTopicMetadata() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-topic-metadata-smoke-"))
+  const statePath = path.join(root, "state.json")
+  const historical = {
+    chatId: 123,
+    topicId: 456,
+    serverID: "nuc",
+    sessionID: "ses_old",
+    directory: "/tmp/work",
+    title: "trash",
+    titleSource: "user",
+    topicBaseTitle: "trash",
+    topicTitle: "trash (nuc)",
+    topicServerSuffixManaged: true,
+    topicTitleUpdatedAt: "2026-07-15T15:50:00.000Z",
+    disabled: true,
+    disabledAt: "2026-07-15T10:11:00.000Z",
+  }
+  const active = {
+    chatId: 123,
+    topicId: 456,
+    serverID: "nuc",
+    sessionID: "ses_active",
+    directory: "/tmp/work",
+    title: "Audit architecture",
+    titleSource: "opencode",
+    topicBaseTitle: "Audit architecture",
+    topicTitle: "Audit architecture (nuc)",
+    topicServerSuffixManaged: true,
+    topicTitleUpdatedAt: "2026-07-15T16:00:00.000Z",
+  }
+  const staleUserOwned = {
+    chatId: 123,
+    topicId: 456,
+    serverID: "nuc",
+    sessionID: "ses_stale_user",
+    directory: "/tmp/work",
+    title: "Audit architecture",
+    titleSource: "user",
+    titleUpdatedAt: "2026-07-15T18:02:00.000Z",
+    topicBaseTitle: "Audit architecture",
+    topicTitle: "Audit architecture (nuc)",
+    topicServerSuffixManaged: true,
+    disabled: true,
+  }
+  try {
+    await writeFile(
+      statePath,
+      JSON.stringify({ version: 1, telegram: {}, bindings: [historical, staleUserOwned, active], pendingTopics: {} }),
+    )
+    const state = new StateStore(statePath)
+    await state.load()
+
+    assert.equal(state.findBindingByTopic(123, 456).sessionID, "ses_active")
+    assert.equal(state.topicRecord(123, 456).topicTitle, "trash (nuc)")
+    assert.equal(state.topicRecord(123, 456).topicBaseTitle, "trash")
+    assert.equal(state.topicRecord(123, 456).titleSource, "user")
+    assert.ok(state.data.bindings.every((binding) => binding.topicTitle === "trash (nuc)"))
+    assert.ok(state.data.bindings.every((binding) => binding.title === "trash"))
+
+    const topicEdits = []
+    const lifecycle = createTopicLifecycle({
+      config: { telegram: { chatId: 123 } },
+      state,
+      telegram: {
+        editForumTopic: async (input) => topicEdits.push(input),
+      },
+      opencode: { servers: [{ id: "nuc" }, { id: "dima" }] },
+      activateBindingForPrompt: async () => {},
+      clearPromptFeedback: async () => {},
+    })
+    await lifecycle.handleTopicLifecycleMessage({
+      chat: { id: 123 },
+      message_thread_id: 456,
+      forum_topic_edited: { name: "vault", icon_custom_emoji_id: "" },
+    })
+    assert.deepEqual(topicEdits, [{ chatId: 123, topicId: 456, name: "vault (nuc)" }])
+    assert.ok(state.data.bindings.every((binding) => binding.topicTitle === "vault (nuc)"))
+    assert.ok(state.data.bindings.every((binding) => binding.titleSource === "user"))
+
+    topicEdits.length = 0
+    await lifecycle.handleTopicLifecycleMessage({
+      chat: { id: 123 },
+      from: { is_bot: true },
+      message_thread_id: 456,
+      forum_topic_edited: { name: "Web title (nuc)" },
+    })
+    assert.deepEqual(topicEdits, [{ chatId: 123, topicId: 456, name: "vault (nuc)" }])
+    assert.equal(state.topicRecord(123, 456).topicBaseTitle, "vault")
+    assert.equal(state.topicRecord(123, 456).titleSource, "user")
+
+    await state.resetBindingToPending(state.findBinding("nuc", "ses_active"), {
+      serverID: "dima",
+      directory: "/home/dima",
+      title: "vault",
+      titleSource: "user",
+      topicBaseTitle: "vault",
+      topicTitle: "vault (dima)",
+      topicServerSuffixManaged: true,
+    })
+    assert.equal(state.pendingTopic(456).topicTitle, "vault (dima)")
+    assert.equal(state.topicRecord(123, 456).topicTitle, "vault (dima)")
+    assert.equal(finalNotificationTopicSource(state.topicRecord(123, 456)).title, "vault (dima)")
+    assert.ok(state.data.bindings.every((binding) => binding.topicTitle === "vault (dima)"))
+
+    await state.updateTopicMetadata(123, 456, { topicIconEmoji: "🗑️" })
+    assert.ok(state.data.bindings.every((binding) => binding.topicIconEmoji === "🗑️"))
+    await state.updateTopicMetadata(123, 456, { topicIconCustomEmojiId: "", topicIconEmoji: "" })
+    assert.ok(state.data.bindings.every((binding) => !binding.topicIconEmoji && !binding.topicIconCustomEmojiId))
+    assert.equal(state.topicRecord(123, 456).topicIconEmoji, undefined)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

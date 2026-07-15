@@ -70,6 +70,23 @@ test("a replacement branch after revert mirrors without replaying removed messag
   assert.equal(harness.renderedAssistants.filter((text) => text === "First result").length, 1)
 })
 
+test("a disabled binding cannot resume reconciliation after a topic reset", async () => {
+  const harness = createHarness({ usersOnly: false })
+  harness.binding.disabled = true
+  harness.binding.disabledReason = "topic-reset"
+  harness.setMessages([
+    userMessage("user-after-reset", "Old prompt"),
+    assistantMessage("assistant-after-reset", "Old result"),
+  ])
+
+  const result = await harness.reconciler.reconcileBinding(harness.binding)
+
+  assert.equal(result, undefined)
+  assert.deepEqual(harness.renderedUsers, [])
+  assert.deepEqual(harness.renderedAssistants, [])
+  assert.equal(harness.terminalMirrors, 0)
+})
+
 function createHarness({ usersOnly = true } = {}) {
   const now = Date.now()
   const binding = {
