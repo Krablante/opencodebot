@@ -168,7 +168,6 @@ function formatDebugDiagnosticsHtml(debugDiagnostics) {
 export function formatDebugDiagnosticsText(debugDiagnostics) {
   if (!debugDiagnostics) return ""
   const lines = ["🐛 Run diagnostics"]
-  if (Number.isFinite(debugDiagnostics.wallMs)) lines.push(`⏱ Wall: ${formatDebugDuration(debugDiagnostics.wallMs)}`)
   if (debugDiagnostics.steps?.count) {
     lines.push(`🧠 Agent steps: ${debugDiagnostics.steps.count} · p50 ${formatDebugDuration(debugDiagnostics.steps.p50Ms)} · p95 ${formatDebugDuration(debugDiagnostics.steps.p95Ms)} · max ${formatDebugDuration(debugDiagnostics.steps.maxMs)}`)
   }
@@ -306,7 +305,7 @@ async function finalSessionSummary({ opencode, binding, assistantMessageID, hidd
       ...toolSummaryBeforeAssistant(messages, assistantMessageID, hiddenTools),
       ...turnMetadata,
       tokenUsage: turnTokenUsageBeforeAssistant(messages, assistantMessageID),
-      debugDiagnostics: debugEnabled ? runDiagnosticsBeforeAssistant(messages, assistantMessageID, turnMetadata.durationMs) : null,
+      debugDiagnostics: debugEnabled ? runDiagnosticsBeforeAssistant(messages, assistantMessageID) : null,
     }
   } catch (error) {
     logErrorEvent("final_notification.session_summary_lookup_failed", error, {
@@ -365,7 +364,7 @@ export function turnTokenUsageBeforeAssistant(messages, assistantMessageID) {
   return usage
 }
 
-export function runDiagnosticsBeforeAssistant(messages, assistantMessageID, wallMs = null) {
+export function runDiagnosticsBeforeAssistant(messages, assistantMessageID) {
   if (!Array.isArray(messages) || !messages.length) return null
   const stopIndex = assistantMessageIndex(messages, assistantMessageID)
   let startIndex = -1
@@ -396,7 +395,6 @@ export function runDiagnosticsBeforeAssistant(messages, assistantMessageID, wall
     if (!current || call.ms > current.maxMs) slowestByTool.set(call.name, { name: call.name, maxMs: call.ms })
   }
   return {
-    wallMs: Number.isFinite(wallMs) ? wallMs : null,
     steps: stepDurations.length ? {
       count: stepDurations.length,
       p50Ms: percentile(stepDurations, 0.5),
