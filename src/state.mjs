@@ -32,6 +32,7 @@ export class StateStore {
       this.data.finalNotifications ||= { enabledUserIds: [], sentMessages: [] }
       this.data.finalNotifications.enabledUserIds ||= []
       this.data.finalNotifications.sentMessages ||= []
+      this.data.incompleteRunHistory = Array.isArray(this.data.incompleteRunHistory) ? this.data.incompleteRunHistory : []
       this.data.questionMessages ||= []
       this.data.seenSessions ||= []
       this.data.telegram ||= {}
@@ -561,6 +562,22 @@ export class StateStore {
     })
   }
 
+  incompleteRunHandled(key) {
+    return this.data.incompleteRunHistory.some((item) => item?.key === key)
+  }
+
+  async markIncompleteRunHandled(item, maxItems = 1000) {
+    if (this.incompleteRunHandled(item.key)) return false
+    await this.update((data) => {
+      data.incompleteRunHistory ||= []
+      data.incompleteRunHistory.push({ ...item, handledAt: new Date().toISOString() })
+      if (data.incompleteRunHistory.length > maxItems) {
+        data.incompleteRunHistory = data.incompleteRunHistory.slice(-maxItems)
+      }
+    })
+    return true
+  }
+
   isAssistantMirrored(serverID, sessionID, messageID) {
     return hasMirroredMessage(this.data.mirroredAssistantBySession, serverID, sessionID, messageID)
   }
@@ -637,8 +654,8 @@ export function promptHash(text) {
 }
 
 function defaultState() {
-    return {
-      version: 1,
+  return {
+    version: 1,
     telegram: { mirrorMode: "full", artifactsTopic: null, soundsTopic: null },
     bindings: [],
     pendingTopics: {},
@@ -647,6 +664,7 @@ function defaultState() {
     mirroredUserBySession: {},
     debugEnabled: false,
     finalNotifications: { enabledUserIds: [], sentMessages: [] },
+    incompleteRunHistory: [],
     questionMessages: [],
     seenSessions: [],
     runtime: {},
@@ -685,6 +703,11 @@ function pruneState(data) {
   let changed = false
   changed = pruneMirroredBuckets(data.mirroredAssistantBySession) || changed
   changed = pruneMirroredBuckets(data.mirroredUserBySession) || changed
+  const incompleteRunHistory = data.incompleteRunHistory.filter((item) => item && typeof item.key === "string")
+  if (incompleteRunHistory.length !== data.incompleteRunHistory.length || incompleteRunHistory.length > 1000) {
+    data.incompleteRunHistory = incompleteRunHistory.slice(-1000)
+    changed = true
+  }
   return changed
 }
 

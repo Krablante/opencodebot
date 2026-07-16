@@ -148,7 +148,7 @@ Use `/new` when you want a fresh Telegram topic and a new OpenCodez session. You
 
 Use `/q` inside an existing OpenCodez topic when you want to queue another prompt for the same session. A queued prompt is released only after OpenCodez is idle and the preceding terminal assistant answer has been mirrored to Telegram. `/q status` shows the queue, and `/q delete 2` removes a queued item by number.
 
-If a run becomes idle without producing a terminal assistant answer or an explicit OpenCodez error, the bot posts an incomplete-run warning after a short grace check. That warning is treated as the terminal notice for queue ordering, so queued work can continue instead of waiting forever.
+If a run becomes idle without producing a terminal assistant answer or an explicit OpenCodez error, the bot verifies the latest user turn against OpenCodez message history and posts a clear interrupted-run warning with an `Open session` button. User-message events activate tracking early, while idle checks and recent periodic reconciliation recover when a lifecycle event was absent or missed. A small durable handling ledger prevents duplicate warnings across repeated idle events and restarts. The warning is treated as the terminal notice for queue ordering, so queued work can continue instead of waiting forever.
 
 Use `/kill` inside an existing OpenCodez topic when you want to stop the current run. It sends OpenCodez's session abort request and clears that topic's queued prompts, but it does not delete the session or the Telegram topic.
 

@@ -24,8 +24,10 @@ export function createSessionReconciler({
   shouldStop,
   incompleteRunGraceMs = 1500,
 }) {
-  const activeRuns = new Map()
   const bindingOperations = new Map()
+  const incompleteChecks = new Map()
+  const incompleteNotifications = new Set()
+  const latestUserMessages = new Map()
   const reconcileTimers = new Map()
 
   function activeBinding(binding) {
@@ -67,8 +69,12 @@ export function createSessionReconciler({
       if (!binding) binding = await createTopicForWebSession(server.id, sessionID, properties.questions?.[0]?.question || "OpenCodez question")
     }
     if (!binding || binding.disabled) return
-    if (event.type === "session.next.prompted") await activateBindingForPrompt(binding, "web-prompt")
-    else await maybeExtendBindingActivity(binding, "opencode-event")
+    const userMessage = event.type === "message.updated" && properties.info?.role === "user"
+    const newUserRun = userMessage && startRun(binding, properties.info.id)
+    if (event.type === "session.next.prompted" || newUserRun) {
+      await activateBindingForPrompt(binding, event.type === "session.next.prompted" ? "web-prompt" : "user-message")
+    } else await maybeExtendBindingActivity(binding, "opencode-event")
+    if (newUserRun && !promptQueue.hasExpectedStop(binding)) promptQueue.markBusy(binding)
     const fields = () => ({
       source: server.id,
       sessionID,
@@ -114,11 +120,11 @@ export function createSessionReconciler({
         case "session.next.step.ended":
           if (properties.finish === "stop") {
             if (state.isAssistantMirrored(server.id, sessionID, properties.assistantMessageID)) {
-              clearRun(binding)
+              clearRunCheck(binding)
               await promptQueue.markTerminalMirrored(binding)
             } else {
               const mirrored = await renderer.finalAssistantMessageReady(binding, properties.assistantMessageID)
-              if (mirrored) clearRun(binding)
+              if (mirrored) clearRunCheck(binding)
             }
           } else {
             await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
@@ -131,13 +137,13 @@ export function createSessionReconciler({
           await handleSessionIdle(server, binding)
           break
         case "session.next.step.failed":
-          clearRun(binding)
+          clearRunCheck(binding)
           await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
           if (promptQueue.hasExpectedStop(binding)) break
           await notifyRunFailed(binding, properties, promptQueue.clear(binding))
           break
         case "session.error":
-          clearRun(binding)
+          clearRunCheck(binding)
           if (promptQueue.hasExpectedStop(binding)) break
           await notifySessionError(binding, properties)
           break
@@ -168,8 +174,21 @@ export function createSessionReconciler({
     const result = await promptQueue.markBackendIdle(binding)
     if (queued && result.status !== "sent") await reconcileBindingNow(binding)
     if (promptQueue.hasExpectedStop(binding)) {
-      clearRun(binding)
+      const userMessageID = latestUserMessages.get(bindingKey(binding))
+      if (userMessageID) {
+        await state.markIncompleteRunHandled({
+          key: incompleteWarningKey(binding, { userMessageID }),
+          serverID: binding.serverID,
+          sessionID: binding.sessionID,
+          userMessageID,
+          assistantMessageID: null,
+          finish: "expected-stop",
+          source: "expected-stop",
+        })
+      }
+      clearRunCheck(binding)
       promptQueue.clearExpectedStop(binding)
+      scheduleIncompleteRunCheck(server, binding, { expectedStop: true })
       return
     }
     scheduleIncompleteRunCheck(server, binding)
@@ -177,36 +196,36 @@ export function createSessionReconciler({
 
   function startRun(binding, userMessageID) {
     const key = bindingKey(binding)
-    clearRun(binding)
-    activeRuns.set(key, { token: Symbol(key), userMessageID, timer: null })
+    if (userMessageID && latestUserMessages.get(key) === userMessageID) return false
+    if (userMessageID) latestUserMessages.set(key, userMessageID)
+    clearRunCheck(binding)
+    return true
   }
 
-  function clearRun(binding, token) {
+  function clearRunCheck(binding) {
     const key = bindingKey(binding)
-    const run = activeRuns.get(key)
-    if (!run || (token && run.token !== token)) return
-    if (run.timer) clearTimeout(run.timer)
-    activeRuns.delete(key)
+    const check = incompleteChecks.get(key)
+    if (check) clearTimeout(check)
+    incompleteChecks.delete(key)
   }
 
-  function scheduleIncompleteRunCheck(server, binding) {
-    const run = activeRuns.get(bindingKey(binding))
-    if (!run || run.timer) return
-    const token = run.token
-    run.timer = setTimeout(() => {
-      checkIncompleteRun(server, binding, token).catch((error) => logError(error))
+  function scheduleIncompleteRunCheck(server, binding, { expectedStop = false } = {}) {
+    const key = bindingKey(binding)
+    const existing = incompleteChecks.get(key)
+    if (existing) clearTimeout(existing)
+    const timer = setTimeout(() => {
+      incompleteChecks.delete(key)
+      verifyRunOutcome(server, binding, { expectedStop, source: expectedStop ? "expected-stop" : "idle" }).catch((error) => logError(error))
     }, incompleteRunGraceMs)
-    run.timer.unref?.()
+    timer.unref?.()
+    incompleteChecks.set(key, timer)
   }
 
-  async function checkIncompleteRun(server, binding, token) {
-    const run = activeRuns.get(bindingKey(binding))
-    if (!run || run.token !== token) return
-    run.timer = null
+  async function verifyRunOutcome(server, binding, { expectedStop = false, messages, source = "reconcile" } = {}) {
     const originalBinding = binding
     binding = activeBinding(binding)
     if (!binding) {
-      clearRun(originalBinding, token)
+      clearRunCheck(originalBinding)
       return
     }
     if (questionManager?.hasPending(server.id, binding.sessionID)) return
@@ -216,28 +235,78 @@ export function createSessionReconciler({
     const statusType = statuses?.[binding.sessionID]?.type
     if (statusType && statusType !== "idle") return
 
-    const messages = await backendRequest(server.id, "incomplete-run-messages", () => opencode.messages(server.id, binding.sessionID, { directory: binding.directory }))
-    if (messages === skippedBackendRequest) return
+    const history = messages || await backendRequest(server.id, "incomplete-run-messages", () => opencode.messages(server.id, binding.sessionID, { directory: binding.directory }))
+    if (history === skippedBackendRequest) return
     if (!activeBinding(binding)) {
-      clearRun(binding, token)
+      clearRunCheck(binding)
       return
     }
-    const terminalAssistantID = terminalAssistantAfterUser(messages, run.userMessageID)
-    if (terminalAssistantID) {
-      await reconcileBinding(binding)
-      if (!state.isAssistantMirrored(server.id, binding.sessionID, terminalAssistantID)) return
-      clearRun(binding, token)
+    const outcome = latestRunOutcome(history)
+    if (!outcome) {
+      clearRunCheck(binding)
+      return
+    }
+    if (expectedStop) {
+      if (!outcome.complete) {
+        await state.markIncompleteRunHandled({
+          key: incompleteWarningKey(binding, outcome),
+          serverID: binding.serverID,
+          sessionID: binding.sessionID,
+          userMessageID: outcome.userMessageID,
+          assistantMessageID: outcome.assistantMessageID,
+          finish: outcome.finish,
+          source,
+        })
+      }
+      clearRunCheck(binding)
+      return
+    }
+    if (outcome.complete) {
+      if (!messages) await reconcileBinding(binding)
+      if (!state.isAssistantMirrored(server.id, binding.sessionID, outcome.assistantMessageID)) return
+      clearRunCheck(binding)
       await promptQueue.markTerminalMirrored(binding)
       return
     }
 
-    await telegram.sendMessage({
-      chatId: binding.chatId,
-      topicId: binding.topicId,
-      text: "⚠️ OpenCodez run ended without a final answer.\nThe session is idle. Send a new prompt to continue.",
-    })
-    clearRun(binding, token)
-    await promptQueue.markTerminalMirrored(binding)
+    const warningKey = incompleteWarningKey(binding, outcome)
+    if (state.incompleteRunHandled(warningKey)) {
+      clearRunCheck(binding)
+      await promptQueue.markTerminalMirrored(binding)
+      return
+    }
+    if (incompleteNotifications.has(warningKey)) return
+
+    incompleteNotifications.add(warningKey)
+    try {
+      const configuredServer = config.opencode.servers.find((item) => item.id === binding.serverID)
+      const sessionUrl = sessionWebUrl(configuredServer || server, binding)
+      await telegram.sendMessage({
+        chatId: binding.chatId,
+        topicId: binding.topicId,
+        text: [
+          "⚠️ <b>OpenCodez run was interrupted</b>",
+          "The session became idle before a final answer was produced.",
+          `<b>Last state:</b> ${incompleteRunReason(outcome)}`,
+          "You can continue the run in OpenCodez or send a new prompt in this topic.",
+        ].join("\n\n"),
+        disablePreview: true,
+        replyMarkup: sessionUrl ? { inline_keyboard: [[{ text: "Open session", url: sessionUrl }]] } : undefined,
+      })
+      await state.markIncompleteRunHandled({
+        key: warningKey,
+        serverID: binding.serverID,
+        sessionID: binding.sessionID,
+        userMessageID: outcome.userMessageID,
+        assistantMessageID: outcome.assistantMessageID,
+        finish: outcome.finish,
+        source,
+      })
+      clearRunCheck(binding)
+      await promptQueue.markTerminalMirrored(binding)
+    } finally {
+      incompleteNotifications.delete(warningKey)
+    }
   }
 
   async function mirrorToolPartUpdate(binding, properties) {
@@ -285,7 +354,9 @@ export function createSessionReconciler({
       for (const binding of [...state.data.bindings].filter((item) => !item.disabled)) {
         if (!reconcileWindow(binding)) continue
         try {
-          await reconcileBinding(binding)
+          const messages = await reconcileBinding(binding)
+          const server = config.opencode.servers.find((item) => item.id === binding.serverID)
+          if (server && messages) await verifyRunOutcome(server, binding, { messages, source: "periodic-reconcile" })
         } catch (error) {
           await handleMirrorError(binding, error).catch(logError)
         }
@@ -441,6 +512,7 @@ export function createSessionReconciler({
         durationMs: elapsedMs,
       })
     }
+    return messages
   }
 
   async function handleMirrorError(binding, error) {
@@ -511,7 +583,7 @@ export function createSessionReconciler({
   }
 
   function detachBinding(binding) {
-    clearRun(binding)
+    clearRunCheck(binding)
     const key = bindingKey(binding)
     const timer = reconcileTimers.get(key)
     if (!timer) return
@@ -624,22 +696,60 @@ function bindingKey(binding) {
   return `${binding.serverID}:${binding.sessionID}`
 }
 
-function terminalAssistantAfterUser(messages, userMessageID) {
+function latestRunOutcome(messages) {
   const infos = messages.map((message) => message.info || message)
-  let userIndex = userMessageID ? infos.findIndex((info) => info.id === userMessageID) : -1
-  if (userIndex < 0) {
-    for (let index = infos.length - 1; index >= 0; index -= 1) {
-      if (infos[index]?.role === "user") {
-        userIndex = index
-        break
-      }
+  let userIndex = -1
+  for (let index = infos.length - 1; index >= 0; index -= 1) {
+    if (infos[index]?.role === "user") {
+      userIndex = index
+      break
     }
   }
   if (userIndex < 0) return null
+
+  const userMessageID = infos[userIndex]?.id || null
   for (let index = infos.length - 1; index > userIndex; index -= 1) {
-    if (infos[index]?.role === "assistant" && infos[index]?.finish === "stop") return infos[index].id || null
+    const info = infos[index]
+    if (info?.role !== "assistant") continue
+    const finish = String(info.finish || "").toLowerCase()
+    const knownFailure = Boolean(info.error) || ["error", "cancelled", "canceled", "aborted"].includes(finish)
+    return {
+      assistantMessageID: info.id || null,
+      complete: finish === "stop" || knownFailure,
+      finish: finish || "missing",
+      userMessageID,
+    }
   }
-  return null
+  return {
+    assistantMessageID: null,
+    complete: false,
+    finish: "missing",
+    userMessageID,
+  }
+}
+
+function incompleteWarningKey(binding, outcome) {
+  return JSON.stringify([
+    binding.serverID,
+    binding.sessionID,
+    outcome.userMessageID || "",
+  ])
+}
+
+function incompleteRunReason(outcome) {
+  if (!outcome.assistantMessageID) return "No assistant response was created."
+  if (outcome.finish === "unknown") return "The assistant response ended unexpectedly."
+  if (outcome.finish === "tool-calls") return "The run stopped after a tool call."
+  if (outcome.finish === "length") return "The model reached its output limit."
+  if (outcome.finish === "content-filter") return "The response was stopped by the provider's content filter."
+  return "The assistant response did not reach a normal final answer."
+}
+
+function sessionWebUrl(server, binding) {
+  const base = String(server?.url || "").replace(/\/$/, "")
+  if (!base || !binding?.sessionID) return ""
+  const directory = binding.directory || "/"
+  return `${base}/${Buffer.from(directory).toString("base64url")}/session/${binding.sessionID}`
 }
 
 function delay(ms) {

@@ -1605,14 +1605,14 @@ async function smokeQueueDrainsOnSessionIdle() {
 
 async function smokeIncompleteRunNotice() {
   const binding = { chatId: 123, topicId: 456, serverID: "nuc", sessionID: "ses_incomplete", directory: "/tmp/work" }
-  const userMessageID = "msg_incomplete_user"
   const notices = []
-  const queued = []
+  const handledRuns = new Set()
   const mirroredUsers = new Set()
   const mirroredAssistants = new Set()
-  const promptQueue = new PromptQueue(async (_binding, text) => queued.push(text))
+  const promptQueue = new PromptQueue(async () => {})
+  let messages = []
   const reconciler = createSessionReconciler({
-    config: { telegram: { autocreateTopics: false }, reconcile: {} },
+    config: { telegram: { autocreateTopics: false }, opencode: { servers: [{ id: "nuc", url: "http://127.0.0.1:4096" }] }, reconcile: {} },
     state: {
       mirrorEnabled: () => true,
       findBinding: (serverID, sessionID) => (serverID === binding.serverID && sessionID === binding.sessionID ? binding : null),
@@ -1621,13 +1621,13 @@ async function smokeIncompleteRunNotice() {
       consumePendingPrompt: async () => null,
       isAssistantMirrored: (_serverID, _sessionID, messageID) => mirroredAssistants.has(messageID),
       markAssistantMirrored: async (_serverID, _sessionID, messageID) => mirroredAssistants.add(messageID),
+      incompleteRunHandled: (key) => handledRuns.has(key),
+      markIncompleteRunHandled: async (item) => handledRuns.add(item.key),
     },
     telegram: { async sendMessage(message) { notices.push(message) } },
     opencode: {
       async request() { return {} },
-      async messages() {
-        return [{ info: { id: userMessageID, role: "user", time: { created: Date.now() } }, parts: [{ type: "text", text: "start" }] }]
-      },
+      async messages() { return messages },
     },
     renderer: {
       async userPrompt() {},
@@ -1649,20 +1649,48 @@ async function smokeIncompleteRunNotice() {
     incompleteRunGraceMs: 0,
   })
 
+  messages = [
+    { info: { id: "msg_complete_user", role: "user", sessionID: binding.sessionID }, parts: [{ type: "text", text: "complete" }] },
+    { info: { id: "msg_complete_assistant", role: "assistant", sessionID: binding.sessionID, finish: "stop" }, parts: [{ type: "text", text: "done" }] },
+  ]
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, {
-    type: "session.next.prompted",
-    properties: { sessionID: binding.sessionID, messageID: userMessageID, text: "start" },
+    type: "message.updated",
+    properties: { info: messages[0].info },
   })
-  await promptQueue.enqueue(binding, "continue after notice")
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, {
     type: "session.idle",
     properties: { sessionID: binding.sessionID },
   })
   await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(notices.length, 0)
 
+  messages = [
+    { info: { id: "msg_incomplete_user", role: "user", sessionID: binding.sessionID }, parts: [{ type: "text", text: "start" }] },
+    { info: { id: "msg_incomplete_assistant", role: "assistant", sessionID: binding.sessionID, finish: "unknown" }, parts: [] },
+  ]
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "message.updated", properties: { info: messages[0].info } })
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "message.updated", properties: { info: messages[0].info } })
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.idle", properties: { sessionID: binding.sessionID } })
+  await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(notices.length, 1)
-  assert.match(notices[0].text, /ended without a final answer/)
-  assert.deepEqual(queued, ["continue after notice"])
+  assert.match(notices[0].text, /run was interrupted/)
+  assert.equal(notices[0].replyMarkup.inline_keyboard[0][0].text, "Open session")
+
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.idle", properties: { sessionID: binding.sessionID } })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(notices.length, 1)
+
+  messages = [
+    { info: { id: "msg_aborted_user", role: "user", sessionID: binding.sessionID }, parts: [{ type: "text", text: "abort" }] },
+    { info: { id: "msg_aborted_assistant", role: "assistant", sessionID: binding.sessionID, finish: "unknown" }, parts: [] },
+  ]
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "message.updated", properties: { info: messages[0].info } })
+  promptQueue.markExpectedStop(binding)
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.idle", properties: { sessionID: binding.sessionID } })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.idle", properties: { sessionID: binding.sessionID } })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(notices.length, 1)
 }
 
 async function smokeOpenCodeAbortClient() {
