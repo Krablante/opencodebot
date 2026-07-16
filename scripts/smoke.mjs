@@ -17,7 +17,7 @@ import {
 import { AttachmentBuffer } from "../src/attachments.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "../src/commands.mjs"
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
-import { finalNotificationMarkdown, finalNotificationTopicSource, formatDebugDiagnosticsText, formatDuration, formatTokenCount, runDiagnosticsBeforeAssistant, toolSummaryBeforeAssistant, turnMetadataBeforeAssistant, turnTokenUsageBeforeAssistant } from "../src/final-notifications.mjs"
+import { createFinalNotifier, finalNotificationMarkdown, finalNotificationTopicSource, formatDebugDiagnosticsText, formatDuration, formatTokenCount, runDiagnosticsBeforeAssistant, toolSummaryBeforeAssistant, turnMetadataBeforeAssistant, turnTokenUsageBeforeAssistant } from "../src/final-notifications.mjs"
 import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { MirrorRenderer, webPromptMessages } from "../src/render.mjs"
@@ -68,6 +68,7 @@ async function smokeLocalInvariants() {
   await smokeMirrorModeCommands()
   await smokeMirrorModeRendering()
   smokeFinalToolSummary()
+  await smokeFinalNotificationRetry()
   await smokeCoreFailureInvariants()
   await smokeChunkedWebPromptMirror()
   await smokeKillCommand()
@@ -281,6 +282,70 @@ function smokeFinalToolSummary() {
   assert.ok(notification.lastIndexOf("🐛 Run diagnostics") > notification.lastIndexOf("🩹 Patched"))
   assert.ok(notification.endsWith("||"))
   assert.doesNotMatch(notification, /\/home\/bloob|C:\\repo|old\.txt|failed\.mjs|Explore|Todo/)
+}
+
+async function smokeFinalNotificationRetry() {
+  const marked = new Set()
+  const attempts = []
+  let failingUserAttempts = 1
+  const state = {
+    finalNotificationUserIds: () => ["user-1", "user-2"],
+    finalNotificationSent: (userID, serverID, sessionID, assistantMessageID) => marked.has(`${userID}:${serverID}:${sessionID}:${assistantMessageID}`),
+    markFinalNotificationSent: async (userID, serverID, sessionID, assistantMessageID) => marked.add(`${userID}:${serverID}:${sessionID}:${assistantMessageID}`),
+    debugEnabled: () => false,
+  }
+  const telegram = {
+    async sendMessage(message) {
+      attempts.push(message)
+      if (message.chatId === "user-2" && failingUserAttempts > 0) {
+        failingUserAttempts -= 1
+        throw new Error("temporary Telegram failure")
+      }
+      return { message_id: attempts.length }
+    },
+  }
+  const opencode = {
+    async getSession() {
+      return { id: "ses_retry", title: "Retry final notification" }
+    },
+    async messages() {
+      return [
+        { info: { id: "msg_user", role: "user", time: { created: 1000 } }, parts: [{ type: "text", text: "finish the work" }] },
+        { info: { id: "msg_final", role: "assistant", parentID: "msg_user", finish: "stop", time: { created: 2000, completed: 3000 }, modelID: "gpt-5.6-sol", tokens: { input: 100, output: 50, reasoning: 0, cache: { read: 0, write: 0 } } }, parts: [{ type: "text", text: "done" }] },
+      ]
+    },
+  }
+  const notifier = createFinalNotifier({
+    config: { finalNotifications: { enabled: true, userIds: ["user-1", "user-2"], maxSentMarkers: 1000 } },
+    state,
+    telegram,
+    opencode,
+  })
+  const binding = { chatId: -1001234567890, topicId: 456, serverID: "nuc", sessionID: "ses_retry", directory: "/tmp/work" }
+
+  await notifier.notifyFinalAnswerReady(binding, { assistantMessageID: "msg_final", messageId: null })
+  assert.equal(marked.has("user-1:nuc:ses_retry:msg_final"), true)
+  assert.equal(marked.has("user-2:nuc:ses_retry:msg_final"), false)
+  assert.match(attempts[0].replyMarkup.inline_keyboard[0][0].url, /\/456$/)
+
+  await notifier.notifyFinalAnswerReady(binding, { assistantMessageID: "msg_final", messageId: null })
+  assert.equal(marked.has("user-2:nuc:ses_retry:msg_final"), true)
+  const attemptsAfterRepair = attempts.length
+  await notifier.notifyFinalAnswerReady(binding, { assistantMessageID: "msg_final", messageId: null })
+  assert.equal(attempts.length, attemptsAfterRepair)
+
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-final-notification-state-"))
+  try {
+    const store = new StateStore(path.join(root, "state.json"))
+    await store.load()
+    await store.markFinalNotificationSent("user-1", "nuc", "ses_state", "msg_state")
+    assert.equal(store.finalNotificationSent("user-1", "nuc", "ses_state", "msg_state"), true)
+    assert.equal(store.finalNotificationSent("user-2", "nuc", "ses_state", "msg_state"), false)
+    await store.update((data) => data.finalNotifications.sentMessages.push("nuc:ses_legacy:msg_legacy:123"))
+    assert.equal(store.finalNotificationSent("user-2", "nuc", "ses_legacy", "msg_legacy"), true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 }
 
 async function smokeCoreFailureInvariants() {
@@ -1901,6 +1966,7 @@ async function smokeIncompleteRunNotice() {
   const handledRuns = new Set()
   const mirroredUsers = new Set()
   const mirroredAssistants = new Set()
+  const repairedNotifications = []
   const promptQueue = new PromptQueue(async () => {})
   let messages = []
   const reconciler = createSessionReconciler({
@@ -1925,6 +1991,7 @@ async function smokeIncompleteRunNotice() {
       async userPrompt() {},
       async compactTools() {},
       async assistantMessage() {},
+      async notifyFinalMessage(_binding, payload) { repairedNotifications.push(payload) },
       shouldMirrorTool: () => false,
       shouldPinUserPrompts: () => false,
     },
@@ -1955,6 +2022,7 @@ async function smokeIncompleteRunNotice() {
   })
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(notices.length, 0)
+  assert.deepEqual(repairedNotifications, [{ assistantMessageID: "msg_complete_assistant", messageId: null }])
 
   messages = [
     { info: { id: "msg_incomplete_user", role: "user", sessionID: binding.sessionID }, parts: [{ type: "text", text: "start" }] },
@@ -1973,6 +2041,22 @@ async function smokeIncompleteRunNotice() {
   assert.equal(notices.length, 1)
 
   messages = [
+    { info: { id: "msg_empty_user", role: "user", sessionID: binding.sessionID }, parts: [{ type: "text", text: "finish visibly" }] },
+    { info: { id: "msg_empty_assistant", role: "assistant", sessionID: binding.sessionID, finish: "stop" }, parts: [] },
+  ]
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "message.updated", properties: { info: messages[0].info } })
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.idle", properties: { sessionID: binding.sessionID } })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(notices.length, 2)
+  assert.match(notices[1].text, /stopped without a final response/)
+  assert.match(notices[1].text, /terminal assistant message contained no visible text/)
+  assert.equal(repairedNotifications.length, 1)
+
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.idle", properties: { sessionID: binding.sessionID } })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(notices.length, 2)
+
+  messages = [
     { info: { id: "msg_aborted_user", role: "user", sessionID: binding.sessionID }, parts: [{ type: "text", text: "abort" }] },
     { info: { id: "msg_aborted_assistant", role: "assistant", sessionID: binding.sessionID, finish: "unknown" }, parts: [] },
   ]
@@ -1982,7 +2066,7 @@ async function smokeIncompleteRunNotice() {
   await new Promise((resolve) => setTimeout(resolve, 10))
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.idle", properties: { sessionID: binding.sessionID } })
   await new Promise((resolve) => setTimeout(resolve, 10))
-  assert.equal(notices.length, 1)
+  assert.equal(notices.length, 2)
 }
 
 async function smokeOpenCodeAbortClient() {

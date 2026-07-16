@@ -29,6 +29,7 @@ export function createSessionReconciler({
   const incompleteNotifications = new Set()
   const latestUserMessages = new Map()
   const manualCompactions = new Set()
+  const finalNotificationAttempts = new Map()
   const reconcileTimers = new Map()
 
   function activeBinding(binding) {
@@ -136,7 +137,10 @@ export function createSessionReconciler({
             }
             break
           }
-          if (state.isAssistantMirrored?.(server.id, sessionID, properties.assistantMessageID)) break
+          if (state.isAssistantMirrored?.(server.id, sessionID, properties.assistantMessageID)) {
+            if (properties.finish === "stop") scheduleReconcile(binding, 0)
+            break
+          }
           if (properties.finish === "stop") {
             if (state.isAssistantMirrored(server.id, sessionID, properties.assistantMessageID)) {
               clearRunCheck(binding)
@@ -285,6 +289,7 @@ export function createSessionReconciler({
       clearRunCheck(binding)
       return
     }
+    if (outcome.finalAnswer) await repairLatestFinalNotification(binding, history)
     if (expectedStop) {
       if (!outcome.complete) {
         await state.markIncompleteRunHandled({
@@ -320,14 +325,17 @@ export function createSessionReconciler({
     try {
       const configuredServer = config.opencode.servers.find((item) => item.id === binding.serverID)
       const sessionUrl = sessionWebUrl(configuredServer || server, binding)
+      const emptyTerminal = outcome.reason === "empty_terminal"
       await telegram.sendMessage({
         chatId: binding.chatId,
         topicId: binding.topicId,
         text: [
-          "⚠️ <b>OpenCodez run was interrupted</b>",
-          "The session became idle before a final answer was produced.",
+          emptyTerminal ? "⚠️ <b>OpenCodez stopped without a final response</b>" : "⚠️ <b>OpenCodez run was interrupted</b>",
+          emptyTerminal
+            ? "The backend reported a normal stop, but the terminal assistant message contained no visible text."
+            : "The session became idle before a final answer was produced.",
           `<b>Last state:</b> ${incompleteRunReason(outcome)}`,
-          "You can continue the run in OpenCodez or send a new prompt in this topic.",
+          "Continue the run in OpenCodez or send a new prompt in this topic.",
         ].join("\n\n"),
         disablePreview: true,
         replyMarkup: sessionUrl ? { inline_keyboard: [[{ text: "Open session", url: sessionUrl }]] } : undefined,
@@ -543,6 +551,7 @@ export function createSessionReconciler({
       if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding)
       mirroredAssistants += 1
     }
+    await repairLatestFinalNotification(binding, messages)
     const elapsedMs = durationMs(startedAt)
     if (mirroredUsers || mirroredAssistants || skippedAssistants || shouldLogSlow(elapsedMs)) {
       logInfo("reconcile.binding.done", {
@@ -558,6 +567,17 @@ export function createSessionReconciler({
       })
     }
     return messages
+  }
+
+  async function repairLatestFinalNotification(binding, messages) {
+    if (typeof renderer.notifyFinalMessage !== "function") return
+    const outcome = latestRunOutcome(messages)
+    if (!outcome?.finalAnswer || !outcome.assistantMessageID) return
+    const key = `${bindingKey(binding)}:${outcome.assistantMessageID}`
+    const now = Date.now()
+    if (now - (finalNotificationAttempts.get(key) || 0) < 60_000) return
+    finalNotificationAttempts.set(key, now)
+    await renderer.notifyFinalMessage(binding, { assistantMessageID: outcome.assistantMessageID, messageId: null })
   }
 
   async function handleMirrorError(binding, error) {
@@ -650,6 +670,9 @@ export function createSessionReconciler({
   function detachBinding(binding) {
     clearRunCheck(binding)
     const key = bindingKey(binding)
+    for (const attemptKey of finalNotificationAttempts.keys()) {
+      if (attemptKey.startsWith(`${key}:`)) finalNotificationAttempts.delete(attemptKey)
+    }
     const timer = reconcileTimers.get(key)
     if (!timer) return
     clearTimeout(timer)
@@ -835,35 +858,53 @@ function eventSessionID(properties = {}) {
 }
 
 function latestRunOutcome(messages) {
-  const infos = messages.map((message) => message.info || message)
+  const normalized = messages.map((message) => ({ info: message.info || message, parts: message.parts || [] }))
   let userIndex = -1
-  for (let index = infos.length - 1; index >= 0; index -= 1) {
-    if (infos[index]?.role === "user") {
+  for (let index = normalized.length - 1; index >= 0; index -= 1) {
+    if (normalized[index]?.info?.role === "user" && normalized[index].info.summary !== true) {
       userIndex = index
       break
     }
   }
   if (userIndex < 0) return null
 
-  const userMessageID = infos[userIndex]?.id || null
-  for (let index = infos.length - 1; index > userIndex; index -= 1) {
-    const info = infos[index]
+  const userMessageID = normalized[userIndex]?.info?.id || null
+  for (let index = normalized.length - 1; index > userIndex; index -= 1) {
+    const message = normalized[index]
+    const info = message.info
     if (info?.role !== "assistant") continue
     const finish = String(info.finish || "").toLowerCase()
     const knownFailure = Boolean(info.error) || ["error", "cancelled", "canceled", "aborted"].includes(finish)
+    const summary = info.summary === true
+    const visibleFinalAnswer = finish === "stop" && assistantHasVisibleFinalAnswer(message)
+    const emptyTerminal = finish === "stop" && !summary && !visibleFinalAnswer
     return {
       assistantMessageID: info.id || null,
-      complete: finish === "stop" || knownFailure,
+      complete: knownFailure || summary || visibleFinalAnswer,
+      finalAnswer: visibleFinalAnswer && !knownFailure && !summary,
       finish: finish || "missing",
+      reason: emptyTerminal ? "empty_terminal" : knownFailure ? "failure" : summary ? "summary" : visibleFinalAnswer ? "complete" : "unfinished",
       userMessageID,
     }
   }
   return {
     assistantMessageID: null,
     complete: false,
+    finalAnswer: false,
     finish: "missing",
+    reason: "missing",
     userMessageID,
   }
+}
+
+function assistantHasVisibleFinalAnswer(message) {
+  if (typeof message?.info?.text === "string" && message.info.text.trim()) return true
+  return (message?.parts || []).some((part) => (
+    part?.type === "text"
+    && part.synthetic !== true
+    && typeof part.text === "string"
+    && part.text.trim()
+  ))
 }
 
 function incompleteWarningKey(binding, outcome) {
@@ -875,6 +916,7 @@ function incompleteWarningKey(binding, outcome) {
 }
 
 function incompleteRunReason(outcome) {
+  if (outcome.reason === "empty_terminal") return "OpenCodez reported a normal stop, but the terminal assistant message was empty."
   if (!outcome.assistantMessageID) return "No assistant response was created."
   if (outcome.finish === "unknown") return "The assistant response ended unexpectedly."
   if (outcome.finish === "tool-calls") return "The run stopped after a tool call."

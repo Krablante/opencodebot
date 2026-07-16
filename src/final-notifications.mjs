@@ -13,12 +13,14 @@ export function createFinalNotifier({ config, state, telegram, opencode }) {
   return {
     async notifyFinalAnswerReady(binding, { assistantMessageID, messageId }) {
       if (config.finalNotifications?.enabled === false) return
-      if (!messageId) return
-      if (state.finalNotificationSent(binding.serverID, binding.sessionID, assistantMessageID, messageId)) return
+      if (!assistantMessageID) return
       const configuredUserIds = new Set((config.finalNotifications?.userIds || []).map(String))
-      const userIds = state.finalNotificationUserIds().filter((userId) => configuredUserIds.has(String(userId)))
+      const userIds = state.finalNotificationUserIds().filter((userId) => (
+        configuredUserIds.has(String(userId))
+        && !state.finalNotificationSent(userId, binding.serverID, binding.sessionID, assistantMessageID)
+      ))
       if (!userIds.length) return
-      const link = telegramMessageLink(binding.chatId, messageId)
+      const link = telegramMessageLink(binding.chatId, messageId || binding.topicId)
       const topicSource = finalNotificationTopicSource(state.topicRecord?.(binding.chatId, binding.topicId) || binding)
       const summary = await finalSessionSummary({
         opencode,
@@ -31,18 +33,29 @@ export function createFinalNotifier({ config, state, telegram, opencode }) {
       const text = finalNotificationMarkdown({ topicSource, serverID: binding.serverID, ...summary })
       const fallbackText = finalNotificationFallbackHtml({ topicSource, serverID: binding.serverID, ...summary })
       const compactText = finalNotificationCompactHtml({ topicSource, serverID: binding.serverID, ...summary })
-      let sentCount = 0
       for (const userId of userIds) {
         try {
           await sendFinalNotificationMessage({ telegram, userId, text, fallbackText, compactText, replyMarkup })
-          sentCount += 1
-          logInfo("final_notification.sent", { userId, serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId, messageId })
+          await state.markFinalNotificationSent(userId, binding.serverID, binding.sessionID, assistantMessageID, config.finalNotifications.maxSentMarkers)
+          logInfo("final_notification.sent", {
+            userId,
+            serverID: binding.serverID,
+            sessionID: binding.sessionID,
+            topicId: binding.topicId,
+            messageId: messageId || null,
+            repaired: !messageId,
+          })
         } catch (error) {
-          logErrorEvent("final_notification.failed", error, { userId, serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId, messageId })
+          logErrorEvent("final_notification.failed", error, {
+            userId,
+            serverID: binding.serverID,
+            sessionID: binding.sessionID,
+            topicId: binding.topicId,
+            messageId: messageId || null,
+            repaired: !messageId,
+          })
         }
       }
-      if (!sentCount) return
-      await state.markFinalNotificationSent(binding.serverID, binding.sessionID, assistantMessageID, messageId, config.finalNotifications.maxSentMarkers)
     },
   }
 }

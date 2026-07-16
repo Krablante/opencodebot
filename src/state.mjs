@@ -546,15 +546,18 @@ export class StateStore {
     })
   }
 
-  finalNotificationSent(serverID, sessionID, assistantMessageID, messageID) {
-    return (this.data.finalNotifications?.sentMessages || []).includes(finalNotificationKey(serverID, sessionID, assistantMessageID, messageID))
+  finalNotificationSent(userID, serverID, sessionID, assistantMessageID) {
+    const sent = this.data.finalNotifications?.sentMessages || []
+    const key = finalNotificationKey(userID, serverID, sessionID, assistantMessageID)
+    const legacyPrefix = legacyFinalNotificationPrefix(serverID, sessionID, assistantMessageID)
+    return sent.includes(key) || sent.some((item) => item.startsWith(legacyPrefix))
   }
 
-  async markFinalNotificationSent(serverID, sessionID, assistantMessageID, messageID, maxItems = 1000) {
+  async markFinalNotificationSent(userID, serverID, sessionID, assistantMessageID, maxItems = 1000) {
     return this.update((data) => {
       data.finalNotifications ||= { enabledUserIds: [], sentMessages: [] }
       data.finalNotifications.sentMessages ||= []
-      const key = finalNotificationKey(serverID, sessionID, assistantMessageID, messageID)
+      const key = finalNotificationKey(userID, serverID, sessionID, assistantMessageID)
       if (!data.finalNotifications.sentMessages.includes(key)) data.finalNotifications.sentMessages.push(key)
       if (data.finalNotifications.sentMessages.length > maxItems) {
         data.finalNotifications.sentMessages = data.finalNotifications.sentMessages.slice(-maxItems)
@@ -679,8 +682,12 @@ function sessionKey(serverID, sessionID) {
   return `${serverID}:${sessionID}`
 }
 
-function finalNotificationKey(serverID, sessionID, assistantMessageID, messageID) {
-  return `${serverID}:${sessionID}:${assistantMessageID || "unknown"}:${messageID || "unknown"}`
+function finalNotificationKey(userID, serverID, sessionID, assistantMessageID) {
+  return `${userID}:${serverID}:${sessionID}:${assistantMessageID || "unknown"}`
+}
+
+function legacyFinalNotificationPrefix(serverID, sessionID, assistantMessageID) {
+  return `${serverID}:${sessionID}:${assistantMessageID || "unknown"}:`
 }
 
 function sessionMirrorKey(serverID, sessionID) {
