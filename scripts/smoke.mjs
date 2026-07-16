@@ -22,7 +22,7 @@ import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } fro
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { MirrorRenderer, webPromptMessages } from "../src/render.mjs"
 import { normalizeNestedRichLists } from "../src/rich-list-normalization.mjs"
-import { bindingSessionReconcileRefresh, createSessionReconciler, isManualCompactionPart, shouldSkipAssistantForCatchup, shouldSyncManagedTopicTitle } from "../src/session-reconcile.mjs"
+import { bindingSessionReconcileRefresh, createSessionReconciler, isManualCompactionPart, normalizeSessionError, shouldSkipAssistantForCatchup, shouldSyncManagedTopicTitle } from "../src/session-reconcile.mjs"
 import { normalizeSpeechConfig } from "../src/config/speech.mjs"
 import { SpeechModule, transcriptMessage } from "../src/speech/index.mjs"
 import { GroqSpeechClient } from "../src/speech/groq-client.mjs"
@@ -59,6 +59,7 @@ async function smokeLocalInvariants() {
   smokeCatchupAssistantGate()
   smokeManagedTopicMigrationGate()
   smokeManualCompactionDetection()
+  smokeSessionErrorNormalization()
   await smokeCanonicalTopicMetadata()
   await smokeActiveBindingLeavesUsersOnlyCatchup()
   await smokeTopicCreationSingleFlight()
@@ -1430,6 +1431,34 @@ function smokeManualCompactionDetection() {
   assert.equal(isManualCompactionPart({ type: "text", auto: false }), false)
 }
 
+function smokeSessionErrorNormalization() {
+  const apiError = normalizeSessionError({
+    error: {
+      name: "APIError",
+      data: {
+        message: "Rate limit exceeded. Retry after 30 seconds.",
+        statusCode: 429,
+        responseBody: "must never be shown",
+        responseHeaders: { authorization: "must never be shown" },
+      },
+    },
+  })
+  assert.deepEqual(apiError, { title: "API error (429)", message: "Rate limit exceeded. Retry after 30 seconds." })
+  assert.doesNotMatch(JSON.stringify(apiError), /responseBody|authorization|must never be shown/)
+  assert.deepEqual(normalizeSessionError({ name: "MessageOutputLengthError", data: {} }), {
+    title: "Output limit reached",
+    message: "The model reached its maximum output length before completing the response.",
+  })
+  assert.deepEqual(normalizeSessionError({ name: "ContextOverflowError", data: {} }), {
+    title: "Context overflow",
+    message: "The session context is too large. Run /compact and retry the prompt.",
+  })
+  assert.deepEqual(normalizeSessionError("plain failure"), { title: "Session error", message: "plain failure" })
+  assert.equal(normalizeSessionError({}), null)
+  assert.equal(normalizeSessionError({ error: { name: "UnknownCustomError", data: { message: "custom failure" } } }).title, "Unknown Custom error")
+  assert.equal(normalizeSessionError({ error: { data: { message: "x".repeat(3000) } } }).message.length, 2400)
+}
+
 async function smokeActiveBindingLeavesUsersOnlyCatchup() {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-active-binding-"))
   try {
@@ -1703,7 +1732,21 @@ async function smokeKillSuppressesAbortFallout() {
       markAssistantMirrored: async () => {},
     },
     telegram: { async sendMessage(message) { sent.push(message) } },
-    opencode: {},
+    opencode: {
+      async messages() {
+        return [{
+          info: {
+            id: "msg_error",
+            role: "assistant",
+            error: {
+              name: "APIError",
+              data: { message: "Provider <rate> limit exceeded", statusCode: 429, responseBody: "secret response" },
+            },
+          },
+          parts: [],
+        }]
+      },
+    },
     renderer: {},
     promptQueue,
     backendRequest: async () => {},
@@ -1727,6 +1770,14 @@ async function smokeKillSuppressesAbortFallout() {
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.error", properties: { sessionID: "ses_kill", error: "real failure" } })
   assert.equal(sent.length, 1)
   assert.match(sent[0].text, /OpenCodez session error/)
+  assert.match(sent[0].text, /real failure/)
+
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.error", properties: { sessionID: "ses_kill" } })
+  assert.equal(sent.length, 2)
+  assert.match(sent[1].text, /API error \(429\)/)
+  assert.match(sent[1].text, /Provider &lt;rate&gt; limit exceeded/)
+  assert.doesNotMatch(sent[1].text, /Provider <rate>/)
+  assert.doesNotMatch(sent[1].text, /secret response/)
 }
 
 async function smokeManualCompactionSuppression() {

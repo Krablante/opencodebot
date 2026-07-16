@@ -585,12 +585,32 @@ export function createSessionReconciler({
   }
 
   async function notifySessionError(binding, properties) {
-    const text = sessionErrorText(properties)
+    const detail = await resolvedSessionError(binding, properties)
+    const text = detail
+      ? `❌ <b>OpenCodez session error</b>\n<blockquote><b>${escapeHtml(detail.title)}</b>\n${escapeHtml(detail.message)}</blockquote>`
+      : "❌ <b>OpenCodez session error.</b>"
     await telegram.sendMessage({
       chatId: binding.chatId,
       topicId: binding.topicId,
-      text: `<b>OpenCodez session error.</b>${text ? `\n${escapeHtml(text)}` : ""}`,
+      text,
     })
+  }
+
+  async function resolvedSessionError(binding, properties) {
+    const fromEvent = normalizeSessionError(properties)
+    if (fromEvent) return fromEvent
+    try {
+      const messages = await opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory })
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const info = messages[index]?.info || messages[index]
+        if (info?.role !== "assistant" || !info.error) continue
+        const fromHistory = normalizeSessionError(info.error)
+        if (fromHistory) return fromHistory
+      }
+    } catch (error) {
+      logError(error)
+    }
+    return null
   }
 
   async function renderStoredAssistantMessage(binding, message) {
@@ -653,12 +673,77 @@ function stepFailureText(properties) {
   return ""
 }
 
-function sessionErrorText(properties) {
-  const error = properties.error || properties.exception || properties.reason
-  if (typeof error === "string") return error
-  if (error?.message) return error.message
-  if (properties.message) return String(properties.message)
+export function normalizeSessionError(value) {
+  if (value === null || value === undefined) return null
+  const direct = typeof value === "object" ? value : {}
+  const candidate = direct.error ?? direct.exception ?? direct.reason ?? value
+  if (typeof candidate === "string") return { title: "Session error", message: cleanSessionErrorMessage(candidate) }
+  if (!candidate || typeof candidate !== "object") return null
+
+  const data = candidate.data && typeof candidate.data === "object" ? candidate.data : {}
+  const name = firstSessionErrorText(candidate.name, direct.name)
+  const statusCode = data.statusCode ?? candidate.statusCode
+  const explicitMessage = firstSessionErrorText(data.message, candidate.message, direct.message)
+  const message = explicitMessage || defaultSessionErrorMessage(name)
+  if (!message && !name && statusCode === undefined) return null
+
+  const baseTitle = SESSION_ERROR_TITLES[name] || humanizeSessionErrorName(name) || "Session error"
+  const status = statusCode === undefined || statusCode === null || statusCode === "" ? "" : ` (${String(statusCode).slice(0, 16)})`
+  return {
+    title: `${baseTitle}${status}`.slice(0, 160),
+    message: cleanSessionErrorMessage(message || "OpenCodez reported an error without additional details."),
+  }
+}
+
+const SESSION_ERROR_TITLES = {
+  APIError: "API error",
+  ContentFilterError: "Content filter error",
+  ContextOverflowError: "Context overflow",
+  MessageAbortedError: "Session aborted",
+  MessageOutputLengthError: "Output limit reached",
+  ProviderAuthError: "Provider authentication error",
+  StructuredOutputError: "Structured output error",
+  UnknownError: "Unknown error",
+}
+
+const SESSION_ERROR_MESSAGES = {
+  APIError: "The model provider request failed.",
+  ContentFilterError: "The model provider blocked the response with its content filter.",
+  ContextOverflowError: "The session context is too large. Run /compact and retry the prompt.",
+  MessageAbortedError: "The OpenCodez run was aborted.",
+  MessageOutputLengthError: "The model reached its maximum output length before completing the response.",
+  ProviderAuthError: "The model provider rejected authentication. Check the provider credentials.",
+  StructuredOutputError: "The model could not produce the required structured output.",
+  UnknownError: "OpenCodez reported an unknown session error.",
+}
+
+function defaultSessionErrorMessage(name) {
+  return SESSION_ERROR_MESSAGES[name] || ""
+}
+
+function firstSessionErrorText(...values) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim()
+  }
   return ""
+}
+
+function humanizeSessionErrorName(name) {
+  if (!name) return ""
+  return String(name)
+    .replace(/Error$/, " error")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/^./, (character) => character.toUpperCase())
+}
+
+function cleanSessionErrorMessage(message) {
+  const value = String(message || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+  if (value.length <= 2400) return value
+  return `${value.slice(0, 2399).trimEnd()}…`
 }
 
 function textFromStoredMessage(message) {
