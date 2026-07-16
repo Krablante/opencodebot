@@ -3,6 +3,8 @@ import { escapeHtml, topicId } from "./telegram.mjs"
 import { parseResetArgs } from "./chat-templates.mjs"
 import { managedTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
 import { formatArtifactUploadHelp } from "./artifact-uploads.mjs"
+import { logErrorEvent, logInfo } from "./logger.mjs"
+import { resolveSessionProfile } from "./opencode.mjs"
 
 export const telegramBotCommands = [
   { command: "new", description: "Create a new OpenCodez session topic" },
@@ -14,6 +16,7 @@ export const telegramBotCommands = [
   { command: "sounds_status", description: "Show speech transcription status" },
   { command: "q", description: "Queue prompts for the current session" },
   { command: "kill", description: "Stop the current run and clear queued prompts" },
+  { command: "compact", description: "Compact the current session context" },
   { command: "notify_on", description: "Enable final-answer DMs" },
   { command: "notify_off", description: "Disable final-answer DMs" },
   { command: "notify_status", description: "Show final-answer DM status" },
@@ -40,6 +43,7 @@ export function createTelegramCommandHandlers({
   speech,
   questionManager,
 }) {
+  const compactOperations = new Map()
   const handlers = {
     mirror_on: async (message) => {
       await state.setMirrorEnabled(true)
@@ -60,6 +64,7 @@ export function createTelegramCommandHandlers({
     start: sendHelp,
     q: handleQueueCommand,
     kill: handleKillCommand,
+    compact: handleCompactCommand,
     notify_on: handleNotifyOn,
     notify_off: handleNotifyOff,
     notify_status: handleNotifyStatus,
@@ -152,11 +157,14 @@ export function createTelegramCommandHandlers({
       return
     }
 
+    const compactOperation = compactOperations.get(compactOperationKey(binding))
+    if (compactOperation) compactOperation.cancelled = true
     const wasBusy = promptQueue.isBusy(binding)
     promptQueue.markExpectedStop(binding)
     try {
       await opencode.abortSession(binding.serverID, binding.sessionID, { directory: binding.directory })
     } catch (error) {
+      if (compactOperation) compactOperation.cancelled = false
       promptQueue.clearExpectedStop(binding)
       await telegram.sendMessage({
         chatId: message.chat.id,
@@ -171,6 +179,140 @@ export function createTelegramCommandHandlers({
       cleared.length ? `Cleared ${cleared.length} queued prompt(s).` : "No queued prompts were pending.",
     ]
     await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: lines.join("\n") })
+  }
+
+  async function handleCompactCommand(message) {
+    const currentTopicId = topicId(message)
+    const binding = state.findBindingByTopic(message.chat.id, currentTopicId)
+    if (!binding) {
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: currentTopicId,
+        text: "No OpenCodez session is bound to this topic. Run /compact inside an existing session topic.",
+      })
+      return
+    }
+    if (!opencode?.summarizeSession) {
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: "OpenCodez compaction API is not available." })
+      return
+    }
+    if (promptQueue.isBusy(binding)) {
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: currentTopicId,
+        text: "⏳ This session is already running. Wait for the current response, or use /kill before /compact.",
+      })
+      return
+    }
+
+    let messages
+    let status
+    try {
+      const inspection = await Promise.all([
+        opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory }),
+        opencode.sessionStatus(binding.serverID, binding.sessionID, { directory: binding.directory }),
+      ])
+      messages = inspection[0]
+      status = inspection[1]
+    } catch (error) {
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: currentTopicId,
+        text: `Could not inspect the OpenCodez session before compaction.\n<code>${escapeHtml(error.message)}</code>`,
+      })
+      return
+    }
+    if (status.type !== "idle") {
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: currentTopicId,
+        text: "⏳ OpenCodez is still working on this session. Wait for it to become idle, or use /kill before /compact.",
+      })
+      return
+    }
+    if (!messages.some((entry) => entry?.info?.summary !== true && ["user", "assistant"].includes(entry?.info?.role))) {
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: "Nothing to compact yet. Send at least one prompt first." })
+      return
+    }
+
+    const profile = await resolveSessionProfile({ opencode, binding, defaultProfile: config.defaultPrompt, messages })
+    if (!profile.model?.providerID || !profile.model?.modelID) {
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: currentTopicId,
+        text: "Could not determine the current OpenCodez model. Send one prompt in this topic and retry /compact.",
+      })
+      return
+    }
+
+    const feedback = await telegram.sendMessage({
+      chatId: message.chat.id,
+      topicId: currentTopicId,
+      text: "🗜️ <b>Compacting context…</b>\nNew prompts will wait in this topic’s queue.",
+    })
+    const operation = { cancelled: false }
+    compactOperations.set(compactOperationKey(binding), operation)
+    promptQueue.markBusy(binding)
+    void compactSessionInBackground({ binding, message, feedback, model: profile.model, operation }).catch((error) => {
+      logErrorEvent("compact.background_failed", error, { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId })
+    })
+  }
+
+  async function compactSessionInBackground({ binding, message, feedback, model, operation }) {
+    try {
+      await opencode.summarizeSession(binding.serverID, binding.sessionID, { directory: binding.directory, model })
+      if (operation.cancelled) {
+        await updateCompactFeedback({ message, feedback, text: "🛑 <b>Context compaction stopped.</b>\nThe session remains available." })
+        return
+      }
+      await updateCompactFeedback({
+        message,
+        feedback,
+        text: "✅ <b>Context compacted.</b>\nThe next prompt will use the condensed session history.",
+      })
+      logInfo("compact.completed", { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId })
+    } catch (error) {
+      if (operation.cancelled) {
+        await updateCompactFeedback({ message, feedback, text: "🛑 <b>Context compaction stopped.</b>\nThe session remains available." })
+        return
+      }
+      await releaseCompactQueueAfterFailure(binding)
+      logErrorEvent("compact.failed", error, { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId })
+      await updateCompactFeedback({
+        message,
+        feedback,
+        text: `❌ <b>Context compaction failed.</b>\n<code>${escapeHtml(error.message)}</code>\nThe session is still available.`,
+      })
+    } finally {
+      if (compactOperations.get(compactOperationKey(binding)) === operation) compactOperations.delete(compactOperationKey(binding))
+    }
+  }
+
+  async function releaseCompactQueueAfterFailure(binding) {
+    try {
+      const status = await opencode.sessionStatus(binding.serverID, binding.sessionID, { directory: binding.directory })
+      if (status.type !== "idle" || !promptQueue.isBusy(binding)) return
+      promptQueue.markSendFailed(binding)
+      await promptQueue.markBackendIdle(binding)
+    } catch (error) {
+      logErrorEvent("compact.queue_release_failed", error, { serverID: binding.serverID, sessionID: binding.sessionID })
+    }
+  }
+
+  async function updateCompactFeedback({ message, feedback, text }) {
+    if (feedback?.message_id) {
+      try {
+        await telegram.editMessageText({ chatId: message.chat.id, messageId: feedback.message_id, text })
+        return
+      } catch (error) {
+        logErrorEvent("compact.feedback.edit_failed", error, { chatId: message.chat.id, messageId: feedback.message_id })
+      }
+    }
+    await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text })
+  }
+
+  function compactOperationKey(binding) {
+    return `${binding.serverID}:${binding.sessionID}`
   }
 
   async function handleResetCommand(message, args, promptKey) {
@@ -628,6 +770,7 @@ export function createTelegramCommandHandlers({
       "<code>/q status</code> - show queued prompts.",
       "<code>/q delete &lt;number&gt;</code> - remove a queued prompt.",
       "<code>/kill</code> - stop the current run and clear queued prompts.",
+      "<code>/compact</code> - compact this topic’s OpenCodez context; prompts sent while it runs are queued.",
       "<code>/artifacts_here</code> - make this topic the artifact target and file dropbox.",
       "Drop files there with an optional server id caption; no caption uses the default server.",
       "When speech is enabled, voice messages in ordinary topics become copyable transcript replies; send the transcript as text to use it as a prompt.",

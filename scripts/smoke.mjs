@@ -22,7 +22,7 @@ import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } fro
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { MirrorRenderer, webPromptMessages } from "../src/render.mjs"
 import { normalizeNestedRichLists } from "../src/rich-list-normalization.mjs"
-import { bindingSessionReconcileRefresh, createSessionReconciler, shouldSkipAssistantForCatchup, shouldSyncManagedTopicTitle } from "../src/session-reconcile.mjs"
+import { bindingSessionReconcileRefresh, createSessionReconciler, isManualCompactionPart, shouldSkipAssistantForCatchup, shouldSyncManagedTopicTitle } from "../src/session-reconcile.mjs"
 import { normalizeSpeechConfig } from "../src/config/speech.mjs"
 import { SpeechModule, transcriptMessage } from "../src/speech/index.mjs"
 import { GroqSpeechClient } from "../src/speech/groq-client.mjs"
@@ -58,6 +58,7 @@ async function smokeLocalInvariants() {
   smokeExpiredBindingReconcileRefresh()
   smokeCatchupAssistantGate()
   smokeManagedTopicMigrationGate()
+  smokeManualCompactionDetection()
   await smokeCanonicalTopicMetadata()
   await smokeActiveBindingLeavesUsersOnlyCatchup()
   await smokeTopicCreationSingleFlight()
@@ -69,9 +70,12 @@ async function smokeLocalInvariants() {
   await smokeCoreFailureInvariants()
   await smokeChunkedWebPromptMirror()
   await smokeKillCommand()
+  await smokeCompactCommand()
   await smokeResetCommand()
   await smokeKillCommandAbortFailure()
   await smokeKillSuppressesAbortFallout()
+  await smokeManualCompactionSuppression()
+  await smokeOpenCodeSummarizeClient()
   await smokeQueueDrainsOnSessionIdle()
   await smokeIncompleteRunNotice()
 }
@@ -350,6 +354,30 @@ async function smokeOpenCodeSessionModelSwitch() {
     assert.deepEqual(captured.body, {
       model: { providerID: "openai", id: "gpt-5.6-sol-fast", variant: "max" },
     })
+  } finally {
+    await close()
+  }
+}
+
+async function smokeOpenCodeSummarizeClient() {
+  let captured = null
+  const server = createServer(async (request, response) => {
+    let body = ""
+    for await (const chunk of request) body += chunk
+    captured = { method: request.method, url: request.url, body: JSON.parse(body) }
+    response.writeHead(200, { "content-type": "application/json" }).end("true")
+  })
+  const { url, close } = await listen(server)
+  try {
+    const client = new OpenCodeClient({ opencode: { password: "", mirrorScope: "global", servers: [{ id: "local", url }] } })
+    const result = await client.summarizeSession("local", "ses compact", {
+      directory: "/tmp/work",
+      model: { providerID: "openai", modelID: "gpt-5.6-sol" },
+    })
+    assert.equal(result, true)
+    assert.equal(captured.method, "POST")
+    assert.equal(captured.url, "/session/ses%20compact/summarize?directory=%2Ftmp%2Fwork")
+    assert.deepEqual(captured.body, { providerID: "openai", modelID: "gpt-5.6-sol", auto: false })
   } finally {
     await close()
   }
@@ -929,6 +957,89 @@ async function smokeKillCommand() {
   assert.equal(debugEnabled, false)
 }
 
+async function smokeCompactCommand() {
+  assert.ok(telegramBotCommands.some((command) => command.command === "compact"))
+
+  const binding = { serverID: "nuc", sessionID: "ses_compact", directory: "/tmp/work", topicId: 456 }
+  const sent = []
+  const edited = []
+  const summarized = []
+  let compactDeferred = null
+  let abortCalls = 0
+  const promptQueue = new PromptQueue({
+    onPrompt: async () => {},
+    onQueued: async () => {},
+    onQueueCleared: async () => {},
+  })
+  const handlers = createTelegramCommandHandlers({
+    config: { chatTemplates: {}, defaultPrompt: { agent: "build" } },
+    state: {
+      findBindingByTopic() {
+        return binding
+      },
+    },
+    telegram: {
+      async sendMessage(message) {
+        sent.push(message)
+        return { message_id: sent.length }
+      },
+      async editMessageText(message) {
+        edited.push(message)
+      },
+    },
+    opencode: {
+      async messages() {
+        return [{ info: { id: "msg_user", role: "user" }, parts: [{ type: "text", text: "Long conversation" }] }]
+      },
+      async sessionStatus() {
+        return { type: "idle" }
+      },
+      async getSession() {
+        return { id: binding.sessionID, model: { providerID: "openai", modelID: "gpt-5.6-sol" } }
+      },
+      async summarizeSession(serverID, sessionID, options) {
+        summarized.push({ serverID, sessionID, options })
+        return compactDeferred || true
+      },
+      async abortSession() {
+        abortCalls += 1
+        return true
+      },
+    },
+    promptQueue,
+    multipartPrompts: { async flushKey() {} },
+    createPendingTopic: async () => {},
+  })
+
+  const message = { chat: { id: 123 }, message_thread_id: 456, message_id: 789 }
+  assert.equal(await handlers.handle(message, { name: "compact", args: "" }, "123:456"), true)
+  await wait(0)
+  assert.equal(promptQueue.isBusy(binding), true)
+  assert.deepEqual(summarized, [{
+    serverID: "nuc",
+    sessionID: "ses_compact",
+    options: { directory: "/tmp/work", model: { providerID: "openai", modelID: "gpt-5.6-sol", variant: undefined } },
+  }])
+  assert.match(sent[0].text, /Compacting context/)
+  assert.match(edited[0].text, /Context compacted/)
+
+  await handlers.handle(message, { name: "compact", args: "" }, "123:456")
+  assert.match(sent.at(-1).text, /already running/)
+  assert.equal(summarized.length, 1)
+
+  promptQueue.clear(binding)
+  let resolveCompact
+  compactDeferred = new Promise((resolve) => {
+    resolveCompact = resolve
+  })
+  await handlers.handle(message, { name: "compact", args: "" }, "123:456")
+  await handlers.handle(message, { name: "kill", args: "" }, "123:456")
+  resolveCompact(true)
+  await wait(0)
+  assert.equal(abortCalls, 1)
+  assert.match(edited.at(-1).text, /compaction stopped/)
+}
+
 async function smokeResetCommand() {
   assert.ok(telegramBotCommands.some((command) => command.command === "reset"))
 
@@ -1313,6 +1424,12 @@ function smokeManagedTopicMigrationGate() {
   assert.equal(shouldSyncManagedTopicTitle({ title: "managed", titleSource: "user", topicBaseTitle: "managed" }, "backend"), true)
 }
 
+function smokeManualCompactionDetection() {
+  assert.equal(isManualCompactionPart({ type: "compaction", auto: false }), true)
+  assert.equal(isManualCompactionPart({ type: "compaction", auto: true }), false)
+  assert.equal(isManualCompactionPart({ type: "text", auto: false }), false)
+}
+
 async function smokeActiveBindingLeavesUsersOnlyCatchup() {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-active-binding-"))
   try {
@@ -1610,6 +1727,64 @@ async function smokeKillSuppressesAbortFallout() {
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.error", properties: { sessionID: "ses_kill", error: "real failure" } })
   assert.equal(sent.length, 1)
   assert.match(sent[0].text, /OpenCodez session error/)
+}
+
+async function smokeManualCompactionSuppression() {
+  const binding = { chatId: 123, topicId: 456, serverID: "nuc", sessionID: "ses_compact", directory: "/tmp/work" }
+  const sent = []
+  const rendered = []
+  const mirrored = []
+  const promptQueue = new PromptQueue(async (_binding, text) => sent.push(text))
+  const reconciler = createSessionReconciler({
+    config: { telegram: { autocreateTopics: false }, reconcile: {} },
+    state: {
+      mirrorEnabled: () => true,
+      findBinding: (serverID, sessionID) => (serverID === binding.serverID && sessionID === binding.sessionID ? binding : null),
+      isAssistantMirrored: () => false,
+      markAssistantMirrored: async (_serverID, _sessionID, messageID) => mirrored.push(messageID),
+    },
+    telegram: { async sendMessage() {} },
+    opencode: {},
+    renderer: {
+      textDelta: async () => rendered.push("delta"),
+      textEnded: async () => rendered.push("ended"),
+      finalAssistantMessageReady: async () => rendered.push("final"),
+    },
+    promptQueue,
+    backendRequest: async () => {},
+    skippedBackendRequest: async () => {},
+    createTopicForSession: async () => null,
+    createTopicForWebSession: async () => null,
+    isInternalSession: () => false,
+    activateBindingForPrompt: async () => {},
+    maybeExtendBindingActivity: async () => {},
+    logError: () => {},
+    shouldStop: () => false,
+  })
+
+  promptQueue.markBusy(binding)
+  await promptQueue.enqueue(binding, "queued after compact")
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, {
+    type: "message.part.updated",
+    properties: { part: { sessionID: binding.sessionID, type: "compaction", auto: false } },
+  })
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, {
+    type: "session.next.text.delta",
+    properties: { sessionID: binding.sessionID, assistantMessageID: "msg_summary", delta: "internal summary" },
+  })
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, {
+    type: "session.next.step.ended",
+    properties: { sessionID: binding.sessionID, assistantMessageID: "msg_summary", finish: "stop" },
+  })
+  assert.deepEqual(rendered, [])
+  assert.deepEqual(mirrored, ["msg_summary"])
+  assert.equal(promptQueue.status(binding).length, 1)
+
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, {
+    type: "session.status",
+    properties: { sessionID: binding.sessionID, status: { type: "idle" } },
+  })
+  assert.deepEqual(sent, ["queued after compact"])
 }
 
 async function smokeQueueDrainsOnSessionIdle() {

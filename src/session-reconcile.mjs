@@ -28,6 +28,7 @@ export function createSessionReconciler({
   const incompleteChecks = new Map()
   const incompleteNotifications = new Set()
   const latestUserMessages = new Map()
+  const manualCompactions = new Set()
   const reconcileTimers = new Map()
 
   function activeBinding(binding) {
@@ -38,7 +39,7 @@ export function createSessionReconciler({
   }
 
   function handleOpenCodeEvent(server, event) {
-    const sessionID = event.properties?.sessionID
+    const sessionID = eventSessionID(event.properties)
     if (!sessionID) return Promise.resolve()
     return runAfterFlight(
       bindingOperations,
@@ -50,7 +51,7 @@ export function createSessionReconciler({
   async function handleOpenCodeEventNow(server, event) {
     const startedAt = Date.now()
     const properties = event.properties || {}
-    const sessionID = properties.sessionID
+    const sessionID = eventSessionID(properties)
     if (!sessionID) return
 
     if (event.type === "question.replied" || event.type === "question.rejected") {
@@ -69,6 +70,12 @@ export function createSessionReconciler({
       if (!binding) binding = await createTopicForWebSession(server.id, sessionID, properties.questions?.[0]?.question || "OpenCodez question")
     }
     if (!binding || binding.disabled) return
+    const key = bindingKey(binding)
+    if (isManualCompactionPart(properties.part)) {
+      manualCompactions.add(key)
+      logInfo("compact.detected", { source: server.id, sessionID, topicId: binding.topicId })
+    }
+    const manualCompaction = manualCompactions.has(key)
     const userMessage = event.type === "message.updated" && properties.info?.role === "user"
     const newUserRun = userMessage && startRun(binding, properties.info.id)
     if (event.type === "session.next.prompted" || newUserRun) {
@@ -112,12 +119,24 @@ export function createSessionReconciler({
           await questionManager?.handleEvent(server, binding, event)
           break
         case "session.next.text.delta":
+          if (manualCompaction) break
           await renderer.textDelta(binding, properties)
           break
         case "session.next.text.ended":
+          if (manualCompaction) break
           await renderer.textEnded(binding, properties)
           break
         case "session.next.step.ended":
+          if (manualCompaction) {
+            await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
+            if (properties.finish === "stop") {
+              manualCompactions.delete(key)
+              clearRunCheck(binding)
+              await promptQueue.markTerminalMirrored(binding)
+            }
+            break
+          }
+          if (state.isAssistantMirrored?.(server.id, sessionID, properties.assistantMessageID)) break
           if (properties.finish === "stop") {
             if (state.isAssistantMirrored(server.id, sessionID, properties.assistantMessageID)) {
               clearRunCheck(binding)
@@ -131,33 +150,53 @@ export function createSessionReconciler({
           }
           break
         case "session.status":
-          if (properties.status?.type === "idle") await handleSessionIdle(server, binding)
+          if (properties.status?.type === "idle") {
+            await handleSessionIdle(server, binding)
+            manualCompactions.delete(key)
+          }
           break
         case "session.idle":
           await handleSessionIdle(server, binding)
+          manualCompactions.delete(key)
           break
         case "session.next.step.failed":
           clearRunCheck(binding)
           await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
+          if (manualCompaction) {
+            manualCompactions.delete(key)
+            if (promptQueue.hasExpectedStop(binding)) break
+            promptQueue.markSendFailed(binding)
+            break
+          }
           if (promptQueue.hasExpectedStop(binding)) break
           await notifyRunFailed(binding, properties, promptQueue.clear(binding))
           break
         case "session.error":
           clearRunCheck(binding)
+          if (manualCompaction) {
+            manualCompactions.delete(key)
+            if (promptQueue.hasExpectedStop(binding)) break
+            promptQueue.markSendFailed(binding)
+            break
+          }
           if (promptQueue.hasExpectedStop(binding)) break
           await notifySessionError(binding, properties)
           break
         case "session.next.tool.called":
+          if (manualCompaction) break
           await renderer.toolCalled(binding, properties)
           break
         case "session.next.tool.success":
+          if (manualCompaction) break
           await renderer.toolResult(binding, properties, true)
           break
         case "session.next.tool.failed":
+          if (manualCompaction) break
           await renderer.toolResult(binding, properties, false)
           break
         case "message.part.updated":
         case "message.part.added":
+          if (manualCompaction) break
           await mirrorToolPartUpdate(binding, properties)
           break
       }
@@ -488,6 +527,12 @@ export function createSessionReconciler({
       if (info.role !== "assistant" || !info.id) continue
       if (!isCompleted(info)) continue
       if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) continue
+      if (info.summary === true) {
+        await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
+        if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding)
+        skippedAssistants += 1
+        continue
+      }
       if (shouldSkipAssistantForCatchup(usersOnlyCatchup, catchupUserSeen)) {
         await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
         skippedAssistants += 1
@@ -694,6 +739,14 @@ function isCompleted(info) {
 
 function bindingKey(binding) {
   return `${binding.serverID}:${binding.sessionID}`
+}
+
+export function isManualCompactionPart(part) {
+  return part?.type === "compaction" && part.auto === false
+}
+
+function eventSessionID(properties = {}) {
+  return properties.sessionID || properties.part?.sessionID || properties.info?.sessionID || ""
 }
 
 function latestRunOutcome(messages) {

@@ -3,7 +3,7 @@ import { AttachmentBuffer, cleanupFiles, downloadTelegramFiles } from "./attachm
 import { applyChatTemplate } from "./chat-templates.mjs"
 import { logErrorEvent, logInfo } from "./logger.mjs"
 import { MultipartPromptBuffer } from "./multipart-prompts.mjs"
-import { profileFromMessages, profileFromSession, promptPayload, titleFromText } from "./opencode.mjs"
+import { promptPayload, resolveSessionProfile, titleFromText } from "./opencode.mjs"
 import { PromptQueue } from "./prompt-queue.mjs"
 import { promptHash } from "./state.mjs"
 import { escapeHtml, topicId } from "./telegram.mjs"
@@ -338,21 +338,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
   }
 
   async function currentProfile(binding) {
-    const bindingProfile = {}
-    if (binding.agent) bindingProfile.agent = binding.agent
-    if (binding.model) bindingProfile.model = binding.model
-    if (bindingProfile.agent || bindingProfile.model) return { ...config.defaultPrompt, ...bindingProfile }
-    try {
-      const session = await opencode.getSession(binding.serverID, binding.sessionID, { directory: binding.directory })
-      const fromSession = profileFromSession(session)
-      if (fromSession.model || fromSession.agent) return { ...config.defaultPrompt, ...fromSession }
-    } catch {}
-    try {
-      const messages = await opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory })
-      const fromMessages = profileFromMessages(messages)
-      if (fromMessages.model || fromMessages.agent) return { ...config.defaultPrompt, ...fromMessages }
-    } catch {}
-    return config.defaultPrompt
+    return resolveSessionProfile({ opencode, binding, defaultProfile: config.defaultPrompt })
   }
 
   async function pinTelegramPromptMessage(binding, sourceMessageId, origin, fields = {}) {

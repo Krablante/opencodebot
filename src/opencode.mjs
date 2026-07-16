@@ -71,6 +71,20 @@ export class OpenCodeClient {
     return statuses?.[sessionID] || { type: "idle" }
   }
 
+  async summarizeSession(serverID, sessionID, { directory = "", model, timeoutMs = 15 * 60_000 } = {}) {
+    if (!model?.providerID || !model?.modelID) throw new Error("OpenCode session compaction requires providerID and modelID")
+    return this.request(this.server(serverID), `/session/${encodeURIComponent(sessionID)}/summarize`, {
+      method: "POST",
+      directory,
+      timeoutMs,
+      body: {
+        providerID: model.providerID,
+        modelID: model.modelID,
+        auto: false,
+      },
+    })
+  }
+
   async waitForSessionIdle(serverID, sessionID, options = {}) {
     const timeoutMs = options.timeoutMs || 30_000
     const intervalMs = options.intervalMs || 400
@@ -265,6 +279,26 @@ export function profileFromMessages(messages) {
     }
   }
   return {}
+}
+
+export async function resolveSessionProfile({ opencode, binding, defaultProfile = {}, messages }) {
+  const bindingProfile = {}
+  if (binding.agent) bindingProfile.agent = binding.agent
+  if (binding.model) bindingProfile.model = binding.model
+  if (bindingProfile.model || bindingProfile.agent) return { ...defaultProfile, ...bindingProfile }
+
+  try {
+    const session = await opencode.getSession(binding.serverID, binding.sessionID, { directory: binding.directory })
+    const fromSession = profileFromSession(session)
+    if (fromSession.model || fromSession.agent) return { ...defaultProfile, ...fromSession }
+  } catch {}
+
+  try {
+    const history = messages || await opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory })
+    const fromMessages = profileFromMessages(history)
+    if (fromMessages.model || fromMessages.agent) return { ...defaultProfile, ...fromMessages }
+  } catch {}
+  return { ...defaultProfile }
 }
 
 export function textFromPrompt(prompt) {
