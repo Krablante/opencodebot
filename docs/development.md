@@ -56,7 +56,7 @@ npm run smoke:live
 
 ## Service
 
-When runtime code changes on the live host, rebuild/restart and check logs with Compose:
+Every completed Politia `opencodebot` change must finish with a live Compose rebuild/restart and verification; a successful commit and push do not replace this rollout step. Rebuild/restart and check logs with Compose:
 
 ```bash
 docker compose up -d --build opencodebot
