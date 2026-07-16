@@ -57,6 +57,19 @@ Run the same command in a different topic whenever the artifact inbox should mov
 
 The artifacts topic also works as a small file dropbox. When a user attaches a file there, the bot saves it to the configured artifact upload root on a target OpenCodez server and replies with the absolute saved path in a blockquote. An empty caption uses the configured default server. A caption whose first word is a server id saves to that server. If the server id is unknown, the bot reports the unknown id and does not download the file.
 
+Optional comma-separated names after the server id rename uploaded files by position:
+
+```text
+<server> <name1>, <name2>, <name3>
+```
+
+- One name applies only to the first file.
+- If a requested name contains a dot, it is treated as an exact filename. Otherwise the complete source suffix beginning with its first dot is inherited: `photo` for `filephoto.png` becomes `photo.png`, while `backup` for `archive.tar.gz` becomes `backup.tar.gz`.
+- Fewer names than files leave the remaining filenames unchanged. Extra names are ignored.
+- An empty comma position leaves that file unchanged, so `nuc first, , third` preserves the second filename.
+- Telegram media groups are collected before names are applied, so the caption on an album maps across the files in their Telegram order.
+- Commas delimit names and therefore cannot be part of a requested filename. All final names still pass through the normal filename sanitizer; caption values never create subdirectories.
+
 Files are saved under `artifactUploads.root`, then a daily `YYYY-MM-DD` folder, then a sanitized filename. The default root is `~/trash`, expanded from the target server's `home`, so Linux/macOS and Windows hosts can use the same config shape. A server can override the root with `artifactUploadRoot` in `servers.json`.
 
 Docker deployments must also make that folder writable from inside the bot container. For a local Linux/macOS server, mount the same host folder to the same container path with `OPENCODEBOT_ARTIFACT_UPLOAD_SOURCE` and `OPENCODEBOT_ARTIFACT_UPLOAD_ROOT`. For Windows server paths such as `C:\Users\Alice\trash`, prefer SSH transfer or running the bot directly on Windows unless you have deliberately mapped the Windows folder to a writable container path. The detailed Docker path matrix is in [Docker](docker.md#artifact-dropbox-paths).
@@ -67,6 +80,15 @@ Cloud Bot API deployments still have Telegram's cloud download limit. Local Bot 
 caption: dima
 
 <blockquote>/home/dima/trash/2026-07-02/report.pdf</blockquote>
+```
+
+```text
+files: filephoto.png, archive.tar.gz, untouched.pdf
+caption: nuc photo, backup
+
+<blockquote>/home/bloob/trash/2026-07-02/photo.png
+/home/bloob/trash/2026-07-02/backup.tar.gz
+/home/bloob/trash/2026-07-02/untouched.pdf</blockquote>
 ```
 
 ```text

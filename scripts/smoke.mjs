@@ -1,11 +1,19 @@
 import assert from "node:assert/strict"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-import { artifactTargetPath, handleArtifactUploadMessage, resolveUploadTarget } from "../src/artifact-uploads.mjs"
+import {
+  applyArtifactUploadFilenames,
+  artifactTargetPath,
+  artifactUploadFilename,
+  formatArtifactUploadHelp,
+  handleArtifactUploadMessage,
+  parseArtifactUploadCaption,
+  resolveUploadTarget,
+} from "../src/artifact-uploads.mjs"
 import { AttachmentBuffer } from "../src/attachments.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "../src/commands.mjs"
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
@@ -730,6 +738,41 @@ async function smokeArtifactDropbox() {
     assert.equal(resolveUploadTarget({ caption: "winbox", uploadConfig: artifactUploads, opencode }).server.id, "winbox")
     assert.equal(resolveUploadTarget({ caption: "missing", uploadConfig: artifactUploads, opencode }).error, "unknown_server")
 
+    assert.deepEqual(parseArtifactUploadCaption("nuc photo1.png, photo2, , photo4.png"), {
+      serverId: "nuc",
+      requestedFilenames: ["photo1.png", "photo2", "", "photo4.png"],
+    })
+    assert.deepEqual(parseArtifactUploadCaption("nuc"), { serverId: "nuc", requestedFilenames: [] })
+    assert.equal(artifactUploadFilename({ originalFilename: "filephoto.png", requestedFilename: "photo" }), "photo.png")
+    assert.equal(artifactUploadFilename({ originalFilename: "filephoto.png", requestedFilename: "photo.png" }), "photo.png")
+    assert.equal(artifactUploadFilename({ originalFilename: "archive.tar.gz", requestedFilename: "backup" }), "backup.tar.gz")
+    assert.equal(artifactUploadFilename({ originalFilename: "archive.tar.gz", requestedFilename: "backup.zip" }), "backup.zip")
+    assert.deepEqual(
+      applyArtifactUploadFilenames(
+        [
+          { filename: "filephoto.png" },
+          { filename: "scan.jpg" },
+          { filename: "document.pdf" },
+          { filename: "image.webp" },
+          { filename: "last.gif" },
+        ],
+        ["photo1.png", "photo2", "photo3", "photo4.png"],
+      ).map((file) => file.filename),
+      ["photo1.png", "photo2.jpg", "photo3.pdf", "photo4.png", "last.gif"],
+    )
+    assert.deepEqual(
+      applyArtifactUploadFilenames(
+        [{ filename: "one.png" }, { filename: "two.jpg" }, { filename: "three.webp" }],
+        ["first", "", "third", "ignored"],
+      ).map((file) => file.filename),
+      ["first.png", "two.jpg", "third.webp"],
+    )
+    assert.deepEqual(
+      resolveUploadTarget({ caption: "winbox photo1, photo2.png", uploadConfig: artifactUploads, opencode }).requestedFilenames,
+      ["photo1", "photo2.png"],
+    )
+    assert.match(formatArtifactUploadHelp({ defaultServerId: "nuc", availableServerIds: ["nuc", "ser"] }), /nuc photo1, photo2\.png/)
+
     const day = new Date(2026, 6, 2)
     assert.equal(
       artifactTargetPath({ config: dropboxConfig, server: posixServer, filename: "notes.txt", now: day }),
@@ -761,6 +804,29 @@ async function smokeArtifactDropbox() {
     assert.equal(unknown.status, "unknown_server")
     assert.equal(downloadCalls, 0)
     assert.match(sent.at(-1).text, /Unknown artifact upload server/)
+
+    telegram.downloadFile = async ({ fileId, destination }) => {
+      downloadCalls += 1
+      await writeFile(destination, fileId)
+      return { file: { file_size: fileId.length } }
+    }
+    const saved = await handleArtifactUploadMessage({
+      telegram,
+      config: dropboxConfig,
+      opencode,
+      message: { chat: { id: 1 }, message_thread_id: 2, caption: "local photo, backup" },
+      files: [
+        { kind: "document", fileID: "image-body", filename: "filephoto.png", size: 10 },
+        { kind: "document", fileID: "archive-body", filename: "archive.tar.gz", size: 12 },
+        { kind: "document", fileID: "last-body", filename: "unchanged.txt", size: 9 },
+      ],
+    })
+    assert.equal(saved.status, "saved")
+    assert.equal(downloadCalls, 3)
+    const savedPaths = saved.files.map((file) => file.targetPath)
+    assert.deepEqual(savedPaths.map((filePath) => path.basename(filePath)), ["photo.png", "backup.tar.gz", "unchanged.txt"])
+    assert.equal(await readFile(savedPaths[0], "utf8"), "image-body")
+    assert.match(sent.at(-1).text, /photo\.png/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }

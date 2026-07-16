@@ -59,7 +59,13 @@ export async function handleArtifactUploadMessage({ telegram, config, opencode, 
 
   let saved
   try {
-    saved = await saveArtifactFiles({ telegram, config, server: target.server, files })
+    saved = await saveArtifactFiles({
+      telegram,
+      config,
+      server: target.server,
+      files,
+      requestedFilenames: target.requestedFilenames,
+    })
   } catch (error) {
     await replyHTML(telegram, message, `Could not save artifact upload: ${escapeHTML(error.message || String(error))}`)
     return { status: "failed", error }
@@ -70,16 +76,85 @@ export async function handleArtifactUploadMessage({ telegram, config, opencode, 
 }
 
 export function resolveUploadTarget({ caption = "", uploadConfig = {}, opencode }) {
-  const requested = firstCaptionToken(caption)
-  const serverID = requested || uploadConfig.defaultServerId || opencode?.config?.opencode?.defaultServerId || opencode?.config?.defaultPrompt?.serverID
-  if (!serverID) return { error: "no_default_server", requested: "", available: availableServerIds(opencode) }
+  const parsed = parseArtifactUploadCaption(caption)
+  const serverID = parsed.serverId || uploadConfig.defaultServerId || opencode?.config?.opencode?.defaultServerId || opencode?.config?.defaultPrompt?.serverID
+  if (!serverID) {
+    return {
+      error: "no_default_server",
+      requested: "",
+      requestedFilenames: parsed.requestedFilenames,
+      available: availableServerIds(opencode),
+    }
+  }
   let server
   try {
     server = opencode.server(serverID)
   } catch {
-    return { error: "unknown_server", requested: serverID, available: availableServerIds(opencode) }
+    return {
+      error: "unknown_server",
+      requested: serverID,
+      requestedFilenames: parsed.requestedFilenames,
+      available: availableServerIds(opencode),
+    }
   }
-  return { server, requested }
+  return { server, requested: parsed.serverId, requestedFilenames: parsed.requestedFilenames }
+}
+
+export function parseArtifactUploadCaption(caption) {
+  const value = String(caption || "").trim()
+  if (!value) return { serverId: "", requestedFilenames: [] }
+
+  const separator = value.search(/\s/)
+  if (separator === -1) return { serverId: value, requestedFilenames: [] }
+
+  const serverId = value.slice(0, separator)
+  const filenameList = value.slice(separator).trim()
+  return {
+    serverId,
+    requestedFilenames: filenameList ? filenameList.split(",").map((name) => name.trim()) : [],
+  }
+}
+
+export function applyArtifactUploadFilenames(files, requestedFilenames = []) {
+  return files.map((file, index) => {
+    const requestedFilename = requestedFilenames[index]
+    if (!requestedFilename) return file
+    return {
+      ...file,
+      filename: artifactUploadFilename({ originalFilename: file.filename, requestedFilename }),
+    }
+  })
+}
+
+export function artifactUploadFilename({ originalFilename, requestedFilename }) {
+  const original = safeFilename(originalFilename)
+  const requested = safeFilename(requestedFilename)
+  if (hasExplicitExtension(requested)) return requested
+
+  const extension = completeFilenameExtension(original)
+  if (!extension) return requested
+
+  const maximumLength = 160
+  const stemLength = Math.max(1, maximumLength - extension.length)
+  const stem = requested.slice(0, stemLength).trimEnd() || "file"
+  return `${stem}${extension}`
+}
+
+export function formatArtifactUploadHelp({ defaultServerId = "", availableServerIds = [] } = {}) {
+  const exampleServer = defaultServerId || availableServerIds[0] || "nuc"
+  const serverList = availableServerIds.length
+    ? `\nServers: <code>${escapeHTML(availableServerIds.join(", "))}</code>.`
+    : ""
+  return [
+    "📥 <b>Artifact dropbox</b>",
+    "Attach one or more files and put the destination server first in the caption.",
+    "",
+    `<code>${escapeHTML(exampleServer)}</code> — keep every original filename`,
+    `<code>${escapeHTML(exampleServer)} photo</code> — rename the first file and inherit its complete extension`,
+    `<code>${escapeHTML(exampleServer)} photo1, photo2.png</code> — rename files in order`,
+    "",
+    `Missing names leave the remaining files unchanged.${serverList}`,
+  ].join("\n")
 }
 
 export function artifactTargetPath({ config, server, filename, now = new Date() }) {
@@ -96,12 +171,13 @@ export function resolveArtifactUploadRoot({ config, server, style = pathStyleFor
   return expandHomeForServer(configured, server, style)
 }
 
-async function saveArtifactFiles({ telegram, config, server, files }) {
+async function saveArtifactFiles({ telegram, config, server, files, requestedFilenames = [] }) {
   if (!files?.length) return []
   const scratchDir = path.join(config.paths.uploadsDir || path.join(os.tmpdir(), "opencodebot-uploads"), "artifact-inbox", randomUUID())
   let downloads = []
   try {
-    downloads = await downloadTelegramFiles(telegram, uniquedFiles(files), scratchDir, config.attachments)
+    const namedFiles = applyArtifactUploadFilenames(files, requestedFilenames)
+    downloads = await downloadTelegramFiles(telegram, uniquedFiles(namedFiles), scratchDir, config.attachments)
     const saved = []
     for (const file of downloads) {
       const targetPath = artifactTargetPath({ config, server, filename: file.filename })
@@ -114,8 +190,13 @@ async function saveArtifactFiles({ telegram, config, server, files }) {
   }
 }
 
-function firstCaptionToken(caption) {
-  return String(caption || "").trim().split(/\s+/).filter(Boolean)[0] || ""
+function completeFilenameExtension(filename) {
+  const dot = filename.indexOf(".")
+  return dot === -1 ? "" : filename.slice(dot)
+}
+
+function hasExplicitExtension(filename) {
+  return filename.includes(".")
 }
 
 function availableServerIds(opencode) {
@@ -130,7 +211,7 @@ function formatTargetError(target) {
 
 function formatSavedPaths({ server, paths }) {
   const body = paths.map(escapeHTML).join("\n")
-  return `Saved to <code>${escapeHTML(server.id)}</code>:\n<blockquote>${body}</blockquote>`
+  return `✅ Saved to <code>${escapeHTML(server.id)}</code>:\n<blockquote>${body}</blockquote>`
 }
 
 function uniquedFiles(files) {

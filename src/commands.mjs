@@ -2,6 +2,7 @@ import { summarizeWords } from "./prompt-queue.mjs"
 import { escapeHtml, topicId } from "./telegram.mjs"
 import { parseResetArgs } from "./chat-templates.mjs"
 import { managedTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
+import { formatArtifactUploadHelp } from "./artifact-uploads.mjs"
 
 export const telegramBotCommands = [
   { command: "new", description: "Create a new OpenCodez session topic" },
@@ -510,6 +511,11 @@ export function createTelegramCommandHandlers({
         "This is now the only agent artifact target; any previous artifacts topic was forgotten.",
         "Web/session mirroring is disabled for this topic.",
         `Target: <code>${escapeHtml(String(target.chatId))}</code> / <code>${escapeHtml(String(target.topicId))}</code>`,
+        "",
+        formatArtifactUploadHelp({
+          defaultServerId: config.artifactUploads?.defaultServerId,
+          availableServerIds: Array.from(opencode.servers.keys()).sort(),
+        }),
       ].join("\n"),
     })
   }

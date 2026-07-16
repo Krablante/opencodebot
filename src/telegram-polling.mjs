@@ -1,5 +1,6 @@
 import { logErrorEvent, logInfo } from "./logger.mjs"
 import { isAllowedMessage, topicId } from "./telegram.mjs"
+import { formatArtifactUploadHelp } from "./artifact-uploads.mjs"
 
 export function createTelegramPolling({
   config,
@@ -119,7 +120,10 @@ export function createTelegramPolling({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: topicId(message),
-        text: "This topic is reserved for artifacts and file dropbox uploads. Text here is not mirrored to OpenCodez.",
+        text: formatArtifactUploadHelp({
+          defaultServerId: config.artifactUploads?.defaultServerId,
+          availableServerIds: (config.opencode?.servers || []).map((server) => server.id).sort(),
+        }),
       })
       return
     }
