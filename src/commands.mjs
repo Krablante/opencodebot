@@ -412,7 +412,17 @@ export function createTelegramCommandHandlers({
     }
 
     const topic = state.topicRecord(message.chat.id, currentTopicId) || binding
-    const profile = requested.chatTemplateName ? requested : bindingToTemplate(binding)
+    let profile
+    try {
+      profile = resolveResetProfile(requested, binding, config.chatTemplates)
+    } catch (error) {
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: currentTopicId,
+        text: `⚠️ <b>Reset needs a profile</b>\n${escapeHtml(error.message)}`,
+      })
+      return
+    }
     const targetServerID = requested.serverID || binding.serverID
     const serverChanged = targetServerID !== binding.serverID
     const targetDirectory = serverChanged ? opencode.defaultNewSessionDirectory(targetServerID) : binding.directory
@@ -797,6 +807,24 @@ export function createTelegramCommandHandlers({
     const lines = items.map((item) => `${item.index}. <code>${escapeHtml(item.summary)}</code>`)
     await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: `Queued prompts:\n${lines.join("\n")}` })
   }
+}
+
+function resolveResetProfile(requested, binding, chatTemplates = {}) {
+  if (requested.chatTemplateName) return requested
+
+  const chatTemplateName = binding.chatTemplateName || null
+  if (!chatTemplateName) return { chatTemplateName: null, chatTemplate: null }
+
+  const chatTemplate = chatTemplates[chatTemplateName]
+  if (!chatTemplate) {
+    const available = Object.keys(chatTemplates).join(", ") || "none configured"
+    throw new Error(
+      `Current profile is no longer configured: ${chatTemplateName}. ` +
+        `Choose one with /reset PROFILE [SERVER]. Available profiles: ${available}`,
+    )
+  }
+
+  return { chatTemplateName, chatTemplate }
 }
 
 function sessionWebUrl(server, sessionID, session) {

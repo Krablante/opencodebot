@@ -1187,9 +1187,21 @@ async function smokeResetCommand() {
     assert.equal(state.findBinding("nuc", "ses_reset_old").disabled, undefined)
     assert.match(sent.at(-1).text, /Unknown reset profile or server: unknown/)
 
+    state.findBinding("nuc", "ses_reset_old").chatTemplateName = "retired"
+    await handlers.handle(
+      { chat: { id: 123 }, message_thread_id: 456, message_id: 788 },
+      { name: "reset", args: "" },
+      "123:456",
+    )
+    assert.deepEqual(steps, [])
+    assert.equal(state.findBinding("nuc", "ses_reset_old").disabled, undefined)
+    assert.match(sent.at(-1).text, /Reset needs a profile/)
+    assert.match(sent.at(-1).text, /Current profile is no longer configured: retired/)
+    state.findBinding("nuc", "ses_reset_old").chatTemplateName = "gpt"
+
     const handled = await handlers.handle(
       { chat: { id: 123 }, message_thread_id: 456, message_id: 789 },
-      { name: "reset", args: "sol" },
+      { name: "reset", args: "" },
       "123:456",
     )
     assert.equal(handled, true)
@@ -1197,15 +1209,15 @@ async function smokeResetCommand() {
     assert.equal(state.findBinding("nuc", "ses_reset_old"), undefined)
     assert.equal(state.findAnyBindingByTopic(123, 456).disabledReason, "topic-reset")
     assert.equal(state.pendingTopic(456).directory, binding.directory)
-    assert.equal(state.pendingTopic(456).chatTemplateName, "sol")
-    assert.deepEqual(state.pendingTopic(456).chatTemplate, chatTemplates.sol)
+    assert.equal(state.pendingTopic(456).chatTemplateName, "gpt")
+    assert.deepEqual(state.pendingTopic(456).chatTemplate, chatTemplates.gpt)
     assert.equal(state.pendingTopic(456).title, preservedTopicTitle)
     assert.equal(state.pendingTopic(456).topicBaseTitle, preservedTopicTitle)
     assert.equal(state.pendingTopic(456).topicTitle, `${preservedTopicTitle} (nuc)`)
     assert.equal(state.pendingTopic(456).titleSource, "user")
     assert.equal(promptQueue.status(binding).length, 0)
     assert.match(sent.at(-1).text, /Fresh session ready/)
-    assert.match(sent.at(-1).text, /Profile: <code>sol<\/code>/)
+    assert.match(sent.at(-1).text, /Profile: <code>gpt<\/code>/)
     assert.match(sent.at(-1).text, /Server: <code>nuc<\/code>/)
     assert.match(sent.at(-1).text, /Directory: <code>\/tmp\/work<\/code>/)
     assert.match(sent.at(-1).text, /Topic: Current visible topic \(nuc\)/)
@@ -1217,7 +1229,7 @@ async function smokeResetCommand() {
       { name: "session", args: "" },
       "123:456",
     )
-    assert.match(sent.at(-1).text, /profile: <code>sol<\/code>/)
+    assert.match(sent.at(-1).text, /profile: <code>gpt<\/code>/)
 
     steps.length = 0
     await handlers.handle(
