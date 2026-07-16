@@ -80,6 +80,7 @@ async function smokeLocalInvariants() {
   await smokeOpenCodeSummarizeClient()
   await smokeQueueDrainsOnSessionIdle()
   await smokeIncompleteRunNotice()
+  await smokePeriodicIncompleteRunGrace()
 }
 
 function smokeNestedRichListNormalization() {
@@ -2079,6 +2080,105 @@ async function smokeIncompleteRunNotice() {
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.idle", properties: { sessionID: binding.sessionID } })
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(notices.length, 2)
+}
+
+async function smokePeriodicIncompleteRunGrace() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-periodic-incomplete-"))
+  try {
+    const state = new StateStore(path.join(root, "state.json"))
+    await state.load()
+    const server = { id: "dima", url: "http://opencode.test", directory: "/work" }
+    const binding = {
+      serverID: server.id,
+      sessionID: "session-race",
+      chatId: 123,
+      topicId: 456,
+      directory: server.directory,
+      title: "Race",
+      createdAt: new Date().toISOString(),
+      lastActive: new Date().toISOString(),
+      reconcileAfter: new Date(Date.now() - 60_000).toISOString(),
+      reconcileUntil: new Date(Date.now() + 60_000).toISOString(),
+    }
+    await state.bindTopic(binding)
+    await state.markUserMirrored(server.id, binding.sessionID, "user-race")
+    await state.markAssistantMirrored(server.id, binding.sessionID, "assistant-race")
+
+    const user = {
+      info: { id: "user-race", role: "user", time: { created: Date.now() - 2_000 } },
+      parts: [{ type: "text", text: "finish the work" }],
+    }
+    const staleAssistant = {
+      info: { id: "assistant-race", role: "assistant", parentID: user.info.id, time: { created: Date.now() - 1_000 } },
+      parts: [{ type: "text", text: "Done." }],
+    }
+    const finalAssistant = {
+      ...staleAssistant,
+      info: { ...staleAssistant.info, finish: "stop", time: { ...staleAssistant.info.time, completed: Date.now() } },
+    }
+    let stopped = false
+    const deadline = Date.now() + 500
+    let messageCalls = 0
+    let terminalMirrored = 0
+    const notices = []
+    const opencode = {
+      listSessions: async () => [],
+      messages: async () => {
+        messageCalls += 1
+        if (messageCalls === 1) {
+          stopped = true
+          return [user, staleAssistant]
+        }
+        return [user, finalAssistant]
+      },
+      request: async () => ({ [binding.sessionID]: { type: "idle" } }),
+      server: () => server,
+    }
+    const promptQueue = {
+      status: () => ({ queued: 0 }),
+      hasExpectedStop: () => false,
+      markBackendIdle: async () => ({ status: "idle" }),
+      markTerminalMirrored: async () => {
+        terminalMirrored += 1
+      },
+      clearExpectedStop: () => {},
+      flushIfPossible: async () => {},
+      clear: async () => [],
+    }
+    const reconciler = createSessionReconciler({
+      config: {
+        opencode: { servers: [server] },
+        telegram: { autocreateTopics: false },
+        reconcile: { enabled: true, startupSeed: false, intervalMs: 1, lookbackMs: 60_000 },
+      },
+      state,
+      telegram: { sendMessage: async (payload) => notices.push(payload) },
+      opencode,
+      renderer: {},
+      promptQueue,
+      questionManager: null,
+      backendRequest: async (_serverID, _operation, request) => request(),
+      skippedBackendRequest: Symbol("skipped"),
+      createTopicForSession: async () => {},
+      createTopicForWebSession: async () => {},
+      isInternalSession: () => false,
+      activateBindingForPrompt: async () => {},
+      maybeExtendBindingActivity: async () => {},
+      logError: (error) => assert.fail(error),
+      shouldStop: () => stopped || Date.now() >= deadline,
+      incompleteRunGraceMs: 1,
+    })
+
+    await reconciler.reconcileLoop()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    assert.equal(messageCalls >= 2, true)
+    assert.deepEqual(notices, [])
+    assert.equal(state.data.incompleteRunHistory.length, 0)
+    assert.equal(terminalMirrored >= 1, true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 }
 
 async function smokeOpenCodeAbortClient() {

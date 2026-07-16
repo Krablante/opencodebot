@@ -252,13 +252,14 @@ export function createSessionReconciler({
     incompleteChecks.delete(key)
   }
 
-  function scheduleIncompleteRunCheck(server, binding, { expectedStop = false } = {}) {
+  function scheduleIncompleteRunCheck(server, binding, { expectedStop = false, source } = {}) {
     const key = bindingKey(binding)
     const existing = incompleteChecks.get(key)
     if (existing) clearTimeout(existing)
+    const verificationSource = source || (expectedStop ? "expected-stop" : "idle")
     const timer = setTimeout(() => {
       incompleteChecks.delete(key)
-      verifyRunOutcome(server, binding, { expectedStop, source: expectedStop ? "expected-stop" : "idle" }).catch((error) => logError(error))
+      verifyRunOutcome(server, binding, { expectedStop, source: verificationSource }).catch((error) => logError(error))
     }, incompleteRunGraceMs)
     timer.unref?.()
     incompleteChecks.set(key, timer)
@@ -287,6 +288,10 @@ export function createSessionReconciler({
     const outcome = latestRunOutcome(history)
     if (!outcome) {
       clearRunCheck(binding)
+      return
+    }
+    if (!outcome.complete && messages && !expectedStop) {
+      scheduleIncompleteRunCheck(server, binding, { source })
       return
     }
     if (outcome.finalAnswer) await repairLatestFinalNotification(binding, history)
