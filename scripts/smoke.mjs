@@ -14,7 +14,7 @@ import {
   parseArtifactUploadCaption,
   resolveUploadTarget,
 } from "../src/artifact-uploads.mjs"
-import { AttachmentBuffer } from "../src/attachments.mjs"
+import { AttachmentBuffer, extractTelegramFiles } from "../src/attachments.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "../src/commands.mjs"
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { createFinalNotifier, finalNotificationMarkdown, finalNotificationTopicSource, formatDebugDiagnosticsText, formatDuration, formatTokenCount, runDiagnosticsBeforeAssistant, toolSummaryBeforeAssistant, turnMetadataBeforeAssistant, turnTokenUsageBeforeAssistant } from "../src/final-notifications.mjs"
@@ -29,6 +29,8 @@ import { GroqSpeechClient } from "../src/speech/groq-client.mjs"
 import { OpenRouterSpeechClient, audioFormat } from "../src/speech/openrouter-client.mjs"
 import { StateStore } from "../src/state.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
+import { normalizeTelegramRichMessage } from "../src/telegram-rich-message.mjs"
+import { createTelegramPolling } from "../src/telegram-polling.mjs"
 import { createTopicLifecycle } from "../src/topic-lifecycle.mjs"
 import { OpencodebotArtifactsPlugin } from "../plugins/opencodebot-artifacts/src/index.js"
 
@@ -44,6 +46,8 @@ async function smokeLocalInvariants() {
   smokeConfigExample()
   smokeSyntheticTextFilter()
   smokeNestedRichListNormalization()
+  smokeIncomingRichMessages()
+  await smokeIncomingRichPolling()
   await smokeArtifactDropbox()
   await smokeArtifactPluginBatchCaptions()
   await smokeSpeechOpenRouterRequest()
@@ -81,6 +85,145 @@ async function smokeLocalInvariants() {
   await smokeQueueDrainsOnSessionIdle()
   await smokeIncompleteRunNotice()
   await smokePeriodicIncompleteRunGrace()
+}
+
+function smokeIncomingRichMessages() {
+  const richMessage = {
+    blocks: [
+      { type: "heading", size: 2, text: { type: "plain", text: "Plan" } },
+      {
+        type: "paragraph",
+        text: {
+          type: "concat",
+          texts: [
+            { type: "plain", text: "Read " },
+            { type: "bold", text: { type: "plain", text: "the docs" } },
+            { type: "plain", text: " at " },
+            { type: "url", text: { type: "plain", text: "this link" }, url: "https://example.com/docs" },
+          ],
+        },
+      },
+      {
+        type: "list",
+        items: [
+          { label: "-", blocks: [{ type: "paragraph", text: { type: "plain", text: "first" } }] },
+          { label: "-", has_checkbox: true, is_checked: true, blocks: [{ type: "paragraph", text: { type: "plain", text: "second" } }] },
+        ],
+      },
+      { type: "pre", language: "js", text: { type: "plain", text: "console.log('ok')" } },
+      {
+        type: "details",
+        summary: { type: "plain", text: "More" },
+        blocks: [{ type: "paragraph", text: { type: "plain", text: "details body" } }],
+      },
+      {
+        type: "table",
+        caption: { type: "plain", text: "Values" },
+        cells: [
+          [{ text: { type: "plain", text: "A" } }, { text: { type: "plain", text: "B" } }],
+          [{ text: { type: "plain", text: "1" } }, { text: { type: "plain", text: "2" } }],
+        ],
+      },
+      {
+        type: "collage",
+        items: [
+          {
+            type: "photo",
+            photo: [
+              { file_id: "small-1", file_unique_id: "photo-1-small", width: 100, height: 100 },
+              { file_id: "large-1", file_unique_id: "photo-1", width: 1200, height: 800, file_size: 1000 },
+            ],
+            caption: { text: { type: "plain", text: "first image" } },
+          },
+          {
+            type: "photo",
+            photo: [{ file_id: "large-2", file_unique_id: "photo-2", width: 900, height: 900, file_size: 2000 }],
+          },
+        ],
+      },
+    ],
+  }
+  const normalized = normalizeTelegramRichMessage(richMessage)
+  assert.match(normalized.text, /^## Plan/)
+  assert.match(normalized.text, /the docs/)
+  assert.match(normalized.text, /this link \(https:\/\/example\.com\/docs\)/)
+  assert.match(normalized.text, /- \[x\] second/)
+  assert.match(normalized.text, /```js\nconsole\.log\('ok'\)\n```/)
+  assert.match(normalized.text, /More\n\ndetails body/)
+  assert.match(normalized.text, /Values\nA \| B\n1 \| 2/)
+  assert.match(normalized.text, /first image/)
+  assert.deepEqual(normalized.media.map((item) => item.file.file_id), ["large-1", "large-2"])
+  assert.deepEqual(normalized.unsupportedTypes, [])
+
+  const descriptors = extractTelegramFiles({ message_id: 42, rich_message: richMessage }, normalized)
+  assert.deepEqual(descriptors.map((item) => item.fileID), ["large-1", "large-2"])
+  assert.deepEqual(descriptors.map((item) => item.filename), ["rich-photo-42-1.jpg", "rich-photo-42-2.jpg"])
+
+  const unsupported = normalizeTelegramRichMessage({
+    blocks: [{ type: "video", caption: { text: { type: "plain", text: "video caption" } } }],
+  })
+  assert.equal(unsupported.text, "video caption")
+  assert.deepEqual(unsupported.unsupportedTypes, ["video"])
+}
+
+async function smokeIncomingRichPolling() {
+  const handled = []
+  let stopped = false
+  let delivered = false
+  const richMessage = {
+    message_id: 77,
+    message_thread_id: 88,
+    chat: { id: -1001 },
+    from: { id: 7 },
+    rich_message: {
+      blocks: [
+        { type: "paragraph", text: { type: "plain", text: "inspect this image" } },
+        {
+          type: "photo",
+          photo: [{ file_id: "rich-image", file_unique_id: "rich-image-unique", width: 1280, height: 720 }],
+        },
+      ],
+    },
+  }
+  const state = {
+    chatId: -1001,
+    data: { runtime: {} },
+    isArtifactsTopic: () => false,
+    isSoundsTopic: () => false,
+    async update(mutator) { mutator(this.data) },
+  }
+  const polling = createTelegramPolling({
+    config: { telegram: { allowedUserIds: [7], chatId: -1001 }, mirror: {} },
+    commands: [],
+    state,
+    telegram: {
+      async getUpdates() {
+        if (delivered) return []
+        delivered = true
+        return [{ update_id: 1, message: richMessage }]
+      },
+      async sendMessage() {},
+    },
+    commandHandlers: { async handle() { return false } },
+    handleTopicLifecycleMessage: async () => false,
+    handleAttachmentMessage: async (_message, promptKey, files, caption) => {
+      handled.push({ caption, files, promptKey })
+      stopped = true
+    },
+    extractTelegramFiles,
+    hasPendingAttachmentBatch: () => false,
+    queueTelegramPrompt: async () => {},
+    flushAttachmentText: async () => {},
+    promptContext: () => null,
+    multipartPromptKey: () => "-1001:88:7",
+    flushPromptKey: async () => {},
+    logError: (error) => { throw error },
+  })
+  await polling.poll({ shouldStop: () => stopped })
+  assert.equal(handled.length, 1)
+  assert.equal(handled[0].caption, "inspect this image")
+  assert.equal(handled[0].files[0].fileID, "rich-image")
+  assert.equal(handled[0].promptKey, "-1001:88:7")
 }
 
 function smokeNestedRichListNormalization() {

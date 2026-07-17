@@ -1,6 +1,7 @@
 import { logErrorEvent, logInfo } from "./logger.mjs"
-import { isAllowedMessage, topicId } from "./telegram.mjs"
+import { isAllowedMessage, messageText, topicId } from "./telegram.mjs"
 import { formatArtifactUploadHelp } from "./artifact-uploads.mjs"
+import { normalizeTelegramRichMessage } from "./telegram-rich-message.mjs"
 
 export function createTelegramPolling({
   config,
@@ -88,9 +89,18 @@ export function createTelegramPolling({
     if (configuredChatId && String(configuredChatId) !== String(message.chat.id)) return
     if (configuredChatId && (await handleTopicLifecycleMessage(message))) return
     if (!isAllowedMessage(message, config)) return
-    const text = String(message.text || "").trim()
-    const caption = String(message.caption || "").trim()
-    const files = extractTelegramFiles(message)
+    const richContent = normalizeTelegramRichMessage(message.rich_message)
+    const text = String(messageText(message, richContent)).trim()
+    const caption = String(message.caption || richContent.text || "").trim()
+    const files = extractTelegramFiles(message, richContent)
+    if (message.rich_message) {
+      logInfo("telegram.rich_message.received", {
+        blockTypes: richContent.blockTypes,
+        files: files.length,
+        textChars: richContent.text.length,
+        unsupportedTypes: richContent.unsupportedTypes,
+      })
+    }
 
     if (!configuredChatId && config.telegram.allowChatBootstrap) {
       await state.setChatId(message.chat.id)
@@ -148,7 +158,16 @@ export function createTelegramPolling({
       await handleAttachmentMessage(message, promptKey, files, caption)
       return
     }
-    if (!text) return
+    if (!text) {
+      if (message.rich_message) {
+        await telegram.sendMessage({
+          chatId: message.chat.id,
+          topicId: topicId(message),
+          text: "⚠️ I couldn't read this Rich Message yet.\nPlease resend it as plain text or attach the images separately.",
+        })
+      }
+      return
+    }
     if (hasPendingAttachmentBatch(promptKey) && !text.startsWith("/")) {
       await flushAttachmentText(message, promptKey, text)
       return

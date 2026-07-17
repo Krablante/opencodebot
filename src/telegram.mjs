@@ -319,8 +319,8 @@ export function isAllowedMessage(message, config) {
   return Number.isSafeInteger(fromID) && config.telegram.allowedUserIds.includes(fromID)
 }
 
-export function messageText(message) {
-  return message?.text || message?.caption || ""
+export function messageText(message, richContent) {
+  return message?.text || message?.caption || richContent?.text || ""
 }
 
 export function topicId(message) {

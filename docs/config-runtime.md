@@ -66,7 +66,7 @@ To leave local mode, run `docker compose exec -T opencodebot npm run telegram-lo
 
 `attachments` is top-level config. It controls whether Telegram files are accepted and the accepted inline, per-file, and per-message totals. Cloud Bot API mode clamps each file to Telegram's conservative cloud download limit. Local Bot API mode can use larger per-file values, up to the local Bot API file limit.
 
-When files arrive without captions, the bot waits for plain text from the same user/topic before sending the prompt to OpenCodez. If Telegram splits a large follow-up text into several messages, the bot keeps collecting those chunks until the short attachment-text idle window settles, then sends one prompt with all files and text chunks together.
+When files arrive without captions, the bot waits for plain text from the same user/topic before sending the prompt to OpenCodez. If Telegram splits a large follow-up text into several messages, the bot keeps collecting those chunks until the short attachment-text idle window settles, then sends one prompt with all files and text chunks together. Telegram-authored Rich Messages require no additional configuration: readable block text becomes the prompt, and embedded rich photo blocks use these same attachment limits and buffering rules.
 
 Attachment policy belongs at top-level `attachments`; old `telegram.attachments` compatibility has been removed.
 

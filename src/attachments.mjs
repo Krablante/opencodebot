@@ -1,6 +1,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { createHash, randomUUID } from "node:crypto"
+import { normalizeTelegramRichMessage } from "./telegram-rich-message.mjs"
 
 export class AttachmentBuffer {
   constructor({ settings, uploadDir, flushPrompt, onExpire, onError = (error) => console.error(error) }) {
@@ -150,7 +151,7 @@ function mergePromptContext(current, next) {
   return next
 }
 
-export function extractTelegramFiles(message) {
+export function extractTelegramFiles(message, richContent = normalizeTelegramRichMessage(message?.rich_message)) {
   const files = []
   if (message.document) files.push(fileDescriptor(message.document, "document", message.document.file_name))
   if (Array.isArray(message.photo) && message.photo.length) {
@@ -162,7 +163,19 @@ export function extractTelegramFiles(message) {
   if (message.audio) files.push(fileDescriptor(message.audio, "audio", message.audio.file_name, message.audio.mime_type))
   if (message.voice) files.push(fileDescriptor(message.voice, "voice", `voice-${message.message_id}.ogg`, message.voice.mime_type || "audio/ogg"))
   if (message.video_note) files.push(fileDescriptor(message.video_note, "video_note", `video-note-${message.message_id}.mp4`, "video/mp4"))
-  return files.filter((file) => file.fileID)
+  for (const [index, media] of richContent.media.entries()) {
+    if (media.kind === "photo") {
+      files.push(fileDescriptor(media.file, "photo", `rich-photo-${message.message_id}-${index + 1}.jpg`, "image/jpeg"))
+    }
+  }
+  const seen = new Set()
+  return files.filter((file) => {
+    if (!file.fileID) return false
+    const key = file.fileUniqueID || file.fileID
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 export async function downloadTelegramFiles(telegram, descriptors, uploadDir, settings) {

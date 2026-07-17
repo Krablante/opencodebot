@@ -29,6 +29,7 @@ The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/eve
 - Optional local Telegram Bot API sidecar for higher file limits and streaming artifact delivery without a separate project.
 - Multipart prompt buffering for Telegram clients that split long messages.
 - Long web-origin prompts use one escaped Telegram Rich Message when they exceed the ordinary message limit; only prompts beyond the richer safe limit are numbered and split, with a lossless ordinary-message fallback.
+- Telegram-authored Rich Messages are accepted as prompts: block text is normalized into readable prompt text and embedded rich photos reuse the ordinary attachment pipeline.
 - Optional WireGuard helper for private off-LAN access to the existing OpenCodez web UI.
 
 ## Shape
