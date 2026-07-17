@@ -28,6 +28,7 @@ The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/eve
 - Optional OpenRouter and direct Groq speech transcription for one dedicated `/sounds_here` topic; voice and audio messages receive transcripts in the same topic, and a pinned model menu lets operators switch providers and STT models.
 - Optional local Telegram Bot API sidecar for higher file limits and streaming artifact delivery without a separate project.
 - Multipart prompt buffering for Telegram clients that split long messages.
+- Long web-origin prompts use one escaped Telegram Rich Message when they exceed the ordinary message limit; only prompts beyond the richer safe limit are numbered and split, with a lossless ordinary-message fallback.
 - Optional WireGuard helper for private off-LAN access to the existing OpenCodez web UI.
 
 ## Shape

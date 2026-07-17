@@ -20,7 +20,7 @@ import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { createFinalNotifier, finalNotificationMarkdown, finalNotificationTopicSource, formatDebugDiagnosticsText, formatDuration, formatTokenCount, runDiagnosticsBeforeAssistant, toolSummaryBeforeAssistant, turnMetadataBeforeAssistant, turnTokenUsageBeforeAssistant } from "../src/final-notifications.mjs"
 import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
-import { MirrorRenderer, webPromptMessages } from "../src/render.mjs"
+import { MirrorRenderer, richWebPromptMessages, webPromptMessages } from "../src/render.mjs"
 import { normalizeNestedRichLists } from "../src/rich-list-normalization.mjs"
 import { bindingSessionReconcileRefresh, createSessionReconciler, isManualCompactionPart, normalizeSessionError, shouldSkipAssistantForCatchup, shouldSyncManagedTopicTitle } from "../src/session-reconcile.mjs"
 import { normalizeSpeechConfig } from "../src/config/speech.mjs"
@@ -1752,21 +1752,63 @@ async function smokeChunkedWebPromptMirror() {
   assert.match(messages.at(-1), new RegExp(`^💬 Web prompt ${messages.length}\\/${messages.length}\\n\\n`))
   assert.ok(messages.join("\n").includes("&lt;unsafe&gt;&amp; tail"))
 
-  const sent = []
+  const plainSent = []
+  const richSent = []
   const renderer = new MirrorRenderer({
     config: { mirror: { maxTelegramChars: 240, pinUserPrompts: false } },
     telegram: {
       async sendMessage(message) {
-        const sentMessage = { ...message, message_id: sent.length + 1 }
-        sent.push(sentMessage)
+        const sentMessage = { ...message, message_id: plainSent.length + 1 }
+        plainSent.push(sentMessage)
+        return sentMessage
+      },
+      async sendRichMessage(message) {
+        const sentMessage = { ...message, message_id: 100 + richSent.length + 1 }
+        richSent.push(sentMessage)
         return sentMessage
       },
     },
   })
+  const shortReturned = await renderer.userPrompt({ chatId: 1, topicId: 2, serverID: "nuc", sessionID: "ses_short" }, "short prompt", "web")
+  assert.equal(plainSent.length, 1)
+  assert.equal(plainSent[0].text, "💬 short prompt")
+  assert.equal(richSent.length, 0)
+  assert.equal(shortReturned.message_id, 1)
+
   const returned = await renderer.userPrompt({ chatId: 1, topicId: 2, serverID: "nuc", sessionID: "ses_chunk" }, raw, "web")
-  assert.equal(sent.length, messages.length)
-  assert.deepEqual(sent.map((message) => message.text), messages)
-  assert.equal(returned.message_id, sent.length)
+  assert.equal(plainSent.length, 1)
+  assert.equal(richSent.length, 1)
+  assert.equal(richSent[0].skipEntityDetection, true)
+  assert.equal(richSent[0].html, richWebPromptMessages(raw)[0])
+  assert.equal(returned.message_id, 101)
+
+  const huge = "alpha ".repeat(7_000).trim()
+  const richStart = richSent.length
+  await renderer.userPrompt({ chatId: 1, topicId: 2, serverID: "nuc", sessionID: "ses_huge" }, huge, "web")
+  const hugeParts = richSent.slice(richStart)
+  assert.equal(hugeParts.length, 2)
+  assert.equal(hugeParts.every((part) => part.html.length <= 32_000), true)
+  assert.equal(hugeParts.map((part) => part.html.replace(/^💬 <b>Web prompt \d+\/\d+<\/b>\n\n/, "")).join(" "), huge)
+
+  const fallbackSent = []
+  let richAttempts = 0
+  const fallbackRenderer = new MirrorRenderer({
+    config: { mirror: { maxTelegramChars: 240, pinUserPrompts: false } },
+    telegram: {
+      async sendMessage(message) {
+        const sentMessage = { ...message, message_id: fallbackSent.length + 1 }
+        fallbackSent.push(sentMessage)
+        return sentMessage
+      },
+      async sendRichMessage() {
+        richAttempts += 1
+        throw new Error("Bad Request: RICH_MESSAGE_INVALID")
+      },
+    },
+  })
+  await fallbackRenderer.userPrompt({ chatId: 1, topicId: 2, serverID: "nuc", sessionID: "ses_fallback" }, raw, "web")
+  assert.equal(richAttempts, 1)
+  assert.deepEqual(fallbackSent.map((message) => message.text), messages)
 }
 
 async function smokeKillCommandAbortFailure() {

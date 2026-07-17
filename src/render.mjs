@@ -1,4 +1,4 @@
-import { clampTelegram, escapeHtml } from "./telegram.mjs"
+import { clampTelegram, escapeHtml, TELEGRAM_RICH_TEXT_MAX_CHARS } from "./telegram.mjs"
 import {
   formatToolLine,
   isHiddenTool,
@@ -32,15 +32,29 @@ export class MirrorRenderer {
   }
 
   async userPrompt(binding, text, origin = "web") {
-    const messages = webPromptMessages(text, this.config.mirror.maxTelegramChars)
+    const plainMessages = webPromptMessages(text, this.config.mirror.maxTelegramChars)
+    if (plainMessages.length === 1) return this.sendWebPromptMessages(binding, plainMessages)
+
+    const richMessages = richWebPromptMessages(text, TELEGRAM_RICH_TEXT_MAX_CHARS)
+    try {
+      return await this.sendWebPromptMessages(binding, richMessages, { rich: true })
+    } catch (error) {
+      if (!isRichMessageError(error)) throw error
+      logMirrorFlush("mirror.web_prompt.rich_fallback", binding, {
+        richParts: richMessages.length,
+        plainParts: plainMessages.length,
+      })
+      return this.sendWebPromptMessages(binding, plainMessages)
+    }
+  }
+
+  async sendWebPromptMessages(binding, messages, { rich = false } = {}) {
     let firstMessage = null
     let lastMessage = null
     for (const item of messages) {
-      const message = await this.telegram.sendMessage({
-        chatId: binding.chatId,
-        topicId: binding.topicId,
-        text: item,
-      })
+      const message = rich
+        ? await this.telegram.sendRichMessage({ chatId: binding.chatId, topicId: binding.topicId, html: item, skipEntityDetection: true })
+        : await this.telegram.sendMessage({ chatId: binding.chatId, topicId: binding.topicId, text: item })
       firstMessage ||= message
       lastMessage = message
       await this.notifyMirrorMessage(binding, message)
@@ -423,11 +437,23 @@ export class MirrorRenderer {
 }
 
 export function webPromptMessages(text, maxTelegramChars = 3900) {
+  return buildWebPromptMessages(text, maxTelegramChars, { rich: false })
+}
+
+export function richWebPromptMessages(text, maxTelegramChars = TELEGRAM_RICH_TEXT_MAX_CHARS) {
+  return buildWebPromptMessages(text, maxTelegramChars, { rich: true })
+}
+
+function buildWebPromptMessages(text, maxTelegramChars, { rich }) {
   const value = String(text ?? "")
-  const single = `💬 ${escapeHtml(value)}`
+  const singlePrefix = rich ? "💬 <b>Web prompt</b>\n\n" : "💬 "
+  const single = `${singlePrefix}${escapeHtml(value)}`
   if (single.length <= maxTelegramChars) return [single]
   const chunks = splitEscapedText(value, Math.max(1, maxTelegramChars - 120))
-  return chunks.map((chunk, index) => `💬 Web prompt ${index + 1}/${chunks.length}\n\n${escapeHtml(chunk)}`)
+  return chunks.map((chunk, index) => {
+    const title = `Web prompt ${index + 1}/${chunks.length}`
+    return rich ? `💬 <b>${title}</b>\n\n${escapeHtml(chunk)}` : `💬 ${title}\n\n${escapeHtml(chunk)}`
+  })
 }
 
 function splitEscapedText(text, maxEscapedChars) {

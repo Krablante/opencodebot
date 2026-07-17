@@ -6,6 +6,8 @@ import { Readable, Transform } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import { durationMs, logErrorEvent, logInfo, logWarn, shouldLogSlow } from "./logger.mjs"
 
+export const TELEGRAM_RICH_TEXT_MAX_CHARS = 32_000
+
 export class TelegramClient {
   constructor(token, options = {}) {
     this.token = token
@@ -345,7 +347,7 @@ export function clampTelegram(text, max = 3900) {
   return `${value.slice(0, max - 40)}\n\n...truncated in Telegram mirror...`
 }
 
-export function clampTelegramRichMarkdown(text, max = 32000) {
+export function clampTelegramRichMarkdown(text, max = TELEGRAM_RICH_TEXT_MAX_CHARS) {
   const value = String(text ?? "")
   if (value.length <= max) return value
   return `${value.slice(0, max - 48)}\n\n...truncated in Telegram rich mirror...`
