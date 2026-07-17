@@ -25,6 +25,23 @@ test("a recovered web prompt persistently ends users-only catch-up before its as
   assert.equal(harness.terminalMirrors, 1)
 })
 
+test("an already mirrored prompt also ends users-only catch-up for a long-running session", async () => {
+  const harness = createHarness()
+  harness.userMirrored.add("user-1")
+  harness.setMessages([
+    userMessage("user-1", "Keep working"),
+    assistantMessage("assistant-1", "Long-run progress"),
+  ])
+
+  await harness.reconciler.reconcileBinding(harness.binding)
+
+  assert.deepEqual(harness.renderedUsers, [])
+  assert.deepEqual(harness.renderedAssistants, ["Long-run progress"])
+  assert.equal(harness.activationReasons.at(-1), "reconcile-user-prompt")
+  assert.equal(harness.binding.reconcileUsersOnlyUntil, undefined)
+  assert.equal(harness.assistantMirrored.has("assistant-1"), true)
+})
+
 test("historical assistants stay muted until a recovered web prompt is mirrored", async () => {
   const harness = createHarness()
   harness.setMessages([

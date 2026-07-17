@@ -515,6 +515,16 @@ export function createSessionReconciler({
       if (!messageInReconcileWindow(info, window)) continue
       if (info.role === "user") {
         const text = textFromStoredMessage(message)
+        if (info.id && state.isUserMirrored(binding.serverID, binding.sessionID, info.id)) {
+          if (usersOnlyCatchup && !catchupUserSeen) {
+            await activateBindingForPrompt(binding, "reconcile-user-prompt")
+            binding = activeBinding(binding)
+            if (!binding) return undefined
+            usersOnlyCatchup = false
+            catchupUserSeen = true
+          }
+          continue
+        }
         if (info.id && !state.isUserMirrored(binding.serverID, binding.sessionID, info.id)) {
           if (!text) {
             await state.markUserMirrored(binding.serverID, binding.sessionID, info.id)
