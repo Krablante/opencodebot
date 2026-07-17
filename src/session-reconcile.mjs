@@ -303,7 +303,7 @@ export function createSessionReconciler({
       scheduleReconcile(binding, 500)
       return
     }
-    await renderer.messageUpdated(binding, message)
+    await renderer.assistantMessage(binding, message)
   }
 
   async function mirrorTargetedUserMessage(binding, message) {

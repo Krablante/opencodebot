@@ -261,6 +261,28 @@ test("a stable message event uses the exact message endpoint before page fallbac
   assert.deepEqual(harness.renderedUsers, ["Web prompt"])
 })
 
+test("a completed assistant event uses the exact message renderer", async () => {
+  const harness = createHarness({ targetedMessage: assistantMessage("assistant-exact", "Exact answer"), usersOnly: false })
+
+  await harness.reconciler.handleOpenCodeEvent({ id: "dima" }, {
+    type: "message.updated",
+    properties: {
+      info: {
+        id: "assistant-exact",
+        sessionID: "session-1",
+        role: "assistant",
+        time: { created: Date.now() - 1, completed: Date.now() },
+      },
+    },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 200))
+
+  assert.equal(harness.messageCalls, 1)
+  assert.equal(harness.pageCalls, 0)
+  assert.equal(harness.renderedAssistants.length, 1)
+  assert.equal(harness.renderedAssistants[0].info.id, "assistant-exact")
+})
+
 function createHarness({ cursor, pages, targetedMessage, usersOnly = true, watchdog = false } = {}) {
   const now = Date.now()
   const binding = {
