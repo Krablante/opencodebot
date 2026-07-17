@@ -28,7 +28,28 @@ export class OpenCodeClient {
   }
 
   async messages(serverID, sessionID, options = {}) {
-    return this.request(this.server(serverID), `/session/${encodeURIComponent(sessionID)}/message`, options)
+    return this.request(this.server(serverID), `/session/${encodeURIComponent(sessionID)}/message`, {
+      ...options,
+      query: {
+        ...(options.limit ? { limit: options.limit } : {}),
+        ...(options.before ? { before: options.before } : {}),
+      },
+    })
+  }
+
+  async messagePage(serverID, sessionID, options = {}) {
+    const result = await this.request(this.server(serverID), `/session/${encodeURIComponent(sessionID)}/message`, {
+      ...options,
+      includeHeaders: true,
+      query: {
+        limit: options.limit || 20,
+        ...(options.before ? { before: options.before } : {}),
+      },
+    })
+    return {
+      messages: result.data || [],
+      before: nextBeforeCursor(result.headers.get("link")),
+    }
   }
 
   async questions(serverID, options = {}) {
@@ -137,11 +158,12 @@ export class OpenCodeClient {
       const text = await response.text().catch(() => "")
       throw new Error(`OpenCodez ${server.id} ${pathname} failed: ${response.status} ${text.slice(0, 200)}`)
     }
-    if (response.status === 204) return null
+    if (response.status === 204) return options.includeHeaders ? { data: null, headers: response.headers } : null
     const contentType = response.headers.get("content-type") || ""
-    if (contentType.includes("application/json")) return response.json()
-    const text = await response.text()
-    return text ? JSON.parse(text) : null
+    const data = contentType.includes("application/json")
+      ? await response.json()
+      : await response.text().then((text) => text ? JSON.parse(text) : null)
+    return options.includeHeaders ? { data, headers: response.headers } : data
   }
 
   async subscribeEvents(serverID, onEvent, signal) {
@@ -185,6 +207,9 @@ export class OpenCodeClient {
     if (directory) {
       url.searchParams.set("directory", directory)
     }
+    for (const [key, value] of Object.entries(options.query || {})) {
+      if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value))
+    }
     return url
   }
 
@@ -211,6 +236,17 @@ function cleanDirectory(value) {
   if (typeof value !== "string") return undefined
   const trimmed = value.trim()
   return trimmed || undefined
+}
+
+function nextBeforeCursor(link) {
+  if (!link) return undefined
+  const match = String(link).match(/<([^>]+)>\s*;\s*rel="next"/i)
+  if (!match) return undefined
+  try {
+    return new URL(match[1]).searchParams.get("before") || undefined
+  } catch {
+    return undefined
+  }
 }
 
 export function promptPayload(text, profile, files = []) {
@@ -294,7 +330,7 @@ export async function resolveSessionProfile({ opencode, binding, defaultProfile 
   } catch {}
 
   try {
-    const history = messages || await opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory })
+    const history = messages || await opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory, limit: 50 })
     const fromMessages = profileFromMessages(history)
     if (fromMessages.model || fromMessages.agent) return { ...defaultProfile, ...fromMessages }
   } catch {}

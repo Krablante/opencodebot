@@ -23,6 +23,8 @@ export function createSessionReconciler({
   logError,
   shouldStop,
   incompleteRunGraceMs = 1500,
+  messagePageSize = 20,
+  reconcileWatchdogMs = 60_000,
 }) {
   const bindingOperations = new Map()
   const incompleteChecks = new Map()
@@ -31,6 +33,10 @@ export function createSessionReconciler({
   const manualCompactions = new Set()
   const finalNotificationAttempts = new Map()
   const reconcileTimers = new Map()
+  const observedSessionUpdates = new Map()
+  const reconciledSessionUpdates = new Map()
+  const reconcileCursors = new Map()
+  const lastWatchdogAt = new Map()
 
   function activeBinding(binding) {
     const current = state.findBinding(binding.serverID, binding.sessionID)
@@ -279,7 +285,10 @@ export function createSessionReconciler({
     const statusType = statuses?.[binding.sessionID]?.type
     if (statusType && statusType !== "idle") return
 
-    const history = messages || await backendRequest(server.id, "incomplete-run-messages", () => opencode.messages(server.id, binding.sessionID, { directory: binding.directory }))
+    let history = messages
+    if (!history?.some((message) => (message.info || message).role === "user")) {
+      history = await loadLatestRunMessages(server, binding)
+    }
     if (history === skippedBackendRequest) return
     if (!activeBinding(binding)) {
       clearRunCheck(binding)
@@ -403,16 +412,21 @@ export function createSessionReconciler({
       if (shouldStop()) break
       if (!state.mirrorEnabled(config)) continue
       await reconcileSessions().catch(logError)
-      for (const binding of [...state.data.bindings].filter((item) => !item.disabled)) {
-        if (!reconcileWindow(binding)) continue
-        try {
-          const messages = await reconcileBinding(binding)
-          const server = config.opencode.servers.find((item) => item.id === binding.serverID)
-          if (server && messages) await verifyRunOutcome(server, binding, { messages, source: "periodic-reconcile" })
-        } catch (error) {
-          await handleMirrorError(binding, error).catch(logError)
+      const groups = Map.groupBy(
+        [...state.data.bindings].filter((item) => !item.disabled && reconcileWindow(item) && shouldPeriodicallyReconcile(item)),
+        (binding) => binding.serverID,
+      )
+      await Promise.all([...groups.values()].map(async (bindings) => {
+        for (const binding of bindings) {
+          try {
+            const messages = await reconcileBinding(binding)
+            const server = config.opencode.servers.find((item) => item.id === binding.serverID)
+            if (server && messages) await verifyRunOutcome(server, binding, { messages, source: "periodic-reconcile" })
+          } catch (error) {
+            await handleMirrorError(binding, error).catch(logError)
+          }
         }
-      }
+      }))
     }
   }
 
@@ -434,6 +448,7 @@ export function createSessionReconciler({
       const sessions = await backendRequest(server.id, "list sessions", () => opencode.listSessions(server.id, { mirror: true }))
       if (sessions === skippedBackendRequest) continue
       for (const session of sessions) {
+        observedSessionUpdates.set(`${server.id}:${session.id}`, sessionUpdatedMs(session))
         const binding = state.findBinding(server.id, session.id)
         if (isInternalSession(session)) {
           await state.markSeenSession(server.id, session.id)
@@ -494,6 +509,79 @@ export function createSessionReconciler({
     return runSingleFlight(bindingOperations, bindingKey(binding), () => reconcileBindingNow(binding))
   }
 
+  async function loadReconcileMessages(binding, window, usersOnlyCatchup) {
+    if (typeof opencode.messagePage !== "function") {
+      const messages = await backendRequest(binding.serverID, "session messages", () => opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory }))
+      return messages === skippedBackendRequest ? skippedBackendRequest : { messages, pages: 1 }
+    }
+
+    let before
+    let messages = []
+    let pages = 0
+    const cursors = new Set()
+    const reconcileCursor = reconcileCursors.get(bindingKey(binding))
+    while (true) {
+      const page = await backendRequest(binding.serverID, "session message page", () => opencode.messagePage(binding.serverID, binding.sessionID, {
+        before,
+        directory: binding.directory,
+        limit: messagePageSize,
+      }))
+      if (page === skippedBackendRequest) return skippedBackendRequest
+      const items = Array.isArray(page.messages) ? page.messages : []
+      pages += 1
+      messages = [...items, ...messages]
+
+      const reachedWindowStart = items.some((message) => !messageInReconcileWindow(message.info || message, window))
+      const reachedUser = items.some((message) => (message.info || message).role === "user")
+      const reachedCursor = reconcileCursor && items.some((message) => (message.info || message).id === reconcileCursor)
+      if (!page.before || reachedWindowStart || (usersOnlyCatchup ? reachedUser : reachedCursor)) break
+      if (cursors.has(page.before)) break
+      cursors.add(page.before)
+      before = page.before
+    }
+    return { messages, pages }
+  }
+
+  async function loadLatestRunMessages(server, binding) {
+    if (typeof opencode.messagePage !== "function") {
+      return backendRequest(server.id, "incomplete-run-messages", () => opencode.messages(server.id, binding.sessionID, { directory: binding.directory }))
+    }
+    let before
+    let messages = []
+    const cursors = new Set()
+    while (true) {
+      const page = await backendRequest(server.id, "incomplete-run-message-page", () => opencode.messagePage(server.id, binding.sessionID, {
+        before,
+        directory: binding.directory,
+        limit: messagePageSize,
+      }))
+      if (page === skippedBackendRequest) return skippedBackendRequest
+      const items = Array.isArray(page.messages) ? page.messages : []
+      messages = [...items, ...messages]
+      if (items.some((message) => (message.info || message).role === "user") || !page.before || cursors.has(page.before)) break
+      cursors.add(page.before)
+      before = page.before
+    }
+    return messages
+  }
+
+  function shouldPeriodicallyReconcile(binding) {
+    const key = bindingKey(binding)
+    const observed = observedSessionUpdates.get(key)
+    if (observed === undefined || observed !== reconciledSessionUpdates.get(key)) return true
+    return Date.now() - (lastWatchdogAt.get(key) || 0) >= reconcileWatchdogMs
+  }
+
+  function markBindingReconciled(binding, messages) {
+    const key = bindingKey(binding)
+    const observed = observedSessionUpdates.get(key)
+    if (observed !== undefined) reconciledSessionUpdates.set(key, observed)
+    const latestMessage = [...messages].reverse().find((message) => (message.info || message).id)
+    const latestMessageID = (latestMessage?.info || latestMessage)?.id
+    if (latestMessageID) reconcileCursors.set(key, latestMessageID)
+    lastWatchdogAt.set(key, Date.now())
+  }
+
   async function reconcileBindingNow(binding) {
     const current = activeBinding(binding)
     if (!current) return
@@ -504,10 +592,12 @@ export function createSessionReconciler({
     let mirroredUsers = 0
     let mirroredAssistants = 0
     let skippedAssistants = 0
+    const skippedAssistantIDs = []
     let usersOnlyCatchup = Date.parse(binding.reconcileUsersOnlyUntil || "") > Date.now()
     let catchupUserSeen = !usersOnlyCatchup
-    const messages = await backendRequest(binding.serverID, "session messages", () => opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory }))
-    if (messages === skippedBackendRequest) return
+    const pageResult = await loadReconcileMessages(binding, window, usersOnlyCatchup)
+    if (pageResult === skippedBackendRequest) return
+    const { messages, pages } = pageResult
     if (!activeBinding(binding)) return
     for (const message of messages) {
       if (!activeBinding(binding)) return
@@ -551,13 +641,13 @@ export function createSessionReconciler({
       if (!isCompleted(info)) continue
       if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) continue
       if (info.summary === true) {
-        await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
+        skippedAssistantIDs.push(info.id)
         if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding)
         skippedAssistants += 1
         continue
       }
       if (shouldSkipAssistantForCatchup(usersOnlyCatchup, catchupUserSeen)) {
-        await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
+        skippedAssistantIDs.push(info.id)
         skippedAssistants += 1
         continue
       }
@@ -566,7 +656,9 @@ export function createSessionReconciler({
       if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding)
       mirroredAssistants += 1
     }
+    if (skippedAssistantIDs.length) await state.markAssistantMirroredMany(binding.serverID, binding.sessionID, skippedAssistantIDs)
     await repairLatestFinalNotification(binding, messages)
+    markBindingReconciled(binding, messages)
     const elapsedMs = durationMs(startedAt)
     if (mirroredUsers || mirroredAssistants || skippedAssistants || shouldLogSlow(elapsedMs)) {
       logInfo("reconcile.binding.done", {
@@ -574,6 +666,7 @@ export function createSessionReconciler({
         sessionID: binding.sessionID,
         topicId: binding.topicId,
         messages: messages.length,
+        pages,
         mirroredUsers,
         mirroredAssistants,
         skippedAssistants,
@@ -635,7 +728,7 @@ export function createSessionReconciler({
     const fromEvent = normalizeSessionError(properties)
     if (fromEvent) return fromEvent
     try {
-      const messages = await opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory })
+      const messages = await opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory, limit: 50 })
       for (let index = messages.length - 1; index >= 0; index -= 1) {
         const info = messages[index]?.info || messages[index]
         if (info?.role !== "assistant" || !info.error) continue

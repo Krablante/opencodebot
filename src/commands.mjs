@@ -209,7 +209,7 @@ export function createTelegramCommandHandlers({
     let status
     try {
       const inspection = await Promise.all([
-        opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory }),
+        opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory, limit: 50 }),
         opencode.sessionStatus(binding.serverID, binding.sessionID, { directory: binding.directory }),
       ])
       messages = inspection[0]

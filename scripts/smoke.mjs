@@ -495,11 +495,63 @@ async function smokeFinalNotificationRetry() {
 async function smokeCoreFailureInvariants() {
   await smokeOpenCodeEventOrdering()
   await smokeOpenCodeRequestTimeout()
+  await smokeOpenCodeMessagePaging()
   await smokeOpenCodeSessionModelSwitch()
   await smokeStatePruning()
+  await smokeStateMarkerBatching()
   await smokeStateWriteRecovery()
   await smokeStrictConfigLoading()
   await smokeTelegramDownloadLimit()
+}
+
+async function smokeOpenCodeMessagePaging() {
+  const requests = []
+  const server = createServer((request, response) => {
+    const url = new URL(request.url, "http://localhost")
+    requests.push(url)
+    const before = url.searchParams.get("before")
+    const body = before
+      ? [{ info: { id: "older", role: "assistant" }, parts: [] }]
+      : [{ info: { id: "newer", role: "assistant" }, parts: [] }]
+    const headers = { "content-type": "application/json" }
+    if (!before) headers.link = `<http://localhost/session/ses/message?before=cursor-1>; rel="next"`
+    response.writeHead(200, headers).end(JSON.stringify(body))
+  })
+  const { url, close } = await listen(server)
+  try {
+    const client = new OpenCodeClient({ opencode: { password: "", servers: [{ id: "local", url }] } })
+    const first = await client.messagePage("local", "ses", { directory: "/tmp/work", limit: 20 })
+    const second = await client.messagePage("local", "ses", { before: first.before, directory: "/tmp/work", limit: 20 })
+    assert.equal(first.messages[0].info.id, "newer")
+    assert.equal(first.before, "cursor-1")
+    assert.equal(second.messages[0].info.id, "older")
+    assert.equal(requests[0].searchParams.get("directory"), "/tmp/work")
+    assert.equal(requests[0].searchParams.get("limit"), "20")
+    assert.equal(requests[1].searchParams.get("before"), "cursor-1")
+  } finally {
+    await close()
+  }
+}
+
+async function smokeStateMarkerBatching() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-state-marker-batch-"))
+  try {
+    const state = new StateStore(path.join(root, "state.json"))
+    await state.load()
+    let saves = 0
+    const save = state.save.bind(state)
+    state.save = async () => {
+      saves += 1
+      return save()
+    }
+    await state.markAssistantMirrored("nuc", "ses", "msg-1")
+    await state.markAssistantMirrored("nuc", "ses", "msg-1")
+    await state.markAssistantMirroredMany("nuc", "ses", ["msg-1", "msg-2", "msg-3"])
+    assert.equal(saves, 2)
+    assert.equal(state.isAssistantMirrored("nuc", "ses", "msg-3"), true)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 }
 
 async function smokeOpenCodeEventOrdering() {

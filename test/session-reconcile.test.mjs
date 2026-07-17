@@ -104,7 +104,24 @@ test("a disabled binding cannot resume reconciliation after a topic reset", asyn
   assert.equal(harness.terminalMirrors, 0)
 })
 
-function createHarness({ usersOnly = true } = {}) {
+test("incremental reconcile stops paging at the last fully scanned message cursor", async () => {
+  const harness = createHarness({
+    pages: [
+      { messages: [userMessage("user-1", "Prompt"), assistantMessage("assistant-known", "Known")], before: undefined },
+      { messages: [assistantMessage("assistant-known", "Known"), assistantMessage("assistant-new", "New progress")], before: "older" },
+    ],
+    usersOnly: false,
+  })
+
+  await harness.reconciler.reconcileBinding(harness.binding)
+  harness.renderedAssistants.length = 0
+  await harness.reconciler.reconcileBinding(harness.binding)
+
+  assert.equal(harness.pageCalls, 2)
+  assert.deepEqual(harness.renderedAssistants, ["New progress"])
+})
+
+function createHarness({ pages, usersOnly = true } = {}) {
   const now = Date.now()
   const binding = {
     serverID: "dima",
@@ -118,6 +135,7 @@ function createHarness({ usersOnly = true } = {}) {
   }
   let messages = []
   let terminalMirrors = 0
+  let pageCalls = 0
   const renderedUsers = []
   const renderedAssistants = []
   const activationReasons = []
@@ -132,6 +150,7 @@ function createHarness({ usersOnly = true } = {}) {
     consumePendingPrompt: async () => null,
     isAssistantMirrored: (_serverID, _sessionID, messageID) => assistantMirrored.has(messageID),
     markAssistantMirrored: async (_serverID, _sessionID, messageID) => assistantMirrored.add(messageID),
+    markAssistantMirroredMany: async (_serverID, _sessionID, messageIDs) => messageIDs.forEach((messageID) => assistantMirrored.add(messageID)),
   }
   const renderer = {
     userPrompt: async (_binding, text) => renderedUsers.push(text),
@@ -143,14 +162,22 @@ function createHarness({ usersOnly = true } = {}) {
       terminalMirrors += 1
     },
   }
+  const opencode = {
+    servers: [],
+    messages: async () => messages,
+    ...(pages ? {
+      messagePage: async () => {
+        const page = pages[pageCalls] || { messages: [], before: undefined }
+        pageCalls += 1
+        return page
+      },
+    } : {}),
+  }
   const reconciler = createSessionReconciler({
     config: {},
     state,
     telegram: {},
-    opencode: {
-      servers: [],
-      messages: async () => messages,
-    },
+    opencode,
     renderer,
     promptQueue,
     questionManager: {},
@@ -178,6 +205,9 @@ function createHarness({ usersOnly = true } = {}) {
     assistantMirrored,
     get terminalMirrors() {
       return terminalMirrors
+    },
+    get pageCalls() {
+      return pageCalls
     },
     setMessages(next) {
       messages = next

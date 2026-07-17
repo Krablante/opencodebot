@@ -62,6 +62,7 @@ export class StateStore {
   async update(mutator) {
     const update = this.queue.then(async () => {
       const result = await mutator(this.data)
+      if (result === false) return false
       await this.save()
       return result
     })
@@ -586,9 +587,21 @@ export class StateStore {
   }
 
   async markAssistantMirrored(serverID, sessionID, messageID) {
+    if (this.isAssistantMirrored(serverID, sessionID, messageID)) return false
     return this.update((data) => {
       data.mirroredAssistantBySession ||= {}
-      markMirroredMessage(data.mirroredAssistantBySession, serverID, sessionID, messageID)
+      return markMirroredMessage(data.mirroredAssistantBySession, serverID, sessionID, messageID)
+    })
+  }
+
+  async markAssistantMirroredMany(serverID, sessionID, messageIDs) {
+    const pending = [...new Set(messageIDs)].filter((messageID) => !this.isAssistantMirrored(serverID, sessionID, messageID))
+    if (!pending.length) return false
+    return this.update((data) => {
+      data.mirroredAssistantBySession ||= {}
+      let changed = false
+      for (const messageID of pending) changed = markMirroredMessage(data.mirroredAssistantBySession, serverID, sessionID, messageID) || changed
+      return changed
     })
   }
 
@@ -597,9 +610,10 @@ export class StateStore {
   }
 
   async markUserMirrored(serverID, sessionID, messageID) {
+    if (this.isUserMirrored(serverID, sessionID, messageID)) return false
     return this.update((data) => {
       data.mirroredUserBySession ||= {}
-      markMirroredMessage(data.mirroredUserBySession, serverID, sessionID, messageID)
+      return markMirroredMessage(data.mirroredUserBySession, serverID, sessionID, messageID)
     })
   }
 
@@ -702,8 +716,10 @@ function hasMirroredMessage(bySession, serverID, sessionID, messageID) {
 function markMirroredMessage(bySession, serverID, sessionID, messageID) {
   const key = sessionMirrorKey(serverID, sessionID)
   bySession[key] ||= []
-  if (!bySession[key].includes(messageID)) bySession[key].push(messageID)
+  if (bySession[key].includes(messageID)) return false
+  bySession[key].push(messageID)
   pruneMirroredBuckets(bySession)
+  return true
 }
 
 function pruneState(data) {
