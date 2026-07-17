@@ -276,7 +276,7 @@ test("a stable message event uses the exact message endpoint before page fallbac
   assert.deepEqual(harness.renderedUsers, ["Web prompt"])
 })
 
-test("a completed assistant event uses the exact message renderer", async () => {
+test("a completed assistant event stays on the established lifecycle renderer path", async () => {
   const harness = createHarness({ targetedMessage: assistantMessage("assistant-exact", "Exact answer"), usersOnly: false })
 
   await harness.reconciler.handleOpenCodeEvent({ id: "dima" }, {
@@ -292,10 +292,8 @@ test("a completed assistant event uses the exact message renderer", async () => 
   })
   await new Promise((resolve) => setTimeout(resolve, 200))
 
-  assert.equal(harness.messageCalls, 1)
-  assert.equal(harness.pageCalls, 0)
-  assert.deepEqual(harness.renderedAssistants, ["Exact answer"])
-  assert.equal(harness.renderedAssistants.includes("[object Object]"), false)
+  assert.equal(harness.messageCalls, 0)
+  assert.deepEqual(harness.renderedAssistants, [])
 })
 
 function createHarness({ cursor, pages, targetedMessage, usersOnly = true, watchdog = false } = {}) {

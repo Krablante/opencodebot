@@ -234,8 +234,8 @@ export function createSessionReconciler({
     if (event.type === "message.updated") {
       messageID = properties.info?.id
       role = properties.info?.role
-      if (messageID && role) rememberTargetedMessageRole(`${bindingKey(binding)}:${messageID}`, role)
-      if (!(role === "assistant" && properties.info?.time?.completed)) return
+      if (messageID && role === "user") rememberTargetedMessageRole(`${bindingKey(binding)}:${messageID}`, role)
+      return
     } else if (event.type === "message.part.updated" || event.type === "message.part.added") {
       const part = properties.part || properties
       messageID = part?.messageID || properties.messageID
@@ -299,14 +299,7 @@ export function createSessionReconciler({
       latestUserMessages.set(bindingKey(binding), info.id)
       return
     }
-    if (info.role !== "assistant" || state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) return
-    if (Date.parse(binding.reconcileUsersOnlyUntil || "") > Date.now()) {
-      scheduleReconcile(binding, 500)
-      return
-    }
-    await renderStoredAssistantMessage(binding, message)
-    await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
-    if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding)
+    scheduleReconcile(binding, 500)
   }
 
   async function mirrorTargetedUserMessage(binding, message) {
