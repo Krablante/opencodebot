@@ -270,7 +270,8 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     const last = activityPersistedAt.get(key) || 0
     if (now - last < 60_000) return
     activityPersistedAt.set(key, now)
-    await state.extendBindingActivity(binding.serverID, binding.sessionID, {
+    const extendActivity = state.extendBindingActivityDeferred?.bind(state) || state.extendBindingActivity.bind(state)
+    await extendActivity(binding.serverID, binding.sessionID, {
       reconcileUntil: now + config.reconcile.activeWindowMs,
       reason,
     })

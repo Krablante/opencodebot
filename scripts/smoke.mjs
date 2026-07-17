@@ -74,6 +74,7 @@ async function smokeLocalInvariants() {
   smokeFinalToolSummary()
   await smokeFinalNotificationRetry()
   await smokeCoreFailureInvariants()
+  await smokeDeferredStatePersistence()
   await smokeChunkedWebPromptMirror()
   await smokeKillCommand()
   await smokeCompactCommand()
@@ -504,11 +505,52 @@ async function smokeCoreFailureInvariants() {
   await smokeTelegramDownloadLimit()
 }
 
+async function smokeDeferredStatePersistence() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-state-deferred-"))
+  const statePath = path.join(root, "state.json")
+  try {
+    const state = new StateStore(statePath)
+    await state.load()
+
+    let saves = 0
+    const save = state.save.bind(state)
+    state.save = async () => {
+      saves += 1
+      return save()
+    }
+    const seeded = await state.seedSeenSessions([])
+    assert.equal(seeded, false)
+    assert.equal(saves, 0)
+
+    await state.updateDeferred((data) => {
+      data.runtime.deferredSmoke = "saved"
+      return true
+    }, 20)
+    const beforeFlush = JSON.parse(await readFile(statePath, "utf8"))
+    assert.equal(beforeFlush.runtime.deferredSmoke, undefined)
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    await state.flushDeferred()
+    const afterFlush = JSON.parse(await readFile(statePath, "utf8"))
+    assert.equal(afterFlush.runtime.deferredSmoke, "saved")
+    assert.equal(saves, 1)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
 async function smokeOpenCodeMessagePaging() {
   const requests = []
   const server = createServer((request, response) => {
     const url = new URL(request.url, "http://localhost")
     requests.push(url)
+    if (url.pathname === "/session") {
+      response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify([{ id: "ses" }]))
+      return
+    }
+    if (url.pathname === "/session/ses/message/msg-target") {
+      response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ info: { id: "msg-target", role: "assistant" }, parts: [] }))
+      return
+    }
     const before = url.searchParams.get("before")
     const body = before
       ? [{ info: { id: "older", role: "assistant" }, parts: [] }]
@@ -520,14 +562,22 @@ async function smokeOpenCodeMessagePaging() {
   const { url, close } = await listen(server)
   try {
     const client = new OpenCodeClient({ opencode: { password: "", servers: [{ id: "local", url }] } })
+    const sessions = await client.listSessions("local", { directory: "/tmp/work", start: 1234, limit: 50, search: "active" })
+    const target = await client.message("local", "ses", "msg-target", { directory: "/tmp/work" })
     const first = await client.messagePage("local", "ses", { directory: "/tmp/work", limit: 20 })
     const second = await client.messagePage("local", "ses", { before: first.before, directory: "/tmp/work", limit: 20 })
+    assert.equal(sessions[0].id, "ses")
+    assert.equal(target.info.id, "msg-target")
     assert.equal(first.messages[0].info.id, "newer")
     assert.equal(first.before, "cursor-1")
     assert.equal(second.messages[0].info.id, "older")
     assert.equal(requests[0].searchParams.get("directory"), "/tmp/work")
-    assert.equal(requests[0].searchParams.get("limit"), "20")
-    assert.equal(requests[1].searchParams.get("before"), "cursor-1")
+    assert.equal(requests[0].searchParams.get("start"), "1234")
+    assert.equal(requests[0].searchParams.get("limit"), "50")
+    assert.equal(requests[0].searchParams.get("search"), "active")
+    assert.equal(requests[1].pathname, "/session/ses/message/msg-target")
+    assert.equal(requests[2].searchParams.get("limit"), "20")
+    assert.equal(requests[3].searchParams.get("before"), "cursor-1")
   } finally {
     await close()
   }

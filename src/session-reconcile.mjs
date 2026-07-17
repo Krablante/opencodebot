@@ -25,6 +25,8 @@ export function createSessionReconciler({
   incompleteRunGraceMs = 1500,
   messagePageSize = 20,
   reconcileWatchdogMs = 60_000,
+  sessionScanOverlapMs = 5 * 60_000,
+  cursorCheckpointMs = 60_000,
 }) {
   const bindingOperations = new Map()
   const incompleteChecks = new Map()
@@ -33,9 +35,13 @@ export function createSessionReconciler({
   const manualCompactions = new Set()
   const finalNotificationAttempts = new Map()
   const reconcileTimers = new Map()
+  const targetedMessageTimers = new Map()
+  const targetedMessageRoles = new Map()
   const observedSessionUpdates = new Map()
   const reconciledSessionUpdates = new Map()
   const reconcileCursors = new Map()
+  const cursorCheckpointAt = new Map()
+  const sessionScanWatermarks = new Map()
   const lastWatchdogAt = new Map()
 
   function activeBinding(binding) {
@@ -89,6 +95,7 @@ export function createSessionReconciler({
       await activateBindingForPrompt(binding, event.type === "session.next.prompted" ? "web-prompt" : "user-message")
     } else await maybeExtendBindingActivity(binding, "opencode-event")
     if (newUserRun && !promptQueue.hasExpectedStop(binding)) promptQueue.markBusy(binding)
+    scheduleTargetedMessageReconcile(binding, event, manualCompaction)
     const fields = () => ({
       source: server.id,
       sessionID,
@@ -216,6 +223,104 @@ export function createSessionReconciler({
     }
     const elapsedMs = durationMs(startedAt)
     if (isMirrorMilestone(event.type) || shouldLogSlow(elapsedMs)) logInfo("mirror.event.handled", { ...fields(), durationMs: elapsedMs })
+  }
+
+  function scheduleTargetedMessageReconcile(binding, event, manualCompaction) {
+    if (manualCompaction || typeof opencode.message !== "function") return
+    const properties = event.properties || {}
+    let messageID
+    let role
+    if (event.type === "message.updated") {
+      messageID = properties.info?.id
+      role = properties.info?.role
+      if (messageID && role) rememberTargetedMessageRole(`${bindingKey(binding)}:${messageID}`, role)
+      if (!(role === "assistant" && properties.info?.time?.completed)) return
+    } else if (event.type === "message.part.updated" || event.type === "message.part.added") {
+      const part = properties.part || properties
+      messageID = part?.messageID || properties.messageID
+      role = messageID ? targetedMessageRoles.get(`${bindingKey(binding)}:${messageID}`) : undefined
+      if (role !== "user") return
+    } else {
+      return
+    }
+    if (!messageID) return
+    const key = `${bindingKey(binding)}:${messageID}`
+    const existing = targetedMessageTimers.get(key)
+    if (existing) clearTimeout(existing)
+    const timer = setTimeout(() => {
+      targetedMessageTimers.delete(key)
+      const current = state.findBinding(binding.serverID, binding.sessionID)
+      if (!current) return
+      runAfterFlight(bindingOperations, bindingKey(current), () => reconcileMessageByID(current, messageID))
+        .catch((error) => {
+          logErrorEvent("reconcile.message.failed", error, { source: current.serverID, sessionID: current.sessionID, topicId: current.topicId, messageID })
+          scheduleReconcile(current, 500)
+        })
+        .finally(() => targetedMessageRoles.delete(key))
+    }, role === "user" ? 500 : 150)
+    timer.unref?.()
+    targetedMessageTimers.set(key, timer)
+  }
+
+  function rememberTargetedMessageRole(key, role) {
+    targetedMessageRoles.set(key, role)
+    while (targetedMessageRoles.size > 1_000) targetedMessageRoles.delete(targetedMessageRoles.keys().next().value)
+  }
+
+  async function reconcileMessageByID(binding, messageID) {
+    let message
+    try {
+      message = await opencode.message(binding.serverID, binding.sessionID, messageID, { directory: binding.directory })
+    } catch (error) {
+      logInfo("reconcile.message.fallback", {
+        source: binding.serverID,
+        sessionID: binding.sessionID,
+        topicId: binding.topicId,
+        messageID,
+        error: error.message,
+      })
+      scheduleReconcile(binding, 1_000)
+      return
+    }
+    const info = message?.info || message
+    if (!info?.id || !info?.role) {
+      scheduleReconcile(binding, 500)
+      return
+    }
+    if (info.role === "user") {
+      if (state.isUserMirrored(binding.serverID, binding.sessionID, info.id)) return
+      const mirrored = await mirrorTargetedUserMessage(binding, message)
+      if (!mirrored) {
+        scheduleReconcile(binding, 500)
+        return
+      }
+      await state.markUserMirrored(binding.serverID, binding.sessionID, info.id)
+      latestUserMessages.set(bindingKey(binding), info.id)
+      return
+    }
+    if (info.role !== "assistant" || state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) return
+    if (Date.parse(binding.reconcileUsersOnlyUntil || "") > Date.now()) {
+      scheduleReconcile(binding, 500)
+      return
+    }
+    await renderer.messageUpdated(binding, message)
+  }
+
+  async function mirrorTargetedUserMessage(binding, message) {
+    const info = message?.info || message
+    const text = textFromStoredMessage(message)
+    if (!text) return false
+    const consumed = await state.consumePendingPrompt(binding.serverID, binding.sessionID, text)
+    if (consumed) {
+      await recordConsumedPromptOrigin(binding, consumed, info.id)
+      await pinConsumedTelegramPrompt(binding, consumed)
+    } else {
+      await renderer.userPrompt(binding, text, "web")
+    }
+    if (Date.parse(binding.reconcileUsersOnlyUntil || "") > Date.now()) {
+      await activateBindingForPrompt(binding, "reconcile-user-prompt")
+    }
+    return true
   }
 
   async function handleSessionIdle(server, binding) {
@@ -431,12 +536,14 @@ export function createSessionReconciler({
   }
 
   async function seedExistingSessions() {
-    const seen = []
-    for (const server of config.opencode.servers) {
+    const batches = await Promise.all(config.opencode.servers.map(async (server) => {
       const sessions = await backendRequest(server.id, "seed sessions", () => opencode.listSessions(server.id, { mirror: true }))
-      if (sessions === skippedBackendRequest) continue
-      for (const session of sessions) seen.push([server.id, session.id])
-    }
+      if (sessions === skippedBackendRequest) return []
+      rememberSessionScanWatermark(server.id, sessions)
+      for (const session of sessions) observedSessionUpdates.set(`${server.id}:${session.id}`, sessionUpdatedMs(session))
+      return sessions.map((session) => [server.id, session.id])
+    }))
+    const seen = batches.flat()
     const seeded = await state.seedSeenSessions(seen)
     if (seeded) console.log(`[opencodebot] seeded ${seeded} existing OpenCodez sessions`)
   }
@@ -444,9 +551,15 @@ export function createSessionReconciler({
   async function reconcileSessions() {
     const chatId = state.chatId || config.telegram.chatId
     if (!chatId || !config.telegram.autocreateTopics) return
-    for (const server of config.opencode.servers) {
-      const sessions = await backendRequest(server.id, "list sessions", () => opencode.listSessions(server.id, { mirror: true }))
-      if (sessions === skippedBackendRequest) continue
+    await Promise.all(config.opencode.servers.map(async (server) => {
+      const watermark = sessionScanWatermarks.get(server.id)
+      const start = Number.isFinite(watermark) ? Math.max(0, watermark - sessionScanOverlapMs) : undefined
+      const sessions = await backendRequest(server.id, "list sessions", () => opencode.listSessions(server.id, {
+        mirror: true,
+        start,
+      }))
+      if (sessions === skippedBackendRequest) return
+      rememberSessionScanWatermark(server.id, sessions)
       for (const session of sessions) {
         observedSessionUpdates.set(`${server.id}:${session.id}`, sessionUpdatedMs(session))
         const binding = state.findBinding(server.id, session.id)
@@ -465,7 +578,13 @@ export function createSessionReconciler({
         if (state.hasSeenSession(server.id, session.id)) continue
         await createTopicForSession(server.id, session)
       }
-    }
+    }))
+  }
+
+  function rememberSessionScanWatermark(serverID, sessions) {
+    let watermark = sessionScanWatermarks.get(serverID) || 0
+    for (const session of sessions) watermark = Math.max(watermark, sessionUpdatedMs(session))
+    if (watermark) sessionScanWatermarks.set(serverID, watermark)
   }
 
   async function maybeExtendExpiredBindingFromSession(binding, session) {
@@ -519,7 +638,7 @@ export function createSessionReconciler({
     let messages = []
     let pages = 0
     const cursors = new Set()
-    const reconcileCursor = reconcileCursors.get(bindingKey(binding))
+    const reconcileCursor = reconcileCursors.get(bindingKey(binding)) || binding.reconcileCursorMessageID
     while (true) {
       const page = await backendRequest(binding.serverID, "session message page", () => opencode.messagePage(binding.serverID, binding.sessionID, {
         before,
@@ -572,14 +691,22 @@ export function createSessionReconciler({
     return Date.now() - (lastWatchdogAt.get(key) || 0) >= reconcileWatchdogMs
   }
 
-  function markBindingReconciled(binding, messages) {
+  async function markBindingReconciled(binding, messages) {
     const key = bindingKey(binding)
     const observed = observedSessionUpdates.get(key)
     if (observed !== undefined) reconciledSessionUpdates.set(key, observed)
     const latestMessage = [...messages].reverse().find((message) => (message.info || message).id)
     const latestMessageID = (latestMessage?.info || latestMessage)?.id
-    if (latestMessageID) reconcileCursors.set(key, latestMessageID)
-    lastWatchdogAt.set(key, Date.now())
+    const now = Date.now()
+    if (latestMessageID) {
+      reconcileCursors.set(key, latestMessageID)
+      const checkpointDue = !binding.reconcileCursorMessageID || now - (cursorCheckpointAt.get(key) || 0) >= cursorCheckpointMs
+      if (checkpointDue && typeof state.checkpointBindingReconcileCursor === "function") {
+        await state.checkpointBindingReconcileCursor(binding.serverID, binding.sessionID, latestMessageID)
+        cursorCheckpointAt.set(key, now)
+      }
+    }
+    lastWatchdogAt.set(key, now)
   }
 
   async function reconcileBindingNow(binding) {
@@ -588,6 +715,8 @@ export function createSessionReconciler({
     binding = current
     const window = reconcileWindow(binding)
     if (!window) return
+    await ensureObservedSessionUpdate(binding)
+    if (await unchangedWatchdogCheck(binding)) return
     const startedAt = Date.now()
     let mirroredUsers = 0
     let mirroredAssistants = 0
@@ -658,7 +787,7 @@ export function createSessionReconciler({
     }
     if (skippedAssistantIDs.length) await state.markAssistantMirroredMany(binding.serverID, binding.sessionID, skippedAssistantIDs)
     await repairLatestFinalNotification(binding, messages)
-    markBindingReconciled(binding, messages)
+    await markBindingReconciled(binding, messages)
     const elapsedMs = durationMs(startedAt)
     if (mirroredUsers || mirroredAssistants || skippedAssistants || shouldLogSlow(elapsedMs)) {
       logInfo("reconcile.binding.done", {
@@ -675,6 +804,37 @@ export function createSessionReconciler({
       })
     }
     return messages
+  }
+
+  async function ensureObservedSessionUpdate(binding) {
+    const key = bindingKey(binding)
+    if (observedSessionUpdates.has(key) || typeof opencode.getSession !== "function") return
+    const session = await backendRequest(binding.serverID, "initial reconcile session", () => opencode.getSession(binding.serverID, binding.sessionID, {
+      directory: binding.directory,
+    }))
+    if (session === skippedBackendRequest) return
+    const updated = sessionUpdatedMs(session)
+    if (updated) observedSessionUpdates.set(key, updated)
+  }
+
+  async function unchangedWatchdogCheck(binding) {
+    const key = bindingKey(binding)
+    const observed = observedSessionUpdates.get(key)
+    const reconciled = reconciledSessionUpdates.get(key)
+    if (observed === undefined || observed !== reconciled) return false
+    if (Date.now() - (lastWatchdogAt.get(key) || 0) < reconcileWatchdogMs) return false
+    if (typeof opencode.getSession !== "function") return false
+    const session = await backendRequest(binding.serverID, "watchdog session", () => opencode.getSession(binding.serverID, binding.sessionID, {
+      directory: binding.directory,
+    }))
+    if (session === skippedBackendRequest) return true
+    const verified = sessionUpdatedMs(session)
+    if (!verified || verified !== reconciled) {
+      if (verified) observedSessionUpdates.set(key, verified)
+      return false
+    }
+    lastWatchdogAt.set(key, Date.now())
+    return true
   }
 
   async function repairLatestFinalNotification(binding, messages) {
@@ -782,12 +942,22 @@ export function createSessionReconciler({
       if (attemptKey.startsWith(`${key}:`)) finalNotificationAttempts.delete(attemptKey)
     }
     const timer = reconcileTimers.get(key)
-    if (!timer) return
-    clearTimeout(timer)
-    reconcileTimers.delete(key)
+    if (timer) {
+      clearTimeout(timer)
+      reconcileTimers.delete(key)
+    }
+    for (const [messageKey, messageTimer] of targetedMessageTimers) {
+      if (!messageKey.startsWith(`${key}:`)) continue
+      clearTimeout(messageTimer)
+      targetedMessageTimers.delete(messageKey)
+      targetedMessageRoles.delete(messageKey)
+    }
+    for (const messageKey of targetedMessageRoles.keys()) {
+      if (messageKey.startsWith(`${key}:`)) targetedMessageRoles.delete(messageKey)
+    }
   }
 
-  return { handleOpenCodeEvent, reconcileBinding, reconcileLoop, scheduleReconcile, seedExistingSessions, detachBinding }
+  return { handleOpenCodeEvent, reconcileBinding, reconcileLoop, reconcileSessions, scheduleReconcile, seedExistingSessions, detachBinding }
 }
 
 function isUnavailableTopicError(error) {

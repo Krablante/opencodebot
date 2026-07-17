@@ -60,7 +60,9 @@ export function createTelegramPolling({
           }
           offset = update.update_id + 1
           await state.update((data) => {
+            if (data.runtime.telegramUpdateOffset === offset) return false
             data.runtime.telegramUpdateOffset = offset
+            return true
           })
         }
       } catch (error) {

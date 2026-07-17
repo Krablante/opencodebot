@@ -317,7 +317,7 @@ function normalizeTopicIconEmoji(value) {
 
 async function finalSessionSummary({ opencode, binding, assistantMessageID, hiddenTools, debugEnabled = false }) {
   try {
-    const messages = await opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory })
+    const messages = await loadCurrentTurnMessages(opencode, binding, assistantMessageID)
     const turnMetadata = turnMetadataBeforeAssistant(messages, assistantMessageID)
     return {
       promptText: promptTextBeforeAssistant(messages, assistantMessageID),
@@ -335,6 +335,65 @@ async function finalSessionSummary({ opencode, binding, assistantMessageID, hidd
     })
     return { promptText: "", completedTodos: [], tools: [], patchedFiles: [], durationMs: null, modelID: "", variant: "", tokenUsage: null, debugDiagnostics: null }
   }
+}
+
+export async function loadCurrentTurnMessages(opencode, binding, assistantMessageID) {
+  if (!assistantMessageID || typeof opencode.message !== "function" || typeof opencode.messagePage !== "function") {
+    return opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory })
+  }
+  try {
+    const target = await opencode.message(binding.serverID, binding.sessionID, assistantMessageID, {
+      directory: binding.directory,
+    })
+    const targetInfo = target?.info || target
+    if (!targetInfo?.id) throw new Error("Target assistant message is unavailable")
+
+    let before
+    let messages = []
+    let targetFound = false
+    const cursors = new Set()
+    while (true) {
+      const page = await opencode.messagePage(binding.serverID, binding.sessionID, {
+        before,
+        directory: binding.directory,
+        limit: 20,
+      })
+      const items = Array.isArray(page?.messages) ? page.messages : []
+      if (!targetFound) {
+        const targetIndex = items.findIndex((message) => (message?.info || message)?.id === assistantMessageID)
+        if (targetIndex >= 0) {
+          messages = items.slice(0, targetIndex + 1)
+          targetFound = true
+        }
+      } else {
+        messages = [...items, ...messages]
+      }
+      if (targetFound) {
+        const userIndex = findLastUserMessageIndex(messages)
+        if (userIndex >= 0) return messages.slice(userIndex)
+      }
+      if (!page?.before || cursors.has(page.before)) {
+        if (!targetFound) throw new Error("Target assistant message is outside the paginated history")
+        return messages
+      }
+      cursors.add(page.before)
+      before = page.before
+    }
+  } catch (error) {
+    logInfo("final_notification.summary_fallback", {
+      source: binding.serverID,
+      sessionID: binding.sessionID,
+      error: error.message,
+    })
+    return opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory })
+  }
+}
+
+function findLastUserMessageIndex(messages) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messageRole(messages[index]) === "user") return index
+  }
+  return -1
 }
 
 export function turnMetadataBeforeAssistant(messages, assistantMessageID) {

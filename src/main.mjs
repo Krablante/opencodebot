@@ -150,6 +150,7 @@ questionManager.reconcile().catch(logError)
 sessionReconciler.reconcileLoop().catch(logError)
 
 await telegramPolling.poll({ shouldStop: () => shutdownRequested })
+await state.flushDeferred?.()
 
 async function createPendingTopic(message, args) {
   let parsed

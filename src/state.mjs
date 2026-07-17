@@ -19,6 +19,8 @@ export class StateStore {
     this.data = defaultState()
     this.queue = Promise.resolve()
     this.markerQueue = Promise.resolve()
+    this.deferredSaveTimer = null
+    this.deferredDirty = false
   }
 
   async load() {
@@ -122,10 +124,57 @@ export class StateStore {
       const result = await mutator(this.data)
       if (result === false) return false
       await this.save()
+      this.clearDeferredSave()
       return result
     })
     this.queue = update.catch(() => undefined)
     return update
+  }
+
+  async updateDeferred(mutator, delayMs = 60_000) {
+    const update = this.queue.then(async () => {
+      const result = await mutator(this.data)
+      if (result === false) return false
+      this.deferredDirty = true
+      this.scheduleDeferredSave(delayMs)
+      return result
+    })
+    this.queue = update.catch(() => undefined)
+    return update
+  }
+
+  async flushDeferred() {
+    if (this.deferredSaveTimer) {
+      clearTimeout(this.deferredSaveTimer)
+      this.deferredSaveTimer = null
+    }
+    const flush = this.queue.then(async () => {
+      if (!this.deferredDirty) return false
+      await this.save()
+      this.deferredDirty = false
+      return true
+    })
+    this.queue = flush.catch(() => undefined)
+    return flush
+  }
+
+  scheduleDeferredSave(delayMs) {
+    if (this.deferredSaveTimer) return
+    this.deferredSaveTimer = setTimeout(() => {
+      this.deferredSaveTimer = null
+      this.flushDeferred().catch((error) => {
+        console.error(`[opencodebot] deferred state save failed: ${error.message}`)
+        if (this.deferredDirty) this.scheduleDeferredSave(5_000)
+      })
+    }, delayMs)
+    this.deferredSaveTimer.unref?.()
+  }
+
+  clearDeferredSave() {
+    this.deferredDirty = false
+    if (!this.deferredSaveTimer) return
+    clearTimeout(this.deferredSaveTimer)
+    this.deferredSaveTimer = null
   }
 
   get chatId() {
@@ -323,7 +372,17 @@ export class StateStore {
         added += 1
       }
       if (data.seenSessions.length > 5000) data.seenSessions = data.seenSessions.slice(-5000)
-      return added
+      return added || false
+    })
+  }
+
+  async checkpointBindingReconcileCursor(serverID, sessionID, messageID) {
+    if (!messageID) return false
+    return this.updateDeferred((data) => {
+      const binding = data.bindings.find((item) => item.serverID === serverID && item.sessionID === sessionID)
+      if (!binding || binding.reconcileCursorMessageID === messageID) return false
+      binding.reconcileCursorMessageID = messageID
+      return true
     })
   }
 
@@ -375,19 +434,15 @@ export class StateStore {
   }
 
   async extendBindingActivity(serverID, sessionID, { reconcileUntil, reconcileUsersOnlyUntil, reason } = {}) {
-    return this.update((data) => {
-      const binding = data.bindings.find((item) => item.serverID === serverID && item.sessionID === sessionID)
-      if (!binding) return false
-      const nextUntil = toMillis(reconcileUntil)
-      const currentUntil = toMillis(binding.reconcileUntil)
-      if (nextUntil && nextUntil > currentUntil) binding.reconcileUntil = toIso(nextUntil)
-      const nextUsersOnlyUntil = toMillis(reconcileUsersOnlyUntil)
-      const currentUsersOnlyUntil = toMillis(binding.reconcileUsersOnlyUntil)
-      if (nextUsersOnlyUntil && nextUsersOnlyUntil > currentUsersOnlyUntil) binding.reconcileUsersOnlyUntil = toIso(nextUsersOnlyUntil)
-      binding.lastActiveAt = new Date().toISOString()
-      if (reason) binding.lastActiveReason = reason
-      return true
-    })
+    return this.update((data) => applyBindingActivity(data, serverID, sessionID, { reconcileUntil, reconcileUsersOnlyUntil, reason }))
+  }
+
+  async extendBindingActivityDeferred(serverID, sessionID, { reconcileUntil, reconcileUsersOnlyUntil, reason } = {}) {
+    return this.updateDeferred((data) => applyBindingActivity(data, serverID, sessionID, {
+      reconcileUntil,
+      reconcileUsersOnlyUntil,
+      reason,
+    }))
   }
 
   async addPendingTopic(topicId, pending) {
@@ -824,6 +879,20 @@ function toMillis(value) {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0
   const parsed = Date.parse(value)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+function applyBindingActivity(data, serverID, sessionID, { reconcileUntil, reconcileUsersOnlyUntil, reason } = {}) {
+  const binding = data.bindings.find((item) => item.serverID === serverID && item.sessionID === sessionID)
+  if (!binding) return false
+  const nextUntil = toMillis(reconcileUntil)
+  const currentUntil = toMillis(binding.reconcileUntil)
+  if (nextUntil && nextUntil > currentUntil) binding.reconcileUntil = toIso(nextUntil)
+  const nextUsersOnlyUntil = toMillis(reconcileUsersOnlyUntil)
+  const currentUsersOnlyUntil = toMillis(binding.reconcileUsersOnlyUntil)
+  if (nextUsersOnlyUntil && nextUsersOnlyUntil > currentUsersOnlyUntil) binding.reconcileUsersOnlyUntil = toIso(nextUsersOnlyUntil)
+  binding.lastActiveAt = new Date().toISOString()
+  if (reason) binding.lastActiveReason = reason
+  return true
 }
 
 function compactObject(value) {

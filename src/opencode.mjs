@@ -16,11 +16,27 @@ export class OpenCodeClient {
 
   async listSessions(serverID, options = {}) {
     const server = this.server(serverID)
-    return this.request(server, "/session", this.requestOptions(server, options))
+    return this.request(server, "/session", this.requestOptions(server, {
+      ...options,
+      query: {
+        ...options.query,
+        ...(Number.isFinite(options.start) ? { start: options.start } : {}),
+        ...(Number.isFinite(options.limit) ? { limit: options.limit } : {}),
+        ...(options.search ? { search: options.search } : {}),
+      },
+    }))
   }
 
   async getSession(serverID, sessionID, options = {}) {
     return this.request(this.server(serverID), `/session/${encodeURIComponent(sessionID)}`, options)
+  }
+
+  async message(serverID, sessionID, messageID, options = {}) {
+    return this.request(
+      this.server(serverID),
+      `/session/${encodeURIComponent(sessionID)}/message/${encodeURIComponent(messageID)}`,
+      options,
+    )
   }
 
   async createSession(serverID, options = {}) {
