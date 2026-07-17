@@ -547,8 +547,31 @@ async function smokeStateMarkerBatching() {
     await state.markAssistantMirrored("nuc", "ses", "msg-1")
     await state.markAssistantMirrored("nuc", "ses", "msg-1")
     await state.markAssistantMirroredMany("nuc", "ses", ["msg-1", "msg-2", "msg-3"])
-    assert.equal(saves, 2)
+    assert.equal(saves, 0)
     assert.equal(state.isAssistantMirrored("nuc", "ses", "msg-3"), true)
+    const persisted = JSON.parse(await readFile(path.join(root, "state.json"), "utf8"))
+    assert.deepEqual(persisted.mirroredAssistantBySession, {})
+    const reloaded = new StateStore(path.join(root, "state.json"))
+    await reloaded.load()
+    assert.equal(reloaded.isAssistantMirrored("nuc", "ses", "msg-3"), true)
+    await rm(path.join(root, "state.json"), { force: true })
+    const journalOnly = new StateStore(path.join(root, "state.json"))
+    await journalOnly.load()
+    assert.equal(journalOnly.isAssistantMirrored("nuc", "ses", "msg-3"), true)
+
+    const legacyPath = path.join(root, "legacy-state.json")
+    await writeFile(legacyPath, JSON.stringify({
+      version: 1,
+      mirroredAssistantBySession: { "nuc:legacy": ["legacy-assistant"] },
+      mirroredUserBySession: { "nuc:legacy": ["legacy-user"] },
+    }))
+    const legacy = new StateStore(legacyPath)
+    await legacy.load()
+    assert.equal(legacy.isAssistantMirrored("nuc", "legacy", "legacy-assistant"), true)
+    assert.equal(legacy.isUserMirrored("nuc", "legacy", "legacy-user"), true)
+    const migrated = JSON.parse(await readFile(legacyPath, "utf8"))
+    assert.deepEqual(migrated.mirroredAssistantBySession, {})
+    assert.deepEqual(migrated.mirroredUserBySession, {})
   } finally {
     await rm(root, { recursive: true, force: true })
   }

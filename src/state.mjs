@@ -15,8 +15,10 @@ const TOPIC_ICON_FIELDS = ["topicIconCustomEmojiId", "topicIconEmoji", "topicIco
 export class StateStore {
   constructor(filePath) {
     this.filePath = filePath
+    this.markerPath = `${filePath}.mirror-markers.ndjson`
     this.data = defaultState()
     this.queue = Promise.resolve()
+    this.markerQueue = Promise.resolve()
   }
 
   async load() {
@@ -40,13 +42,19 @@ export class StateStore {
       this.data.telegram.artifactsTopic ||= null
       this.data.telegram.soundsTopic ||= null
       this.data.runtime ||= {}
+      const legacyMirrorMarkers = hasMirrorMarkers(this.data)
+      await this.loadMirrorMarkerJournal()
       const migratedResetTitles = migrateResetTitleOwnership(this.data)
       const reconciledTopicMetadata = reconcileTopicMetadata(this.data)
       const pruned = pruneState(this.data)
-      if (migratedResetTitles || reconciledTopicMetadata || pruned) await this.save()
+      await this.compactMirrorMarkerJournal()
+      if (legacyMirrorMarkers || migratedResetTitles || reconciledTopicMetadata || pruned) await this.save()
     } catch (error) {
       if (error.code !== "ENOENT") throw error
       this.data = defaultState()
+      await this.loadMirrorMarkerJournal()
+      pruneState(this.data)
+      await this.compactMirrorMarkerJournal()
       await this.save()
     }
     return this.data
@@ -55,8 +63,58 @@ export class StateStore {
   async save() {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true })
     const temp = `${this.filePath}.${process.pid}.tmp`
-    await fs.writeFile(temp, JSON.stringify(this.data, null, 2) + "\n", { mode: 0o600 })
+    const persisted = {
+      ...this.data,
+      mirroredAssistantBySession: {},
+      mirroredUserBySession: {},
+    }
+    await fs.writeFile(temp, JSON.stringify(persisted, null, 2) + "\n", { mode: 0o600 })
     await fs.rename(temp, this.filePath)
+  }
+
+  async loadMirrorMarkerJournal() {
+    let text
+    try {
+      text = await fs.readFile(this.markerPath, "utf8")
+    } catch (error) {
+      if (error.code === "ENOENT") return
+      throw error
+    }
+    for (const line of text.split("\n")) {
+      if (!line) continue
+      const value = JSON.parse(line)
+      const marker = Array.isArray(value)
+        ? { kind: value[0] === "u" ? "user" : "assistant", serverID: value[1], sessionID: value[2], messageID: value[3] }
+        : value
+      const target = marker.kind === "user" ? this.data.mirroredUserBySession : this.data.mirroredAssistantBySession
+      addMirroredMessage(target, marker.serverID, marker.sessionID, marker.messageID)
+    }
+  }
+
+  async compactMirrorMarkerJournal() {
+    await fs.mkdir(path.dirname(this.markerPath), { recursive: true })
+    const temp = `${this.markerPath}.${process.pid}.tmp`
+    const lines = [
+      ...mirrorMarkerLines(this.data.mirroredAssistantBySession, "assistant"),
+      ...mirrorMarkerLines(this.data.mirroredUserBySession, "user"),
+    ]
+    await fs.writeFile(temp, lines.length ? `${lines.join("\n")}\n` : "", { mode: 0o600 })
+    await fs.rename(temp, this.markerPath)
+  }
+
+  appendMirrorMarkers(kind, serverID, sessionID, messageIDs) {
+    const update = this.markerQueue.then(async () => {
+      const target = kind === "user" ? this.data.mirroredUserBySession : this.data.mirroredAssistantBySession
+      const pending = [...new Set(messageIDs)].filter((messageID) => !hasMirroredMessage(target, serverID, sessionID, messageID))
+      if (!pending.length) return false
+      const lines = pending.map((messageID) => mirrorMarkerLine(kind, serverID, sessionID, messageID)).join("\n")
+      await fs.appendFile(this.markerPath, `${lines}\n`, { mode: 0o600 })
+      for (const messageID of pending) addMirroredMessage(target, serverID, sessionID, messageID)
+      pruneMirroredBuckets(target)
+      return true
+    })
+    this.markerQueue = update.catch(() => undefined)
+    return update
   }
 
   async update(mutator) {
@@ -587,22 +645,11 @@ export class StateStore {
   }
 
   async markAssistantMirrored(serverID, sessionID, messageID) {
-    if (this.isAssistantMirrored(serverID, sessionID, messageID)) return false
-    return this.update((data) => {
-      data.mirroredAssistantBySession ||= {}
-      return markMirroredMessage(data.mirroredAssistantBySession, serverID, sessionID, messageID)
-    })
+    return this.appendMirrorMarkers("assistant", serverID, sessionID, [messageID])
   }
 
   async markAssistantMirroredMany(serverID, sessionID, messageIDs) {
-    const pending = [...new Set(messageIDs)].filter((messageID) => !this.isAssistantMirrored(serverID, sessionID, messageID))
-    if (!pending.length) return false
-    return this.update((data) => {
-      data.mirroredAssistantBySession ||= {}
-      let changed = false
-      for (const messageID of pending) changed = markMirroredMessage(data.mirroredAssistantBySession, serverID, sessionID, messageID) || changed
-      return changed
-    })
+    return this.appendMirrorMarkers("assistant", serverID, sessionID, messageIDs)
   }
 
   isUserMirrored(serverID, sessionID, messageID) {
@@ -610,11 +657,7 @@ export class StateStore {
   }
 
   async markUserMirrored(serverID, sessionID, messageID) {
-    if (this.isUserMirrored(serverID, sessionID, messageID)) return false
-    return this.update((data) => {
-      data.mirroredUserBySession ||= {}
-      return markMirroredMessage(data.mirroredUserBySession, serverID, sessionID, messageID)
-    })
+    return this.appendMirrorMarkers("user", serverID, sessionID, [messageID])
   }
 
   questionRecord(requestID) {
@@ -713,13 +756,32 @@ function hasMirroredMessage(bySession, serverID, sessionID, messageID) {
   return Boolean(bySession?.[key]?.includes(messageID))
 }
 
-function markMirroredMessage(bySession, serverID, sessionID, messageID) {
+function addMirroredMessage(bySession, serverID, sessionID, messageID) {
   const key = sessionMirrorKey(serverID, sessionID)
   bySession[key] ||= []
   if (bySession[key].includes(messageID)) return false
   bySession[key].push(messageID)
-  pruneMirroredBuckets(bySession)
   return true
+}
+
+function hasMirrorMarkers(data) {
+  return Object.keys(data.mirroredAssistantBySession || {}).length > 0 || Object.keys(data.mirroredUserBySession || {}).length > 0
+}
+
+function mirrorMarkerLines(bySession, kind) {
+  const lines = []
+  for (const [key, messageIDs] of Object.entries(bySession || {})) {
+    const separator = key.indexOf(":")
+    if (separator < 0) continue
+    const serverID = key.slice(0, separator)
+    const sessionID = key.slice(separator + 1)
+    for (const messageID of messageIDs || []) lines.push(mirrorMarkerLine(kind, serverID, sessionID, messageID))
+  }
+  return lines
+}
+
+function mirrorMarkerLine(kind, serverID, sessionID, messageID) {
+  return JSON.stringify([kind === "user" ? "u" : "a", serverID, sessionID, messageID])
 }
 
 function pruneState(data) {
