@@ -135,6 +135,21 @@ test("a durable reconcile cursor avoids replaying older pages after restart", as
 
   assert.equal(harness.pageCalls, 1)
   assert.deepEqual(harness.renderedAssistants, ["New progress"])
+  assert.deepEqual(harness.pageLimits, [5])
+})
+
+test("reconcile uses a small first page and full-sized fallback pages", async () => {
+  const harness = createHarness({
+    pages: [
+      { messages: [assistantMessage("assistant-new", "New progress")], before: "older" },
+      { messages: [userMessage("user-old", "Prompt")], before: undefined },
+    ],
+    usersOnly: false,
+  })
+
+  await harness.reconciler.reconcileBinding(harness.binding)
+
+  assert.deepEqual(harness.pageLimits, [5, 20])
 })
 
 test("an unchanged watchdog checks the small session object without fetching messages", async () => {
@@ -279,8 +294,8 @@ test("a completed assistant event uses the exact message renderer", async () => 
 
   assert.equal(harness.messageCalls, 1)
   assert.equal(harness.pageCalls, 0)
-  assert.equal(harness.renderedAssistants.length, 1)
-  assert.equal(harness.renderedAssistants[0].info.id, "assistant-exact")
+  assert.deepEqual(harness.renderedAssistants, ["Exact answer"])
+  assert.equal(harness.renderedAssistants.includes("[object Object]"), false)
 })
 
 function createHarness({ cursor, pages, targetedMessage, usersOnly = true, watchdog = false } = {}) {
@@ -299,6 +314,7 @@ function createHarness({ cursor, pages, targetedMessage, usersOnly = true, watch
   let messages = []
   let terminalMirrors = 0
   let pageCalls = 0
+  const pageLimits = []
   let sessionCalls = 0
   let messageCalls = 0
   const renderedUsers = []
@@ -349,7 +365,8 @@ function createHarness({ cursor, pages, targetedMessage, usersOnly = true, watch
       },
     } : {}),
     ...(pages ? {
-      messagePage: async () => {
+      messagePage: async (_serverID, _sessionID, options) => {
+        pageLimits.push(options.limit)
         const page = pages[pageCalls] || { messages: [], before: undefined }
         pageCalls += 1
         return page
@@ -393,6 +410,7 @@ function createHarness({ cursor, pages, targetedMessage, usersOnly = true, watch
     get pageCalls() {
       return pageCalls
     },
+    pageLimits,
     get sessionCalls() {
       return sessionCalls
     },

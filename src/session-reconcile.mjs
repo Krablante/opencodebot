@@ -23,6 +23,7 @@ export function createSessionReconciler({
   logError,
   shouldStop,
   incompleteRunGraceMs = 1500,
+  initialMessagePageSize = 5,
   messagePageSize = 20,
   reconcileWatchdogMs = 60_000,
   sessionScanOverlapMs = 5 * 60_000,
@@ -303,7 +304,9 @@ export function createSessionReconciler({
       scheduleReconcile(binding, 500)
       return
     }
-    await renderer.assistantMessage(binding, message)
+    await renderStoredAssistantMessage(binding, message)
+    await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
+    if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding)
   }
 
   async function mirrorTargetedUserMessage(binding, message) {
@@ -643,7 +646,7 @@ export function createSessionReconciler({
       const page = await backendRequest(binding.serverID, "session message page", () => opencode.messagePage(binding.serverID, binding.sessionID, {
         before,
         directory: binding.directory,
-        limit: messagePageSize,
+        limit: pages === 0 ? Math.min(initialMessagePageSize, messagePageSize) : messagePageSize,
       }))
       if (page === skippedBackendRequest) return skippedBackendRequest
       const items = Array.isArray(page.messages) ? page.messages : []
