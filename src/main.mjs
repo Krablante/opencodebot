@@ -72,7 +72,15 @@ const backendRequester = createBackendRequester()
 const skippedBackendRequest = backendRequester.skipped
 const backendRequest = backendRequester.request
 const speech = new SpeechModule({ config: config.speech, telegram, state, uploadDir: config.paths.uploadsDir, attachmentSettings: config.attachments })
-const questionManager = createQuestionManager({ config, state, telegram, opencode, logError })
+const questionManager = createQuestionManager({
+  config,
+  state,
+  telegram,
+  opencode,
+  backendRequest,
+  skippedBackendRequest,
+  logError,
+})
 const artifactUploads = new ArtifactUploadBuffer({
   settings: config.artifactUploads,
   flushUpload: ({ message, files }) => handleArtifactUploadMessage({ telegram, config, opencode, message, files }),
@@ -143,7 +151,9 @@ startArtifactGateway({ config, state, telegram, signal: abort.signal })
 console.log(`[opencodebot] starting ${config.opencode.servers.length} OpenCodez event streams`)
 
 for (const server of config.opencode.servers) {
-  opencode.subscribeEvents(server.id, sessionReconciler.handleOpenCodeEvent, abort.signal)
+  opencode.subscribeEvents(server.id, sessionReconciler.handleOpenCodeEvent, abort.signal, {
+    onConnected: () => questionManager.reconcileServer(server.id),
+  })
 }
 
 questionManager.reconcile().catch(logError)

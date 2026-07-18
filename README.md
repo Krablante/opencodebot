@@ -20,7 +20,7 @@ The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/eve
 - `/reset` to preserve the old session and start fresh in the same Telegram topic.
 - Reply to an earlier Telegram user prompt to rewind that OpenCodez branch and replace it with the reply text and attachments.
 - Rich assistant messages sent as completed blocks instead of noisy token streaming; nested lists are structurally normalized to stable visual lines because Telegram Rich Message mis-renders list dedents.
-- Single-choice OpenCodez questions mirrored into the bound topic with Telegram buttons; configured recipients receive a direct notification linking to the question.
+- Single-choice OpenCodez questions mirrored into the bound topic with Telegram buttons; configured recipients receive a direct notification linking to the question. SSE delivery is immediate, while the existing 15-second reconcile loop and every SSE reconnect query pending questions as a recovery path; request-level single-flight prevents event/recovery duplicates.
 - Global `/mode full|economy` mirror modes: full keeps compact expandable tool quotes, while economy shows assistant progress and final answers without Telegram tool traffic.
 - Both modes announce task/subagent spawns with a short robot notice that uses the web-visible task title; child-session prompts, tool logs, and results stay hidden.
 - Attachments and Telegram media groups attached to the next prompt; large files are copied to the target server's configured upload root and referenced by server-local path.

@@ -20,6 +20,7 @@ import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { createFinalNotifier, finalNotificationMarkdown, finalNotificationTopicSource, formatDebugDiagnosticsText, formatDuration, formatTokenCount, runDiagnosticsBeforeAssistant, toolSummaryBeforeAssistant, turnMetadataBeforeAssistant, turnTokenUsageBeforeAssistant } from "../src/final-notifications.mjs"
 import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
+import { createQuestionManager } from "../src/questions.mjs"
 import { MirrorRenderer, richWebPromptMessages, webPromptMessages } from "../src/render.mjs"
 import { normalizeNestedRichLists } from "../src/rich-list-normalization.mjs"
 import { bindingSessionReconcileRefresh, createSessionReconciler, isManualCompactionPart, normalizeSessionError, shouldSkipAssistantForCatchup, shouldSyncManagedTopicTitle } from "../src/session-reconcile.mjs"
@@ -75,6 +76,7 @@ async function smokeLocalInvariants() {
   await smokeFinalNotificationRetry()
   await smokeCoreFailureInvariants()
   await smokeDeferredStatePersistence()
+  await smokeQuestionRecovery()
   await smokeChunkedWebPromptMirror()
   await smokeKillCommand()
   await smokeCompactCommand()
@@ -554,6 +556,72 @@ async function smokeDeferredStatePersistence() {
   }
 }
 
+async function smokeQuestionRecovery() {
+  const server = { id: "dima", home: "/workspace" }
+  const binding = { serverID: "dima", sessionID: "session-1", directory: "/workspace", chatId: 123, topicId: 456, topicTitle: "Questions" }
+  const request = {
+    id: "question-1",
+    sessionID: binding.sessionID,
+    questions: [{ header: "Choice", question: "Pick one", options: [{ label: "A", description: "First" }] }],
+  }
+  const records = new Map()
+  let questionCalls = 0
+  let sendCalls = 0
+  let releaseSend
+  const sendGate = new Promise((resolve) => {
+    releaseSend = resolve
+  })
+  const state = {
+    bindings: () => [binding],
+    findBinding: () => binding,
+    questionRecord: (requestID) => records.get(requestID),
+    questionRecords: () => [...records.values()],
+    async upsertQuestion(record) { records.set(record.requestID, structuredClone(record)) },
+    async resolveQuestion(requestID, status, answers) {
+      const record = records.get(requestID)
+      records.set(requestID, { ...record, status, answers })
+    },
+    hasPendingQuestion: () => false,
+  }
+  const telegram = {
+    async sendMessage() {
+      sendCalls += 1
+      await sendGate
+      return { message_id: 999 }
+    },
+    async editMessageText() {},
+  }
+  const opencode = {
+    servers: new Map([[server.id, server]]),
+    async questions() {
+      questionCalls += 1
+      return [request]
+    },
+  }
+  const manager = createQuestionManager({
+    config: { telegram: {}, finalNotifications: { userIds: [] } },
+    state,
+    telegram,
+    opencode,
+  })
+
+  const eventSend = manager.handleEvent(server, binding, { type: "question.asked", properties: request })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const reconcileSend = manager.reconcileServer(server.id)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(questionCalls, 1)
+  assert.equal(sendCalls, 1)
+  releaseSend()
+  await Promise.all([eventSend, reconcileSend])
+  assert.equal(records.get(request.id).messageId, 999)
+
+  await manager.handleEvent(server, binding, {
+    type: "question.replied",
+    properties: { requestID: request.id, sessionID: binding.sessionID, answers: [["A"]] },
+  })
+  assert.equal(records.get(request.id).status, "answered")
+}
+
 async function smokeOpenCodeMessagePaging() {
   const requests = []
   const server = createServer((request, response) => {
@@ -645,6 +713,7 @@ async function smokeStateMarkerBatching() {
 
 async function smokeOpenCodeEventOrdering() {
   const events = []
+  const connections = []
   const server = createServer((request, response) => {
     if (request.url !== "/event") {
       response.writeHead(404).end()
@@ -664,8 +733,11 @@ async function smokeOpenCodeEventOrdering() {
       if (event.type === "first") await wait(25)
       events.push(`end:${event.type}`)
       if (event.type === "second") controller.abort()
-    }, controller.signal)
+    }, controller.signal, {
+      onConnected: (connectedServer, details) => connections.push({ serverID: connectedServer.id, reconnected: details.reconnected }),
+    })
     assert.deepEqual(events, ["start:first", "end:first", "start:second", "end:second"])
+    assert.deepEqual(connections, [{ serverID: "local", reconnected: false }])
   } finally {
     controller.abort()
     await close()
@@ -1988,6 +2060,7 @@ async function smokeTopicCreationSingleFlight() {
 async function smokeReconcileTopicRetry() {
   const errors = []
   let listCalls = 0
+  let questionCalls = 0
   let seenCalls = 0
   let stopped = false
   const session = { id: "ses_topic_retry", title: "Retry topic", directory: "/tmp/project" }
@@ -2017,7 +2090,7 @@ async function smokeReconcileTopicRetry() {
     },
     renderer: {},
     promptQueue: {},
-    questionManager: {},
+    questionManager: { reconcile: async () => { questionCalls += 1 } },
     backendRequest: async (_serverID, _label, operation) => operation(),
     skippedBackendRequest: Symbol("skipped"),
     createTopicForSession: async () => {
@@ -2033,6 +2106,7 @@ async function smokeReconcileTopicRetry() {
   })
 
   await reconciler.reconcileLoop()
+  assert.equal(questionCalls, 1)
   assert.equal(seenCalls, 0)
   assert.equal(errors.length, 1)
 }

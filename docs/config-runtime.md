@@ -212,6 +212,8 @@ The final DM is intentionally short and mode-neutral: it includes a source `Topi
 
 The same configured `userIds` receive blocking OpenCodez question alerts with a direct link to the topic message. These alerts do not follow the per-user final-notification toggle because a pending question stops the active run. No additional recipient setting is required.
 
+Question recovery uses the existing `reconcile.intervalMs` cadence; there is no separate question polling knob or scheduler. Live `question.asked` remains immediate through SSE. Periodic and post-reconnect recovery query pending questions for unique active bound directories with the shared backend backoff, so a missed ephemeral event is normally recovered within one reconcile interval without duplicate Telegram messages.
+
 ## Artifacts
 
 `artifacts.enabled` starts the optional LAN artifact gateway. The gateway is for agent-created screenshots, logs, text snippets, and files that should be delivered to one Telegram artifacts topic. It is not a mirror-session router and it does not try to infer the current OpenCodez topic.

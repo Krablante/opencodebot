@@ -511,6 +511,7 @@ export function createSessionReconciler({
     while (!shouldStop()) {
       await delay(config.reconcile.intervalMs).catch(() => {})
       if (shouldStop()) break
+      if (questionManager?.reconcile) await questionManager.reconcile().catch(logError)
       if (!state.mirrorEnabled(config)) continue
       await reconcileSessions().catch(logError)
       const groups = Map.groupBy(

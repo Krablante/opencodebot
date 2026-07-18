@@ -1,18 +1,46 @@
 import { clampTelegram, escapeHtml, telegramMessageLink } from "./telegram.mjs"
+import { logInfo } from "./logger.mjs"
 
 const CALLBACK_PREFIX = "oq:"
 
-export function createQuestionManager({ config, state, telegram, opencode, logError = () => {} }) {
-  const inflight = new Set()
+export function createQuestionManager({
+  config,
+  state,
+  telegram,
+  opencode,
+  backendRequest,
+  skippedBackendRequest,
+  logError = () => {},
+}) {
+  const inflight = new Map()
+  const reconcileOperations = new Map()
 
   async function handleEvent(server, binding, event) {
+    const requestID = event.properties?.id || event.properties?.requestID
+    logInfo("question.event.received", {
+      source: server.id,
+      eventType: event.type,
+      requestID,
+      sessionID: event.properties?.sessionID,
+    })
     if (event.type === "question.asked") return handleAsked(server, binding, event.properties)
+    const pending = inflight.get(questionOperationKey(server.id, requestID))
+    if (pending) await pending.catch(() => undefined)
     if (event.type === "question.replied") return handleResolved(event.properties.requestID, "answered", event.properties.answers || [])
     if (event.type === "question.rejected") return handleResolved(event.properties.requestID, "rejected", [])
     return false
   }
 
-  async function handleAsked(server, binding, info) {
+  function handleAsked(server, binding, info, delivery = "event") {
+    const key = questionOperationKey(server.id, info.id)
+    const pending = inflight.get(key)
+    if (pending) return pending
+    const operation = sendQuestion(server, binding, info, delivery).finally(() => inflight.delete(key))
+    inflight.set(key, operation)
+    return operation
+  }
+
+  async function sendQuestion(server, binding, info, delivery) {
     const existing = state.questionRecord(info.id)
     if (existing?.status === "pending" && existing.messageId) {
       await telegram.editMessageText({
@@ -23,39 +51,41 @@ export function createQuestionManager({ config, state, telegram, opencode, logEr
       })
       return true
     }
-    if (inflight.has(info.id)) return true
-    inflight.add(info.id)
-    try {
-      const questions = normalizeQuestions(info.questions)
-      const question = questions.length === 1 ? questions[0] : null
-      const record = {
-        requestID: info.id,
-        serverID: server.id,
-        sessionID: info.sessionID,
-        chatId: binding.chatId,
-        topicId: binding.topicId,
-        directory: binding.directory,
-        status: "pending",
-        interactive: Boolean(question && !question.multiple && question.options.length),
-        question,
-        questions,
-        answers: [],
-        notifiedUserIds: existing?.notifiedUserIds || [],
-        createdAt: existing?.createdAt || new Date().toISOString(),
-      }
-      const sent = await telegram.sendMessage({
-        chatId: binding.chatId,
-        topicId: binding.topicId,
-        text: renderQuestion(record),
-        replyMarkup: questionReplyMarkup(record),
-      })
-      record.messageId = sent.message_id
-      await state.upsertQuestion(record)
-      await notifyRecipients(binding, record)
-      return true
-    } finally {
-      inflight.delete(info.id)
+    const questions = normalizeQuestions(info.questions)
+    const question = questions.length === 1 ? questions[0] : null
+    const record = {
+      requestID: info.id,
+      serverID: server.id,
+      sessionID: info.sessionID,
+      chatId: binding.chatId,
+      topicId: binding.topicId,
+      directory: binding.directory,
+      status: "pending",
+      interactive: Boolean(question && !question.multiple && question.options.length),
+      question,
+      questions,
+      answers: [],
+      notifiedUserIds: existing?.notifiedUserIds || [],
+      createdAt: existing?.createdAt || new Date().toISOString(),
     }
+    const sent = await telegram.sendMessage({
+      chatId: binding.chatId,
+      topicId: binding.topicId,
+      text: renderQuestion(record),
+      replyMarkup: questionReplyMarkup(record),
+    })
+    record.messageId = sent.message_id
+    await state.upsertQuestion(record)
+    logInfo("question.telegram.sent", {
+      source: server.id,
+      sessionID: info.sessionID,
+      requestID: info.id,
+      topicId: binding.topicId,
+      interactive: record.interactive,
+      delivery,
+    })
+    await notifyRecipients(binding, record)
+    return true
   }
 
   async function handleResolved(requestID, status, answers) {
@@ -72,6 +102,12 @@ export function createQuestionManager({ config, state, telegram, opencode, logEr
     } catch (error) {
       logError(error, { event: "question.message.edit", requestID })
     }
+    logInfo("question.resolved", {
+      source: record.serverID,
+      sessionID: record.sessionID,
+      requestID,
+      status,
+    })
     return true
   }
 
@@ -127,23 +163,42 @@ export function createQuestionManager({ config, state, telegram, opencode, logEr
   }
 
   async function reconcile() {
-    for (const server of opencode.servers.values()) {
-      const directories = new Set([server.home, ...state.bindings().filter((binding) => binding.serverID === server.id).map((binding) => binding.directory)].filter(Boolean))
-      for (const directory of directories) {
-        try {
-          const pending = await opencode.questions(server.id, { directory })
-          const pendingIDs = new Set(pending.map((item) => item.id))
-          for (const info of pending) {
-            const binding = state.findBinding(server.id, info.sessionID)
-            if (binding) await handleAsked(server, binding, info)
-          }
-          for (const record of state.questionRecords()) {
-            if (record.serverID !== server.id || record.directory !== directory || record.status !== "pending" || pendingIDs.has(record.requestID)) continue
-            await handleResolved(record.requestID, "closed", [])
-          }
-        } catch (error) {
-          logError(error, { event: "question.reconcile", serverID: server.id, directory })
+    await Promise.all([...opencode.servers.values()].map((server) => reconcileServer(server.id)))
+  }
+
+  function reconcileServer(serverID) {
+    const existing = reconcileOperations.get(serverID)
+    if (existing) return existing
+    const operation = reconcileServerNow(serverID).finally(() => reconcileOperations.delete(serverID))
+    reconcileOperations.set(serverID, operation)
+    return operation
+  }
+
+  async function reconcileServerNow(serverID) {
+    const server = opencode.servers.get(serverID)
+    if (!server) return
+    const directories = new Set([
+      server.home,
+      ...state.bindings().filter((binding) => binding.serverID === server.id && !binding.disabled).map((binding) => binding.directory),
+    ].filter(Boolean))
+    for (const directory of directories) {
+      try {
+        const pending = backendRequest
+          ? await backendRequest(server.id, "pending questions", () => opencode.questions(server.id, { directory }))
+          : await opencode.questions(server.id, { directory })
+        if (pending === skippedBackendRequest) return
+        const pendingIDs = new Set(pending.map((item) => item.id))
+        if (pending.length) logInfo("question.reconcile.discovered", { source: server.id, directory, pending: pending.length })
+        await Promise.all(pending.map(async (info) => {
+          const binding = state.findBinding(server.id, info.sessionID)
+          if (binding) await handleAsked(server, binding, info, "reconcile")
+        }))
+        for (const record of state.questionRecords()) {
+          if (record.serverID !== server.id || record.directory !== directory || record.status !== "pending" || pendingIDs.has(record.requestID)) continue
+          await handleResolved(record.requestID, "closed", [])
         }
+      } catch (error) {
+        logError(error, { event: "question.reconcile", serverID: server.id, directory })
       }
     }
   }
@@ -171,7 +226,11 @@ export function createQuestionManager({ config, state, telegram, opencode, logEr
     }
   }
 
-  return { handleEvent, handleCallback, handleReplyMessage, reconcile, hasPending }
+  return { handleEvent, handleCallback, handleReplyMessage, reconcile, reconcileServer, hasPending }
+}
+
+function questionOperationKey(serverID, requestID) {
+  return `${serverID}:${requestID}`
 }
 
 function normalizeQuestions(questions) {

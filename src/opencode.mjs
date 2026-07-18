@@ -182,7 +182,7 @@ export class OpenCodeClient {
     return options.includeHeaders ? { data, headers: response.headers } : data
   }
 
-  async subscribeEvents(serverID, onEvent, signal) {
+  async subscribeEvents(serverID, onEvent, signal, { onConnected } = {}) {
     const server = this.server(serverID)
     const requestOptions = this.requestOptions(server, { mirror: true })
     let retryDelayMs = 2500
@@ -196,10 +196,18 @@ export class OpenCodeClient {
         if (auth) headers.authorization = auth
         const response = await fetch(url, { headers, signal })
         if (!response.ok || !response.body) throw new Error(`event stream failed: ${response.status}`)
-        if (offlineSince) console.info(`[opencodebot] ${serverID} event stream recovered`)
+        const reconnected = Boolean(offlineSince)
+        if (reconnected) console.info(`[opencodebot] ${serverID} event stream recovered`)
         retryDelayMs = 2500
         offlineSince = 0
         lastOfflineLogAt = 0
+        if (onConnected) {
+          try {
+            await onConnected(server, { reconnected })
+          } catch (error) {
+            console.warn(`[opencodebot] ${serverID} event stream connected recovery failed: ${error.message}`)
+          }
+        }
         await readSse(response.body, (event) => onEvent(server, event), signal)
         if (!signal?.aborted) throw new Error("event stream closed")
       } catch (error) {
