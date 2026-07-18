@@ -78,6 +78,7 @@ async function smokeLocalInvariants() {
   await smokeChunkedWebPromptMirror()
   await smokeKillCommand()
   await smokeCompactCommand()
+  await smokeContextCommands()
   await smokeResetCommand()
   await smokeKillCommandAbortFailure()
   await smokeKillSuppressesAbortFallout()
@@ -511,6 +512,12 @@ async function smokeDeferredStatePersistence() {
   try {
     const state = new StateStore(statePath)
     await state.load()
+    assert.equal(state.contextPairsForUser(42, 3), 3)
+    await state.setContextPairsForUser(42, 6)
+    assert.equal(state.contextPairsForUser(42, 3), 6)
+    const reloaded = new StateStore(statePath)
+    await reloaded.load()
+    assert.equal(reloaded.contextPairsForUser(42, 3), 6)
 
     let saves = 0
     const save = state.save.bind(state)
@@ -1373,6 +1380,83 @@ async function smokeCompactCommand() {
   await wait(0)
   assert.equal(abortCalls, 1)
   assert.match(edited.at(-1).text, /compaction stopped/)
+}
+
+async function smokeContextCommands() {
+  assert.ok(telegramBotCommands.some((command) => command.command === "context"))
+  assert.ok(telegramBotCommands.some((command) => command.command === "set_context"))
+
+  const binding = { serverID: "nuc", sessionID: "ses_context", directory: "/tmp/work", topicId: 456 }
+  const sent = []
+  const rich = []
+  const deleted = []
+  let defaultPairs = 3
+  let richAttempts = 0
+  let failRichAt = Infinity
+  let contextMessages = [
+    { info: { id: "u1", role: "user" }, parts: [{ type: "text", text: "First private prompt" }] },
+    { info: { id: "a1", role: "assistant", finish: "stop" }, parts: [{ type: "text", text: "First final answer" }] },
+    { info: { id: "u2", role: "user" }, parts: [{ type: "text", text: "Second private prompt" }] },
+    { info: { id: "a2", role: "assistant", finish: "stop" }, parts: [{ type: "text", text: "Second final answer" }] },
+    { info: { id: "u3", role: "user" }, parts: [{ type: "text", text: "Unfinished private prompt" }] },
+  ]
+  const handlers = createTelegramCommandHandlers({
+    config: { chatTemplates: {} },
+    state: {
+      findBindingByTopic() {
+        return binding
+      },
+      contextPairsForUser() {
+        return defaultPairs
+      },
+      async setContextPairsForUser(_userID, count) {
+        defaultPairs = count
+      },
+    },
+    telegram: {
+      async sendMessage(message) {
+        sent.push(message)
+        return { message_id: sent.length }
+      },
+      async sendRichMessage(message) {
+        richAttempts += 1
+        if (richAttempts === failRichAt) throw new Error("rich unavailable")
+        rich.push(message)
+        return { message_id: 100 + rich.length }
+      },
+      async deleteMessage(message) { deleted.push(message.messageId) },
+    },
+    opencode: {
+      async messagePage() {
+        return { messages: contextMessages }
+      },
+    },
+    promptQueue: {},
+    multipartPrompts: { async flushKey() {} },
+    createPendingTopic: async () => {},
+  })
+  const message = { chat: { id: 123 }, from: { id: 42 }, message_thread_id: 456 }
+
+  await handlers.handle(message, { name: "set_context", args: "2" }, "123:456")
+  assert.equal(defaultPairs, 2)
+  assert.match(sent.at(-1).text, /Context default saved/)
+
+  await handlers.handle(message, { name: "context", args: "" }, "123:456")
+  assert.equal(rich.length, 1)
+  assert.match(rich[0].html, /^<details><summary>/)
+  assert.match(rich[0].html, /<pre><code>/)
+  assert.match(rich[0].html, /First private prompt/)
+  assert.doesNotMatch(rich[0].html, /Unfinished private prompt/)
+
+  contextMessages = [
+    { info: { id: "u-large", role: "user" }, parts: [{ type: "text", text: "Large private prompt" }] },
+    { info: { id: "a-large", role: "assistant", finish: "stop" }, parts: [{ type: "text", text: "x".repeat(40_000) }] },
+  ]
+  failRichAt = richAttempts + 2
+  await handlers.handle(message, { name: "context", args: "1" }, "123:456")
+  assert.deepEqual(deleted, [102])
+  assert.match(sent.at(-1).text, /No plain-text fallback was posted/)
+  assert.doesNotMatch(sent.at(-1).text, /Large private prompt/)
 }
 
 async function smokeResetCommand() {

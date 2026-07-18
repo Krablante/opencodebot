@@ -5,6 +5,13 @@ import { managedTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
 import { formatArtifactUploadHelp } from "./artifact-uploads.mjs"
 import { logErrorEvent, logInfo } from "./logger.mjs"
 import { resolveSessionProfile } from "./opencode.mjs"
+import {
+  buildCollapsedContextMessages,
+  DEFAULT_CONTEXT_PAIRS,
+  loadRecentContextTurns,
+  MAX_CONTEXT_PAIRS,
+  parseContextPairCount,
+} from "./context-export.mjs"
 
 export const telegramBotCommands = [
   { command: "new", description: "Create a new OpenCodez session topic" },
@@ -17,6 +24,8 @@ export const telegramBotCommands = [
   { command: "q", description: "Queue prompts for the current session" },
   { command: "kill", description: "Stop the current run and clear queued prompts" },
   { command: "compact", description: "Compact the current session context" },
+  { command: "context", description: "Copy recent completed turns" },
+  { command: "set_context", description: "Set default context pair count" },
   { command: "notify_on", description: "Enable final-answer DMs" },
   { command: "notify_off", description: "Disable final-answer DMs" },
   { command: "notify_status", description: "Show final-answer DM status" },
@@ -65,6 +74,8 @@ export function createTelegramCommandHandlers({
     q: handleQueueCommand,
     kill: handleKillCommand,
     compact: handleCompactCommand,
+    context: handleContext,
+    set_context: handleSetContext,
     notify_on: handleNotifyOn,
     notify_off: handleNotifyOff,
     notify_status: handleNotifyStatus,
@@ -105,6 +116,123 @@ export function createTelegramCommandHandlers({
       topicId: topicId(message),
       text: `🎛️ Mode: <b>${escapeHtml(mode.toUpperCase())}</b>\nScope: all mirrored topics`,
     })
+  }
+
+  async function handleSetContext(message, args) {
+    const userID = message.from?.id
+    if (!userID) return
+    let count
+    try {
+      count = parseContextPairCount(args, { allowEmpty: true })
+    } catch {
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: topicId(message),
+        text: `Usage: <code>/set_context N</code> where N is 1–${MAX_CONTEXT_PAIRS}.`,
+      })
+      return
+    }
+    if (count === undefined) {
+      const current = state.contextPairsForUser(userID, DEFAULT_CONTEXT_PAIRS)
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: topicId(message),
+        text: `📋 <b>Context default:</b> ${current} ${pairLabel(current)}\nUse <code>/set_context N</code> to change it.`,
+      })
+      return
+    }
+    await state.setContextPairsForUser(userID, count)
+    await telegram.sendMessage({
+      chatId: message.chat.id,
+      topicId: topicId(message),
+      text: `✅ <b>Context default saved:</b> ${count} ${pairLabel(count)}\n<code>/context</code> now uses this value; <code>/context N</code> overrides it once.`,
+    })
+  }
+
+  async function handleContext(message, args) {
+    const currentTopicId = topicId(message)
+    const binding = state.findBindingByTopic(message.chat.id, currentTopicId)
+    if (!binding) {
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: currentTopicId,
+        text: "This topic is not bound to an active OpenCodez session.",
+      })
+      return
+    }
+    let count
+    try {
+      count = parseContextPairCount(args, { allowEmpty: true })
+    } catch {
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: currentTopicId,
+        text: `Usage: <code>/context [N]</code> where N is 1–${MAX_CONTEXT_PAIRS}.`,
+      })
+      return
+    }
+    count ??= state.contextPairsForUser(message.from?.id, DEFAULT_CONTEXT_PAIRS)
+
+    try {
+      const turns = await loadRecentContextTurns({ opencode, binding, count })
+      if (!turns.length) {
+        await telegram.sendMessage({
+          chatId: message.chat.id,
+          topicId: currentTopicId,
+          text: "📋 No completed user/final-answer pairs are available yet. The active unfinished turn is intentionally omitted.",
+        })
+        return
+      }
+      const richMessages = buildCollapsedContextMessages(turns)
+      await sendCollapsedContext(message.chat.id, currentTopicId, richMessages)
+      logInfo("context.export.sent", {
+        source: binding.serverID,
+        sessionID: binding.sessionID,
+        topicId: currentTopicId,
+        userId: message.from?.id,
+        pairs: turns.length,
+        parts: richMessages.length,
+        characters: richMessages.reduce((sum, item) => sum + item.text.length, 0),
+      })
+    } catch (error) {
+      const eventFields = {
+        source: binding.serverID,
+        sessionID: binding.sessionID,
+        topicId: currentTopicId,
+        userId: message.from?.id,
+        pairs: count,
+      }
+      if (error.code === "CONTEXT_TOO_LARGE") logInfo("context.export.rejected", { ...eventFields, characters: error.characters })
+      else logErrorEvent("context.export.failed", error, eventFields)
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: currentTopicId,
+        text: contextExportErrorText(error, count),
+      })
+    }
+  }
+
+  async function sendCollapsedContext(chatId, currentTopicId, richMessages) {
+    const sentMessageIds = []
+    try {
+      for (const richMessage of richMessages) {
+        const result = await telegram.sendRichMessage({
+          chatId,
+          topicId: currentTopicId,
+          html: richMessage.html,
+          skipEntityDetection: true,
+        })
+        const messageId = result?.message_id || result?.messageId || result?.id
+        if (messageId) sentMessageIds.push(messageId)
+      }
+    } catch (error) {
+      await Promise.all(sentMessageIds.map((messageId) => telegram.deleteMessage({
+        chatId,
+        messageId,
+        suppressFailureLog: true,
+      }).catch(() => undefined)))
+      throw error
+    }
   }
 
   async function handleQueueCommand(message, args) {
@@ -781,6 +909,8 @@ export function createTelegramCommandHandlers({
       "<code>/q delete &lt;number&gt;</code> - remove a queued prompt.",
       "<code>/kill</code> - stop the current run and clear queued prompts.",
       "<code>/compact</code> - compact this topic’s OpenCodez context; prompts sent while it runs are queued.",
+      `<code>/context [N]</code> - send the latest 1–${MAX_CONTEXT_PAIRS} completed turns as collapsed copyable context.`,
+      `<code>/set_context N</code> - set your personal /context default from 1–${MAX_CONTEXT_PAIRS}.`,
       "<code>/artifacts_here</code> - make this topic the artifact target and file dropbox.",
       "Drop files there with an optional server id caption; no caption uses the default server.",
       "When speech is enabled, voice messages in ordinary topics become copyable transcript replies; send the transcript as text to use it as a prompt.",
@@ -842,4 +972,16 @@ function modelLine(model) {
   const variant = model.variant ? ` ${model.variant}` : ""
   const value = `${provider}${id}${variant}`.trim()
   return value ? `model: <code>${escapeHtml(value)}</code>` : null
+}
+
+function pairLabel(count) {
+  return count === 1 ? "pair" : "pairs"
+}
+
+function contextExportErrorText(error, count) {
+  if (error.code !== "CONTEXT_TOO_LARGE") {
+    return "❌ <b>Could not send the collapsed context.</b>\nNo plain-text fallback was posted. Try again or request fewer pairs."
+  }
+  if (count === 1) return "⚠️ <b>The latest completed pair alone exceeds the safe context export limit.</b>"
+  return `⚠️ <b>Context is too large for a safe collapsed export.</b>\nTry <code>/context ${count - 1}</code>.`
 }

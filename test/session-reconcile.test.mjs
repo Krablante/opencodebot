@@ -1,6 +1,12 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
+import {
+  buildCollapsedContextMessages,
+  extractCompletedContextTurns,
+  loadRecentContextTurns,
+  parseContextPairCount,
+} from "../src/context-export.mjs"
 import { loadCurrentTurnMessages } from "../src/final-notifications.mjs"
 import { createSessionReconciler } from "../src/session-reconcile.mjs"
 
@@ -294,6 +300,67 @@ test("a completed assistant event stays on the established lifecycle renderer pa
 
   assert.equal(harness.messageCalls, 0)
   assert.deepEqual(harness.renderedAssistants, [])
+})
+
+test("context export keeps completed user/final-answer pairs and omits active turns", () => {
+  const turns = extractCompletedContextTurns([
+    userMessage("user-1", "First prompt"),
+    { info: { id: "assistant-tool", role: "assistant", finish: "tool-calls" }, parts: [{ type: "text", text: "intermediate" }] },
+    assistantMessage("assistant-1", "First final"),
+    { info: { id: "user-2", role: "user" }, parts: [{ type: "text", text: "Second prompt" }, { type: "file", filename: "image.png", mime: "image/png" }] },
+    assistantMessage("assistant-2", "Second final"),
+    userMessage("user-active", "Still running"),
+  ])
+
+  assert.deepEqual(turns, [
+    { prompt: "First prompt", answer: "First final" },
+    { prompt: "Second prompt\n[Attachment: image.png (image/png)]", answer: "Second final" },
+  ])
+})
+
+test("context history pagination stops after the requested completed turns", async () => {
+  const calls = []
+  const turns = await loadRecentContextTurns({
+    opencode: {
+      async messagePage(_serverID, _sessionID, options) {
+        calls.push(options)
+        if (!options.before) return { messages: [userMessage("active", "Active")], before: "older" }
+        return { messages: [userMessage("user-1", "Prompt"), assistantMessage("assistant-1", "Final")], before: "oldest" }
+      },
+    },
+    binding: { serverID: "dima", sessionID: "session-1", directory: "/workspace" },
+    count: 1,
+  })
+
+  assert.deepEqual(turns, [{ prompt: "Prompt", answer: "Final" }])
+  assert.equal(calls.length, 2)
+  assert.deepEqual(calls.map((call) => call.before), [undefined, "older"])
+})
+
+test("collapsed context chunks remain hidden, escaped, and copyable without truncation", () => {
+  const answer = `<tag>&${"x".repeat(120)}`
+  const messages = buildCollapsedContextMessages([
+    { prompt: "Prompt <private>", answer },
+    { prompt: "Second", answer: "Done" },
+  ], { maxRichContentBytes: 100 })
+
+  assert.ok(messages.length > 1)
+  assert.ok(messages.every((message) => message.html.startsWith("<details><summary>")))
+  assert.ok(messages.every((message) => message.html.includes("<pre><code>")))
+  assert.ok(messages.every((message) => !message.html.includes("Prompt <private>")))
+  assert.ok(messages.every((message) => {
+    const escaped = message.html.match(/<pre><code>([\s\S]*)<\/code><\/pre>/)?.[1] || ""
+    return Buffer.byteLength(escaped, "utf8") <= 100
+  }))
+  assert.equal(messages.map((message) => message.text).join(""), "### User\nPrompt <private>\n\n### Assistant\n" + answer + "\n\n---\n\n### User\nSecond\n\n### Assistant\nDone")
+})
+
+test("context pair count accepts only the supported range", () => {
+  assert.equal(parseContextPairCount("3"), 3)
+  assert.equal(parseContextPairCount("", { allowEmpty: true }), undefined)
+  assert.throws(() => parseContextPairCount("0"), /1 to 10/)
+  assert.throws(() => parseContextPairCount("11"), /1 to 10/)
+  assert.throws(() => parseContextPairCount("three"), /1 to 10/)
 })
 
 function createHarness({ cursor, pages, targetedMessage, usersOnly = true, watchdog = false } = {}) {

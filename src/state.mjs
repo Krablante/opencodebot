@@ -41,6 +41,7 @@ export class StateStore {
       this.data.seenSessions ||= []
       this.data.telegram ||= {}
       this.data.telegram.mirrorMode = normalizeMirrorMode(this.data.telegram.mirrorMode)
+      this.data.telegram.contextPairsByUser = normalizeContextPairsByUser(this.data.telegram.contextPairsByUser)
       this.data.telegram.artifactsTopic ||= null
       this.data.telegram.soundsTopic ||= null
       this.data.runtime ||= {}
@@ -328,6 +329,22 @@ export class StateStore {
       data.telegram.mirrorMode = normalized
     })
     return normalized
+  }
+
+  contextPairsForUser(userID, fallback = 3) {
+    const value = Number(this.data.telegram.contextPairsByUser?.[String(userID)])
+    return Number.isInteger(value) && value >= 1 && value <= 10 ? value : fallback
+  }
+
+  async setContextPairsForUser(userID, count) {
+    if (!Number.isInteger(count) || count < 1 || count > 10) throw new Error("Context pair count must be an integer from 1 to 10")
+    return this.update((data) => {
+      data.telegram.contextPairsByUser ||= {}
+      const key = String(userID)
+      if (data.telegram.contextPairsByUser[key] === count) return false
+      data.telegram.contextPairsByUser[key] = count
+      return true
+    })
   }
 
   async bindTopic(binding) {
@@ -771,7 +788,7 @@ export function promptHash(text) {
 function defaultState() {
   return {
     version: 1,
-    telegram: { mirrorMode: "full", artifactsTopic: null, soundsTopic: null },
+    telegram: { mirrorMode: "full", contextPairsByUser: {}, artifactsTopic: null, soundsTopic: null },
     bindings: [],
     pendingTopics: {},
     pendingPrompts: [],
@@ -788,6 +805,14 @@ function defaultState() {
 
 function normalizeMirrorMode(value) {
   return String(value || "").trim().toLowerCase() === "economy" ? "economy" : "full"
+}
+
+function normalizeContextPairsByUser(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
+  return Object.fromEntries(Object.entries(value).filter(([, count]) => {
+    const numeric = Number(count)
+    return Number.isInteger(numeric) && numeric >= 1 && numeric <= 10
+  }).map(([userID, count]) => [userID, Number(count)]))
 }
 
 function sessionKey(serverID, sessionID) {
