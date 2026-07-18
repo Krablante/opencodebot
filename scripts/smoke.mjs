@@ -1363,6 +1363,11 @@ async function smokeCompactCommand() {
   })
 
   const message = { chat: { id: 123 }, message_thread_id: 456, message_id: 789 }
+  let resolveInitialCompact
+  compactDeferred = new Promise((resolve) => {
+    resolveInitialCompact = resolve
+  })
+  promptQueue.markBusy(binding)
   assert.equal(await handlers.handle(message, { name: "compact", args: "" }, "123:456"), true)
   await wait(0)
   assert.equal(promptQueue.isBusy(binding), true)
@@ -1372,11 +1377,13 @@ async function smokeCompactCommand() {
     options: { directory: "/tmp/work", model: { providerID: "openai", modelID: "gpt-5.6-sol", variant: undefined } },
   }])
   assert.match(sent[0].text, /Compacting context/)
-  assert.match(edited[0].text, /Context compacted/)
 
   await handlers.handle(message, { name: "compact", args: "" }, "123:456")
   assert.match(sent.at(-1).text, /already running/)
   assert.equal(summarized.length, 1)
+  resolveInitialCompact(true)
+  await wait(0)
+  assert.match(edited[0].text, /Context compacted/)
 
   promptQueue.clear(binding)
   let resolveCompact

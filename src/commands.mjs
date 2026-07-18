@@ -329,11 +329,11 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: "OpenCodez compaction API is not available." })
       return
     }
-    if (promptQueue.isBusy(binding)) {
+    if (compactOperations.has(compactOperationKey(binding))) {
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: "⏳ This session is already running. Wait for the current response, or use /kill before /compact.",
+        text: "⏳ Context compaction is already running in this topic. Wait for it to finish, or use /kill to stop it.",
       })
       return
     }
