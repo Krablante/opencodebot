@@ -25,7 +25,7 @@ import { MirrorRenderer, richWebPromptMessages, webPromptMessages } from "../src
 import { normalizeNestedRichLists } from "../src/rich-list-normalization.mjs"
 import { bindingSessionReconcileRefresh, createSessionReconciler, isManualCompactionPart, normalizeSessionError, shouldSkipAssistantForCatchup, shouldSyncManagedTopicTitle } from "../src/session-reconcile.mjs"
 import { normalizeSpeechConfig } from "../src/config/speech.mjs"
-import { SpeechModule, transcriptMessage } from "../src/speech/index.mjs"
+import { deliverTranscriptMessages, SpeechModule, transcriptMessages } from "../src/speech/index.mjs"
 import { GroqSpeechClient } from "../src/speech/groq-client.mjs"
 import { OpenRouterSpeechClient, audioFormat } from "../src/speech/openrouter-client.mjs"
 import { StateStore } from "../src/state.mjs"
@@ -55,7 +55,7 @@ async function smokeLocalInvariants() {
   await smokeSpeechGroqRequest()
   await smokeSpeechTopicRouting()
   await smokeSpeechModelMenu()
-  smokeSpeechTranscriptMessage()
+  await smokeSpeechTranscriptMessages()
   await smokeOpenCodeAbortClient()
   await smokeQueuedAttachmentPayload()
   await smokeQueuedMediaGroupAttachmentPayload()
@@ -1145,14 +1145,58 @@ async function smokeSpeechModelMenu() {
   }
 }
 
-function smokeSpeechTranscriptMessage() {
-  const message = transcriptMessage("строка <admin> & /q", "model/test", 1234)
+async function smokeSpeechTranscriptMessages() {
+  const small = transcriptMessages("строка <admin> & /q", "model/test", 1234)
+  assert.equal(small.length, 1)
+  const message = small[0]
   assert.match(message, /^<code>[\s\S]+<\/code>\n\nmodel\/test · 1234ms$/)
   assert.equal(message.includes("<pre>"), false)
   const transcriptBlock = /^<code>([\s\S]+)<\/code>\n\n/.exec(message)?.[1]
   assert.equal(transcriptBlock, "строка &lt;admin&gt; &amp; /q")
   assert.equal(transcriptBlock.includes("model/test"), false)
-  assert.ok(transcriptMessage("<".repeat(5000), "model/test", 1).length <= 4096)
+
+  const raw = `${"x".repeat(10_000)}\nlast line`
+  const messages = transcriptMessages(raw, "Whisper V3 Turbo", 4707)
+  assert.ok(messages.length > 2)
+  assert.ok(messages.every((part) => part.length <= 4096))
+  assert.equal(messages.some((part) => part.includes("truncated in Telegram mirror")), false)
+  assert.ok(messages.slice(0, -1).every((part) => !part.includes("Whisper V3 Turbo")))
+  assert.match(messages.at(-1), /Whisper V3 Turbo · 4707ms$/)
+  assert.equal(messages.map((part) => /^<code>([\s\S]*?)<\/code>/.exec(part)?.[1] || "").join(""), raw)
+
+  const edited = []
+  const replied = []
+  const delivered = await deliverTranscriptMessages({
+    telegram: {
+      async editMessageText(payload) { edited.push(payload) },
+      async replyMessage(payload) { replied.push(payload) },
+    },
+    chatId: 100,
+    topicId: 7,
+    replyToMessageId: 55,
+    statusMessageId: 56,
+    messages,
+  })
+  assert.equal(delivered, messages.length)
+  assert.equal(edited[0].text, messages[0])
+  assert.deepEqual(replied.map((item) => item.text), messages.slice(1))
+  assert.ok(replied.every((item) => item.replyToMessageId === 55 && item.topicId === 7))
+
+  let replyCalls = 0
+  await assert.rejects(() => deliverTranscriptMessages({
+    telegram: {
+      async editMessageText() {},
+      async replyMessage() {
+        replyCalls += 1
+        if (replyCalls === 2) throw new Error("delivery failed")
+      },
+    },
+    chatId: 100,
+    topicId: 7,
+    replyToMessageId: 55,
+    statusMessageId: 56,
+    messages,
+  }), (error) => error.message === "delivery failed" && error.deliveredParts === 2)
 }
 
 function smokeSyntheticTextFilter() {

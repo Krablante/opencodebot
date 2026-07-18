@@ -1,6 +1,6 @@
 import { cleanupFiles, downloadTelegramFiles, extractTelegramFiles } from "../attachments.mjs"
 import { logErrorEvent, logInfo } from "../logger.mjs"
-import { clampTelegram, escapeHtml, topicId } from "../telegram.mjs"
+import { escapeHtml, topicId } from "../telegram.mjs"
 import { GroqSpeechClient } from "./groq-client.mjs"
 import { OpenRouterSpeechClient } from "./openrouter-client.mjs"
 
@@ -229,6 +229,8 @@ export class SpeechModule {
       text: escapeHtml(this.config.statusMessage),
     })
     let downloads = []
+    let transcriptionComplete = false
+    let transcriptParts = []
     const startedAt = Date.now()
     try {
       downloads = await downloadTelegramFiles(this.telegram, descriptors, this.uploadDir, this.attachmentSettings)
@@ -246,18 +248,47 @@ export class SpeechModule {
         bytes: file.size,
         chars: result.text.length,
       })
-      await this.telegram.editMessageText({
+      transcriptionComplete = true
+      transcriptParts = transcriptMessages(result.text, result.modelProfile?.label || result.model, elapsedMs)
+      await deliverTranscriptMessages({
+        telegram: this.telegram,
         chatId,
-        messageId: status?.message_id,
-        text: transcriptMessage(result.text, result.modelProfile?.label || result.model, elapsedMs),
+        topicId: currentTopicId,
+        replyToMessageId: message.message_id,
+        statusMessageId: status?.message_id,
+        messages: transcriptParts,
       })
     } catch (error) {
-      logErrorEvent("speech.transcription.failed", error, { chatId, topicId: currentTopicId })
-      await this.telegram.editMessageText({
-        chatId,
-        messageId: status?.message_id,
-        text: `Speech transcription failed.\n<code>${escapeHtml(error.message)}</code>`,
-      }).catch(() => {})
+      if (transcriptionComplete) {
+        const delivered = error.deliveredParts || 0
+        logErrorEvent("speech.transcript.delivery.failed", error, {
+          chatId,
+          topicId: currentTopicId,
+          deliveredParts: delivered,
+          totalParts: transcriptParts.length,
+        })
+        if (delivered) {
+          await this.telegram.replyMessage({
+            chatId,
+            topicId: currentTopicId,
+            replyToMessageId: message.message_id,
+            text: `Transcript delivery stopped after ${delivered}/${transcriptParts.length} parts. Retry the voice message to receive the complete text.`,
+          }).catch(() => {})
+        } else {
+          await this.telegram.editMessageText({
+            chatId,
+            messageId: status?.message_id,
+            text: `Speech transcript delivery failed.\n<code>${escapeHtml(error.message)}</code>`,
+          }).catch(() => {})
+        }
+      } else {
+        logErrorEvent("speech.transcription.failed", error, { chatId, topicId: currentTopicId })
+        await this.telegram.editMessageText({
+          chatId,
+          messageId: status?.message_id,
+          text: `Speech transcription failed.\n<code>${escapeHtml(error.message)}</code>`,
+        }).catch(() => {})
+      }
     } finally {
       await cleanupFiles(downloads)
     }
@@ -272,18 +303,64 @@ function isAudioDocument(file) {
   return file.kind === "document" && String(file.mime || "").toLowerCase().startsWith("audio/")
 }
 
-export function transcriptMessage(text, model, elapsedMs) {
-  const body = escapeHtml(fitTranscriptBlock(text))
-  return `<code>${body}</code>\n\n${escapeHtml(model)} · ${Math.round(elapsedMs)}ms`
+export function transcriptMessages(text, model, elapsedMs) {
+  const footer = `\n\n${escapeHtml(model)} · ${Math.round(elapsedMs)}ms`
+  const bodyBudget = 4096 - "<code></code>".length - footer.length
+  if (bodyBudget < 1) throw new Error("Speech transcript footer exceeds the Telegram message limit")
+  const chunks = splitTranscriptText(String(text || ""), bodyBudget)
+  return chunks.map((chunk, index) => {
+    const suffix = index === chunks.length - 1 ? footer : ""
+    return `<code>${escapeHtml(chunk)}</code>${suffix}`
+  })
 }
 
-function fitTranscriptBlock(text) {
-  const raw = String(text || "")
-  let limit = 3400
-  let body = clampTelegram(raw, limit)
-  while (escapeHtml(body).length > 3700 && limit > 200) {
-    limit = Math.max(200, Math.floor(limit * 0.8))
-    body = clampTelegram(raw, limit)
+export async function deliverTranscriptMessages({ telegram, chatId, topicId: currentTopicId, replyToMessageId, statusMessageId, messages }) {
+  let deliveredParts = 0
+  try {
+    await telegram.editMessageText({ chatId, messageId: statusMessageId, text: messages[0] })
+    deliveredParts = 1
+    for (const text of messages.slice(1)) {
+      await telegram.replyMessage({ chatId, topicId: currentTopicId, replyToMessageId, text })
+      deliveredParts += 1
+    }
+    return deliveredParts
+  } catch (error) {
+    error.deliveredParts = deliveredParts
+    throw error
   }
-  return body
+}
+
+function splitTranscriptText(text, maxEscapedChars) {
+  if (!text) return [""]
+  const chunks = []
+  let start = 0
+  while (start < text.length) {
+    let index = start
+    let escapedChars = 0
+    let lastLineBreak = -1
+    while (index < text.length) {
+      const codePoint = text.codePointAt(index)
+      const character = String.fromCodePoint(codePoint)
+      const width = escapedHtmlChars(character)
+      if (escapedChars + width > maxEscapedChars) break
+      escapedChars += width
+      index += character.length
+      if (character === "\n") lastLineBreak = index
+    }
+    if (index === text.length) {
+      chunks.push(text.slice(start))
+      break
+    }
+    const midpoint = start + Math.floor((index - start) / 2)
+    const end = lastLineBreak > midpoint ? lastLineBreak : index
+    chunks.push(text.slice(start, end))
+    start = end
+  }
+  return chunks
+}
+
+function escapedHtmlChars(character) {
+  if (character === "&") return 5
+  if (character === "<" || character === ">") return 4
+  return character.length
 }

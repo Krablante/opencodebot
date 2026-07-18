@@ -30,6 +30,8 @@ Incremental-reconcile checks cover `limit`/`before` cursor propagation, a durabl
 
 Question recovery smoke covers an SSE `question.asked` racing with pending-question reconciliation, one Telegram send under request single-flight, resolution after that send completes, the periodic reconcile hook, and the SSE connected hook. Keep this in central smoke rather than adding a dedicated test file.
 
+Speech transcript smoke covers HTML escaping, lossless multi-message reconstruction beyond 10,000 characters, the ordinary 4,096-character payload ceiling, footer-only-last behavior, sequential reply delivery, and partial-delivery accounting. Long-transcript behavior stays in central smoke rather than a new speech-specific test file.
+
 The runtime dependencies `mdast-util-from-markdown` and `mdast-util-to-markdown` are deliberately narrow: they provide CommonMark structure and safe inline serialization without introducing a general application framework. Keep `package-lock.json` committed; Docker installs the locked production dependency graph with `npm ci --omit=dev`.
 
 Keep dedicated test files few and focused. This is a small operated bot, so tests should protect important configuration and API contracts rather than every formatter branch and helper function. Prefer real disposable-session checks for runtime and multihost behavior; clean those sessions up immediately.
