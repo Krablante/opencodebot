@@ -7,10 +7,10 @@ import { logErrorEvent, logInfo } from "./logger.mjs"
 import { resolveSessionProfile } from "./opencode.mjs"
 import {
   buildCollapsedContextMessages,
-  DEFAULT_CONTEXT_PAIRS,
+  DEFAULT_CONTEXT_TURNS,
   loadRecentContextTurns,
-  MAX_CONTEXT_PAIRS,
-  parseContextPairCount,
+  MAX_CONTEXT_TURNS,
+  parseContextTurnCount,
 } from "./context-export.mjs"
 
 export const telegramBotCommands = [
@@ -25,7 +25,7 @@ export const telegramBotCommands = [
   { command: "kill", description: "Stop the current run and clear queued prompts" },
   { command: "compact", description: "Compact the current session context" },
   { command: "context", description: "Copy recent completed turns" },
-  { command: "set_context", description: "Set default context pair count" },
+  { command: "set_context", description: "Set default context turn count" },
   { command: "notify_on", description: "Enable final-answer DMs" },
   { command: "notify_off", description: "Disable final-answer DMs" },
   { command: "notify_status", description: "Show final-answer DM status" },
@@ -123,29 +123,29 @@ export function createTelegramCommandHandlers({
     if (!userID) return
     let count
     try {
-      count = parseContextPairCount(args, { allowEmpty: true })
+      count = parseContextTurnCount(args, { allowEmpty: true })
     } catch {
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: topicId(message),
-        text: `Usage: <code>/set_context N</code> where N is 1–${MAX_CONTEXT_PAIRS}.`,
+        text: `Usage: <code>/set_context N</code> where N is 1–${MAX_CONTEXT_TURNS}.`,
       })
       return
     }
     if (count === undefined) {
-      const current = state.contextPairsForUser(userID, DEFAULT_CONTEXT_PAIRS)
+      const current = state.contextTurnsForUser(userID, DEFAULT_CONTEXT_TURNS)
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: topicId(message),
-        text: `📋 <b>Context default:</b> ${current} ${pairLabel(current)}\nUse <code>/set_context N</code> to change it.`,
+        text: `📋 <b>Context default:</b> ${current} ${turnLabel(current)}\nUse <code>/set_context N</code> to change it.`,
       })
       return
     }
-    await state.setContextPairsForUser(userID, count)
+    await state.setContextTurnsForUser(userID, count)
     await telegram.sendMessage({
       chatId: message.chat.id,
       topicId: topicId(message),
-      text: `✅ <b>Context default saved:</b> ${count} ${pairLabel(count)}\n<code>/context</code> now uses this value; <code>/context N</code> overrides it once.`,
+      text: `✅ <b>Context default saved:</b> ${count} ${turnLabel(count)}\n<code>/context</code> now uses this value; <code>/context N</code> overrides it once.`,
     })
   }
 
@@ -162,24 +162,29 @@ export function createTelegramCommandHandlers({
     }
     let count
     try {
-      count = parseContextPairCount(args, { allowEmpty: true })
+      count = parseContextTurnCount(args, { allowEmpty: true })
     } catch {
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: `Usage: <code>/context [N]</code> where N is 1–${MAX_CONTEXT_PAIRS}.`,
+        text: `Usage: <code>/context [N]</code> where N is 1–${MAX_CONTEXT_TURNS}.`,
       })
       return
     }
-    count ??= state.contextPairsForUser(message.from?.id, DEFAULT_CONTEXT_PAIRS)
+    count ??= state.contextTurnsForUser(message.from?.id, DEFAULT_CONTEXT_TURNS)
 
     try {
-      const turns = await loadRecentContextTurns({ opencode, binding, count })
+      const turns = await loadRecentContextTurns({
+        opencode,
+        binding,
+        count,
+        interruptedUserMessageIDs: state.interruptedUserMessageIDs(binding.serverID, binding.sessionID),
+      })
       if (!turns.length) {
         await telegram.sendMessage({
           chatId: message.chat.id,
           topicId: currentTopicId,
-          text: "📋 No completed user/final-answer pairs are available yet. The active unfinished turn is intentionally omitted.",
+          text: "📋 No completed or interrupted turns are available yet. The active unfinished turn is intentionally omitted.",
         })
         return
       }
@@ -190,7 +195,7 @@ export function createTelegramCommandHandlers({
         sessionID: binding.sessionID,
         topicId: currentTopicId,
         userId: message.from?.id,
-        pairs: turns.length,
+        turns: turns.length,
         parts: richMessages.length,
         characters: richMessages.reduce((sum, item) => sum + item.text.length, 0),
       })
@@ -200,7 +205,7 @@ export function createTelegramCommandHandlers({
         sessionID: binding.sessionID,
         topicId: currentTopicId,
         userId: message.from?.id,
-        pairs: count,
+        turns: count,
       }
       if (error.code === "CONTEXT_TOO_LARGE") logInfo("context.export.rejected", { ...eventFields, characters: error.characters })
       else logErrorEvent("context.export.failed", error, eventFields)
@@ -909,8 +914,8 @@ export function createTelegramCommandHandlers({
       "<code>/q delete &lt;number&gt;</code> - remove a queued prompt.",
       "<code>/kill</code> - stop the current run and clear queued prompts.",
       "<code>/compact</code> - compact this topic’s OpenCodez context; prompts sent while it runs are queued.",
-      `<code>/context [N]</code> - send the latest 1–${MAX_CONTEXT_PAIRS} completed turns as collapsed copyable context.`,
-      `<code>/set_context N</code> - set your personal /context default from 1–${MAX_CONTEXT_PAIRS}.`,
+      `<code>/context [N]</code> - send the latest 1–${MAX_CONTEXT_TURNS} completed or interrupted turns as collapsed copyable context.`,
+      `<code>/set_context N</code> - set your personal /context default from 1–${MAX_CONTEXT_TURNS}.`,
       "<code>/artifacts_here</code> - make this topic the artifact target and file dropbox.",
       "Drop files there with an optional server id caption; no caption uses the default server.",
       "When speech is enabled, voice messages in ordinary topics become copyable transcript replies; send the transcript as text to use it as a prompt.",
@@ -974,14 +979,14 @@ function modelLine(model) {
   return value ? `model: <code>${escapeHtml(value)}</code>` : null
 }
 
-function pairLabel(count) {
-  return count === 1 ? "pair" : "pairs"
+function turnLabel(count) {
+  return count === 1 ? "turn" : "turns"
 }
 
 function contextExportErrorText(error, count) {
   if (error.code !== "CONTEXT_TOO_LARGE") {
-    return "❌ <b>Could not send the collapsed context.</b>\nNo plain-text fallback was posted. Try again or request fewer pairs."
+    return "❌ <b>Could not send the collapsed context.</b>\nNo plain-text fallback was posted. Try again or request fewer turns."
   }
-  if (count === 1) return "⚠️ <b>The latest completed pair alone exceeds the safe context export limit.</b>"
+  if (count === 1) return "⚠️ <b>The latest context turn alone exceeds the safe export limit.</b>"
   return `⚠️ <b>Context is too large for a safe collapsed export.</b>\nTry <code>/context ${count - 1}</code>.`
 }

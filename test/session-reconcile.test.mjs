@@ -3,9 +3,9 @@ import test from "node:test"
 
 import {
   buildCollapsedContextMessages,
-  extractCompletedContextTurns,
+  extractContextTurns,
   loadRecentContextTurns,
-  parseContextPairCount,
+  parseContextTurnCount,
 } from "../src/context-export.mjs"
 import { loadCurrentTurnMessages } from "../src/final-notifications.mjs"
 import { createSessionReconciler } from "../src/session-reconcile.mjs"
@@ -302,20 +302,35 @@ test("a completed assistant event stays on the established lifecycle renderer pa
   assert.deepEqual(harness.renderedAssistants, [])
 })
 
-test("context export keeps completed user/final-answer pairs and omits active turns", () => {
-  const turns = extractCompletedContextTurns([
+test("context export counts interrupted prompts, keeps completed answers, and omits the active turn", () => {
+  const turns = extractContextTurns([
     userMessage("user-1", "First prompt"),
     { info: { id: "assistant-tool", role: "assistant", finish: "tool-calls" }, parts: [{ type: "text", text: "intermediate" }] },
     assistantMessage("assistant-1", "First final"),
+    userMessage("user-interrupted", "Interrupted prompt"),
+    { info: { id: "assistant-partial", role: "assistant", finish: "length" }, parts: [{ type: "text", text: "partial answer must not leak" }] },
     { info: { id: "user-2", role: "user" }, parts: [{ type: "text", text: "Second prompt" }, { type: "file", filename: "image.png", mime: "image/png" }] },
     assistantMessage("assistant-2", "Second final"),
     userMessage("user-active", "Still running"),
   ])
 
   assert.deepEqual(turns, [
-    { prompt: "First prompt", answer: "First final" },
-    { prompt: "Second prompt\n[Attachment: image.png (image/png)]", answer: "Second final" },
+    { prompt: "First prompt", answer: "First final", interrupted: false },
+    { prompt: "Interrupted prompt", answer: "", interrupted: true },
+    { prompt: "Second prompt\n[Attachment: image.png (image/png)]", answer: "Second final", interrupted: false },
   ])
+})
+
+test("the latest ledger-marked interruption exports only its user prompt", () => {
+  const turns = extractContextTurns([
+    userMessage("user-interrupted", "Keep this prompt"),
+    { info: { id: "assistant-partial", role: "assistant", finish: "length" }, parts: [{ type: "text", text: "never export this partial" }] },
+  ], { interruptedUserMessageIDs: new Set(["user-interrupted"]) })
+  const rich = buildCollapsedContextMessages(turns)
+
+  assert.deepEqual(turns, [{ prompt: "Keep this prompt", answer: "", interrupted: true }])
+  assert.match(rich[0].html, /User — interrupted/)
+  assert.doesNotMatch(rich[0].html, /never export this partial|### Assistant/)
 })
 
 test("context history pagination stops after the requested completed turns", async () => {
@@ -332,7 +347,7 @@ test("context history pagination stops after the requested completed turns", asy
     count: 1,
   })
 
-  assert.deepEqual(turns, [{ prompt: "Prompt", answer: "Final" }])
+  assert.deepEqual(turns, [{ prompt: "Prompt", answer: "Final", interrupted: false }])
   assert.equal(calls.length, 2)
   assert.deepEqual(calls.map((call) => call.before), [undefined, "older"])
 })
@@ -355,12 +370,12 @@ test("collapsed context chunks remain hidden, escaped, and copyable without trun
   assert.equal(messages.map((message) => message.text).join(""), "### User\nPrompt <private>\n\n### Assistant\n" + answer + "\n\n---\n\n### User\nSecond\n\n### Assistant\nDone")
 })
 
-test("context pair count accepts only the supported range", () => {
-  assert.equal(parseContextPairCount("3"), 3)
-  assert.equal(parseContextPairCount("", { allowEmpty: true }), undefined)
-  assert.throws(() => parseContextPairCount("0"), /1 to 10/)
-  assert.throws(() => parseContextPairCount("11"), /1 to 10/)
-  assert.throws(() => parseContextPairCount("three"), /1 to 10/)
+test("context turn count accepts only the supported range", () => {
+  assert.equal(parseContextTurnCount("3"), 3)
+  assert.equal(parseContextTurnCount("", { allowEmpty: true }), undefined)
+  assert.throws(() => parseContextTurnCount("0"), /1 to 10/)
+  assert.throws(() => parseContextTurnCount("11"), /1 to 10/)
+  assert.throws(() => parseContextTurnCount("three"), /1 to 10/)
 })
 
 function createHarness({ cursor, pages, targetedMessage, usersOnly = true, watchdog = false } = {}) {

@@ -1,15 +1,15 @@
 import { visibleTextFromParts } from "./opencode.mjs"
 import { escapeHtml } from "./telegram.mjs"
 
-export const DEFAULT_CONTEXT_PAIRS = 3
-export const MAX_CONTEXT_PAIRS = 10
+export const DEFAULT_CONTEXT_TURNS = 3
+export const MAX_CONTEXT_TURNS = 10
 export const MAX_CONTEXT_TOTAL_CHARS = 240_000
 export const MAX_CONTEXT_RICH_CONTENT_BYTES = 30_000
 
-export async function loadRecentContextTurns({ opencode, binding, count, pageSize = 20 }) {
+export async function loadRecentContextTurns({ opencode, binding, count, interruptedUserMessageIDs = new Set(), pageSize = 20 }) {
   if (typeof opencode.messagePage !== "function") {
     const messages = await opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory })
-    return extractCompletedContextTurns(messages).slice(-count)
+    return extractContextTurns(messages, { interruptedUserMessageIDs }).slice(-count)
   }
 
   let before
@@ -23,7 +23,7 @@ export async function loadRecentContextTurns({ opencode, binding, count, pageSiz
     })
     const items = Array.isArray(page?.messages) ? page.messages : []
     messages = [...items.filter(isContextRelevantMessage), ...messages]
-    const turns = extractCompletedContextTurns(messages)
+    const turns = extractContextTurns(messages, { interruptedUserMessageIDs })
     if (turns.length >= count) return turns.slice(-count)
     if (!page?.before || cursors.has(page.before)) return turns
     cursors.add(page.before)
@@ -31,23 +31,32 @@ export async function loadRecentContextTurns({ opencode, binding, count, pageSiz
   }
 }
 
-export function extractCompletedContextTurns(messages) {
-  const turns = []
+export function extractContextTurns(messages, { interruptedUserMessageIDs = new Set() } = {}) {
+  const candidates = []
+  const turnsByUserMessageID = new Map()
   let current
   for (const message of messages || []) {
     const info = message?.info || message
     if (info?.role === "user") {
-      if (current?.answer) turns.push(current)
       const prompt = userPromptText(message)
-      current = prompt && !info.synthetic ? { prompt, answer: "" } : undefined
+      current = prompt && !info.synthetic ? { userMessageID: info.id, prompt, answer: "" } : undefined
+      if (current) {
+        candidates.push(current)
+        if (current.userMessageID) turnsByUserMessageID.set(current.userMessageID, current)
+      }
       continue
     }
-    if (info?.role !== "assistant" || !current || info.finish !== "stop") continue
+    if (info?.role !== "assistant" || info.finish !== "stop") continue
+    const target = turnsByUserMessageID.get(info.parentID) || current
+    if (!target) continue
     const answer = visibleTextFromParts(message?.parts || []).trim()
-    if (answer) current.answer = answer
+    if (answer) target.answer = answer
   }
-  if (current?.answer) turns.push(current)
-  return turns
+  return candidates.flatMap((turn, index) => {
+    if (turn.answer) return [{ prompt: turn.prompt, answer: turn.answer, interrupted: false }]
+    const interrupted = index < candidates.length - 1 || interruptedUserMessageIDs.has(turn.userMessageID)
+    return interrupted ? [{ prompt: turn.prompt, answer: "", interrupted: true }] : []
+  })
 }
 
 export function buildCollapsedContextMessages(turns, {
@@ -56,7 +65,7 @@ export function buildCollapsedContextMessages(turns, {
 } = {}) {
   const text = formatContextTurns(turns)
   if (text.length > maxTotalChars) {
-    const error = new Error(`Context is too large (${text.length} characters). Request fewer pairs.`)
+    const error = new Error(`Context is too large (${text.length} characters). Request fewer turns.`)
     error.code = "CONTEXT_TOO_LARGE"
     error.characters = text.length
     throw error
@@ -64,7 +73,7 @@ export function buildCollapsedContextMessages(turns, {
   const chunks = splitForEscapedHtml(text, maxRichContentBytes)
   return chunks.map((chunk, index) => {
     const part = chunks.length > 1 ? ` · part ${index + 1}/${chunks.length}` : ""
-    const summary = `📋 Context · ${turns.length} pair${turns.length === 1 ? "" : "s"} · ${text.length.toLocaleString("en-US")} chars${part} · expand to copy`
+    const summary = `📋 Context · ${turns.length} turn${turns.length === 1 ? "" : "s"} · ${text.length.toLocaleString("en-US")} chars${part} · expand to copy`
     return {
       html: `<details><summary>${escapeHtml(summary)}</summary><pre><code>${escapeHtml(chunk)}</code></pre></details>`,
       text: chunk,
@@ -72,12 +81,12 @@ export function buildCollapsedContextMessages(turns, {
   })
 }
 
-export function parseContextPairCount(value, { allowEmpty = false } = {}) {
+export function parseContextTurnCount(value, { allowEmpty = false } = {}) {
   const input = String(value || "").trim()
   if (!input && allowEmpty) return undefined
   if (!/^\d+$/.test(input)) throw contextCountError()
   const count = Number(input)
-  if (!Number.isInteger(count) || count < 1 || count > MAX_CONTEXT_PAIRS) throw contextCountError()
+  if (!Number.isInteger(count) || count < 1 || count > MAX_CONTEXT_TURNS) throw contextCountError()
   return count
 }
 
@@ -100,13 +109,10 @@ function isContextRelevantMessage(message) {
 }
 
 function formatContextTurns(turns) {
-  return turns.map((turn) => [
-    "### User",
-    turn.prompt.trim(),
-    "",
-    "### Assistant",
-    turn.answer.trim(),
-  ].join("\n")).join("\n\n---\n\n")
+  return turns.map((turn) => {
+    if (turn.interrupted) return ["### User — interrupted", turn.prompt.trim()].join("\n")
+    return ["### User", turn.prompt.trim(), "", "### Assistant", turn.answer.trim()].join("\n")
+  }).join("\n\n---\n\n")
 }
 
 function splitForEscapedHtml(text, maxEscapedBytes) {
@@ -146,5 +152,5 @@ function escapedHtmlBytes(character) {
 }
 
 function contextCountError() {
-  return new Error(`Context pair count must be an integer from 1 to ${MAX_CONTEXT_PAIRS}.`)
+  return new Error(`Context turn count must be an integer from 1 to ${MAX_CONTEXT_TURNS}.`)
 }

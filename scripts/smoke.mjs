@@ -512,12 +512,21 @@ async function smokeDeferredStatePersistence() {
   try {
     const state = new StateStore(statePath)
     await state.load()
-    assert.equal(state.contextPairsForUser(42, 3), 3)
-    await state.setContextPairsForUser(42, 6)
-    assert.equal(state.contextPairsForUser(42, 3), 6)
+    assert.equal(state.contextTurnsForUser(42, 3), 3)
+    await state.setContextTurnsForUser(42, 6)
+    assert.equal(state.contextTurnsForUser(42, 3), 6)
     const reloaded = new StateStore(statePath)
     await reloaded.load()
-    assert.equal(reloaded.contextPairsForUser(42, 3), 6)
+    assert.equal(reloaded.contextTurnsForUser(42, 3), 6)
+
+    const legacyPath = path.join(root, "legacy-state.json")
+    await writeFile(legacyPath, JSON.stringify({ telegram: { contextPairsByUser: { 42: 7 } } }))
+    const migrated = new StateStore(legacyPath)
+    await migrated.load()
+    assert.equal(migrated.contextTurnsForUser(42, 3), 7)
+    const migratedData = JSON.parse(await readFile(legacyPath, "utf8"))
+    assert.deepEqual(migratedData.telegram.contextTurnsByUser, { 42: 7 })
+    assert.equal("contextPairsByUser" in migratedData.telegram, false)
 
     let saves = 0
     const save = state.save.bind(state)
@@ -1390,7 +1399,7 @@ async function smokeContextCommands() {
   const sent = []
   const rich = []
   const deleted = []
-  let defaultPairs = 3
+  let defaultTurns = 3
   let richAttempts = 0
   let failRichAt = Infinity
   let contextMessages = [
@@ -1398,7 +1407,8 @@ async function smokeContextCommands() {
     { info: { id: "a1", role: "assistant", finish: "stop" }, parts: [{ type: "text", text: "First final answer" }] },
     { info: { id: "u2", role: "user" }, parts: [{ type: "text", text: "Second private prompt" }] },
     { info: { id: "a2", role: "assistant", finish: "stop" }, parts: [{ type: "text", text: "Second final answer" }] },
-    { info: { id: "u3", role: "user" }, parts: [{ type: "text", text: "Unfinished private prompt" }] },
+    { info: { id: "u3", role: "user" }, parts: [{ type: "text", text: "Interrupted private prompt" }] },
+    { info: { id: "a3", role: "assistant", finish: "length" }, parts: [{ type: "text", text: "Partial answer must not be exported" }] },
   ]
   const handlers = createTelegramCommandHandlers({
     config: { chatTemplates: {} },
@@ -1406,12 +1416,13 @@ async function smokeContextCommands() {
       findBindingByTopic() {
         return binding
       },
-      contextPairsForUser() {
-        return defaultPairs
+      contextTurnsForUser() {
+        return defaultTurns
       },
-      async setContextPairsForUser(_userID, count) {
-        defaultPairs = count
+      async setContextTurnsForUser(_userID, count) {
+        defaultTurns = count
       },
+      interruptedUserMessageIDs() { return new Set(["u3"]) },
     },
     telegram: {
       async sendMessage(message) {
@@ -1438,15 +1449,18 @@ async function smokeContextCommands() {
   const message = { chat: { id: 123 }, from: { id: 42 }, message_thread_id: 456 }
 
   await handlers.handle(message, { name: "set_context", args: "2" }, "123:456")
-  assert.equal(defaultPairs, 2)
+  assert.equal(defaultTurns, 2)
   assert.match(sent.at(-1).text, /Context default saved/)
 
   await handlers.handle(message, { name: "context", args: "" }, "123:456")
   assert.equal(rich.length, 1)
   assert.match(rich[0].html, /^<details><summary>/)
   assert.match(rich[0].html, /<pre><code>/)
-  assert.match(rich[0].html, /First private prompt/)
-  assert.doesNotMatch(rich[0].html, /Unfinished private prompt/)
+  assert.doesNotMatch(rich[0].html, /First private prompt/)
+  assert.match(rich[0].html, /Second private prompt/)
+  assert.match(rich[0].html, /User — interrupted/)
+  assert.match(rich[0].html, /Interrupted private prompt/)
+  assert.doesNotMatch(rich[0].html, /Partial answer must not be exported/)
 
   contextMessages = [
     { info: { id: "u-large", role: "user" }, parts: [{ type: "text", text: "Large private prompt" }] },
