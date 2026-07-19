@@ -1531,7 +1531,10 @@ async function smokeContextCommands() {
     { info: { id: "u2", role: "user" }, parts: [{ type: "text", text: "Second private prompt" }] },
     { info: { id: "a2", role: "assistant", finish: "stop" }, parts: [{ type: "text", text: "Second final answer" }] },
     { info: { id: "u3", role: "user" }, parts: [{ type: "text", text: "Interrupted private prompt" }] },
-    { info: { id: "a3", role: "assistant", finish: "length" }, parts: [{ type: "text", text: "Partial answer must not be exported" }] },
+    {
+      info: { id: "a3", role: "assistant", finish: "length" },
+      parts: [{ type: "reasoning", text: "Private reasoning" }, { type: "text", text: "Interrupted progress note" }, { type: "tool", tool: "bash", state: { output: "Private tool output" } }],
+    },
   ]
   const handlers = createTelegramCommandHandlers({
     config: { chatTemplates: {} },
@@ -1583,7 +1586,8 @@ async function smokeContextCommands() {
   assert.match(rich[0].html, /Second private prompt/)
   assert.match(rich[0].html, /User — interrupted/)
   assert.match(rich[0].html, /Interrupted private prompt/)
-  assert.doesNotMatch(rich[0].html, /Partial answer must not be exported/)
+  assert.match(rich[0].html, /Progress 1[\s\S]*Interrupted progress note/)
+  assert.doesNotMatch(rich[0].html, /Private reasoning|Private tool output/)
 
   contextMessages = [
     { info: { id: "u-large", role: "user" }, parts: [{ type: "text", text: "Large private prompt" }] },

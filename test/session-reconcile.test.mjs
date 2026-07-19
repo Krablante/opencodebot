@@ -308,29 +308,35 @@ test("context export counts interrupted prompts, keeps completed answers, and om
     { info: { id: "assistant-tool", role: "assistant", finish: "tool-calls" }, parts: [{ type: "text", text: "intermediate" }] },
     assistantMessage("assistant-1", "First final"),
     userMessage("user-interrupted", "Interrupted prompt"),
-    { info: { id: "assistant-partial", role: "assistant", finish: "length" }, parts: [{ type: "text", text: "partial answer must not leak" }] },
+    { info: { id: "assistant-partial", role: "assistant", finish: "length" }, parts: [{ type: "text", text: "Interrupted progress" }] },
     { info: { id: "user-2", role: "user" }, parts: [{ type: "text", text: "Second prompt" }, { type: "file", filename: "image.png", mime: "image/png" }] },
     assistantMessage("assistant-2", "Second final"),
     userMessage("user-active", "Still running"),
+    { info: { id: "assistant-active", role: "assistant", finish: "tool-calls" }, parts: [{ type: "text", text: "Active progress must stay out" }] },
   ])
 
   assert.deepEqual(turns, [
-    { prompt: "First prompt", answer: "First final", interrupted: false },
-    { prompt: "Interrupted prompt", answer: "", interrupted: true },
-    { prompt: "Second prompt\n[Attachment: image.png (image/png)]", answer: "Second final", interrupted: false },
+    { prompt: "First prompt", answer: "First final", progress: [], interrupted: false },
+    { prompt: "Interrupted prompt", answer: "", progress: ["Interrupted progress"], interrupted: true },
+    { prompt: "Second prompt\n[Attachment: image.png (image/png)]", answer: "Second final", progress: [], interrupted: false },
   ])
 })
 
-test("the latest ledger-marked interruption exports only its user prompt", () => {
+test("the latest ledger-marked interruption exports user prompt and visible progress notes", () => {
   const turns = extractContextTurns([
     userMessage("user-interrupted", "Keep this prompt"),
-    { info: { id: "assistant-partial", role: "assistant", finish: "length" }, parts: [{ type: "text", text: "never export this partial" }] },
+    {
+      info: { id: "assistant-progress-1", role: "assistant", finish: "tool-calls" },
+      parts: [{ type: "reasoning", text: "private reasoning" }, { type: "text", text: "First progress note" }, { type: "tool", tool: "bash", state: { output: "private tool output" } }],
+    },
+    { info: { id: "assistant-progress-2", role: "assistant", finish: "length" }, parts: [{ type: "text", text: "Second progress note" }] },
   ], { interruptedUserMessageIDs: new Set(["user-interrupted"]) })
   const rich = buildCollapsedContextMessages(turns)
 
-  assert.deepEqual(turns, [{ prompt: "Keep this prompt", answer: "", interrupted: true }])
+  assert.deepEqual(turns, [{ prompt: "Keep this prompt", answer: "", progress: ["First progress note", "Second progress note"], interrupted: true }])
   assert.match(rich[0].html, /User — interrupted/)
-  assert.doesNotMatch(rich[0].html, /never export this partial|### Assistant/)
+  assert.match(rich[0].html, /Progress 1[\s\S]*First progress note[\s\S]*Progress 2[\s\S]*Second progress note/)
+  assert.doesNotMatch(rich[0].html, /private reasoning|private tool output|### Assistant/)
 })
 
 test("context history pagination stops after the requested completed turns", async () => {
@@ -347,7 +353,7 @@ test("context history pagination stops after the requested completed turns", asy
     count: 1,
   })
 
-  assert.deepEqual(turns, [{ prompt: "Prompt", answer: "Final", interrupted: false }])
+  assert.deepEqual(turns, [{ prompt: "Prompt", answer: "Final", progress: [], interrupted: false }])
   assert.equal(calls.length, 2)
   assert.deepEqual(calls.map((call) => call.before), [undefined, "older"])
 })

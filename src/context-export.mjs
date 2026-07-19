@@ -22,7 +22,7 @@ export async function loadRecentContextTurns({ opencode, binding, count, interru
       limit: pageSize,
     })
     const items = Array.isArray(page?.messages) ? page.messages : []
-    messages = [...items.filter(isContextRelevantMessage), ...messages]
+    messages = [...items.map(contextRelevantMessage).filter(Boolean), ...messages]
     const turns = extractContextTurns(messages, { interruptedUserMessageIDs })
     if (turns.length >= count) return turns.slice(-count)
     if (!page?.before || cursors.has(page.before)) return turns
@@ -39,23 +39,25 @@ export function extractContextTurns(messages, { interruptedUserMessageIDs = new 
     const info = message?.info || message
     if (info?.role === "user") {
       const prompt = userPromptText(message)
-      current = prompt && !info.synthetic ? { userMessageID: info.id, prompt, answer: "" } : undefined
+      current = prompt && !info.synthetic ? { userMessageID: info.id, prompt, answer: "", progress: [] } : undefined
       if (current) {
         candidates.push(current)
         if (current.userMessageID) turnsByUserMessageID.set(current.userMessageID, current)
       }
       continue
     }
-    if (info?.role !== "assistant" || info.finish !== "stop") continue
+    if (info?.role !== "assistant") continue
     const target = turnsByUserMessageID.get(info.parentID) || current
     if (!target) continue
-    const answer = visibleTextFromParts(message?.parts || []).trim()
-    if (answer) target.answer = answer
+    const text = visibleTextFromParts(message?.parts || []).trim()
+    if (!text) continue
+    if (info.finish === "stop") target.answer = text
+    else target.progress.push(text)
   }
   return candidates.flatMap((turn, index) => {
-    if (turn.answer) return [{ prompt: turn.prompt, answer: turn.answer, interrupted: false }]
+    if (turn.answer) return [{ prompt: turn.prompt, answer: turn.answer, progress: [], interrupted: false }]
     const interrupted = index < candidates.length - 1 || interruptedUserMessageIDs.has(turn.userMessageID)
-    return interrupted ? [{ prompt: turn.prompt, answer: "", interrupted: true }] : []
+    return interrupted ? [{ prompt: turn.prompt, answer: "", progress: turn.progress, interrupted: true }] : []
   })
 }
 
@@ -103,14 +105,20 @@ function userPromptText(message) {
   return [text, ...attachments].filter(Boolean).join("\n")
 }
 
-function isContextRelevantMessage(message) {
+function contextRelevantMessage(message) {
   const info = message?.info || message
-  return info?.role === "user" || (info?.role === "assistant" && info.finish === "stop")
+  if (info?.role === "user") return message
+  if (info?.role !== "assistant") return undefined
+  const text = visibleTextFromParts(message?.parts || []).trim()
+  return text ? { info, parts: [{ type: "text", text }] } : undefined
 }
 
 function formatContextTurns(turns) {
   return turns.map((turn) => {
-    if (turn.interrupted) return ["### User — interrupted", turn.prompt.trim()].join("\n")
+    if (turn.interrupted) {
+      const progress = (turn.progress || []).flatMap((note, index) => ["", `### Progress ${index + 1}`, note.trim()])
+      return ["### User — interrupted", turn.prompt.trim(), ...progress].join("\n")
+    }
     return ["### User", turn.prompt.trim(), "", "### Assistant", turn.answer.trim()].join("\n")
   }).join("\n\n---\n\n")
 }
