@@ -36,6 +36,7 @@ export class StateStore {
       this.data.finalNotifications ||= { enabledUserIds: [], sentMessages: [] }
       this.data.finalNotifications.enabledUserIds ||= []
       this.data.finalNotifications.sentMessages ||= []
+      this.data.runAlerts = Array.isArray(this.data.runAlerts) ? this.data.runAlerts : []
       this.data.incompleteRunHistory = Array.isArray(this.data.incompleteRunHistory) ? this.data.incompleteRunHistory : []
       this.data.questionMessages ||= []
       this.data.seenSessions ||= []
@@ -702,6 +703,21 @@ export class StateStore {
     })
   }
 
+  runAlertSent(userID, alertKey) {
+    return this.data.runAlerts.includes(`${userID}:${alertKey}`)
+  }
+
+  async markRunAlertSent(userID, alertKey, maxItems = 1000) {
+    return this.update((data) => {
+      data.runAlerts ||= []
+      const key = `${userID}:${alertKey}`
+      if (data.runAlerts.includes(key)) return false
+      data.runAlerts.push(key)
+      if (data.runAlerts.length > maxItems) data.runAlerts = data.runAlerts.slice(-maxItems)
+      return true
+    })
+  }
+
   incompleteRunHandled(key) {
     return this.data.incompleteRunHistory.some((item) => item?.key === key)
   }
@@ -802,6 +818,7 @@ function defaultState() {
     mirroredUserBySession: {},
     debugEnabled: false,
     finalNotifications: { enabledUserIds: [], sentMessages: [] },
+    runAlerts: [],
     incompleteRunHistory: [],
     questionMessages: [],
     seenSessions: [],

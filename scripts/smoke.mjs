@@ -22,6 +22,7 @@ import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } fro
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { createQuestionManager } from "../src/questions.mjs"
 import { MirrorRenderer, richWebPromptMessages, webPromptMessages } from "../src/render.mjs"
+import { createRunAlerter } from "../src/run-alerts.mjs"
 import { normalizeNestedRichLists } from "../src/rich-list-normalization.mjs"
 import { bindingSessionReconcileRefresh, createSessionReconciler, isManualCompactionPart, normalizeSessionError, shouldSkipAssistantForCatchup, shouldSyncManagedTopicTitle } from "../src/session-reconcile.mjs"
 import { normalizeSpeechConfig } from "../src/config/speech.mjs"
@@ -77,6 +78,7 @@ async function smokeLocalInvariants() {
   await smokeCoreFailureInvariants()
   await smokeDeferredStatePersistence()
   await smokeQuestionRecovery()
+  await smokeRunAlerts()
   await smokeChunkedWebPromptMirror()
   await smokeKillCommand()
   await smokeCompactCommand()
@@ -517,9 +519,13 @@ async function smokeDeferredStatePersistence() {
     assert.equal(state.contextTurnsForUser(42, 3), 3)
     await state.setContextTurnsForUser(42, 6)
     assert.equal(state.contextTurnsForUser(42, 3), 6)
+    assert.equal(state.runAlertSent(42, "dima:session:user-1"), false)
+    await state.markRunAlertSent(42, "dima:session:user-1")
+    assert.equal(state.runAlertSent(42, "dima:session:user-1"), true)
     const reloaded = new StateStore(statePath)
     await reloaded.load()
     assert.equal(reloaded.contextTurnsForUser(42, 3), 6)
+    assert.equal(reloaded.runAlertSent(42, "dima:session:user-1"), true)
 
     const legacyPath = path.join(root, "legacy-state.json")
     await writeFile(legacyPath, JSON.stringify({ telegram: { contextPairsByUser: { 42: 7 } } }))
@@ -620,6 +626,50 @@ async function smokeQuestionRecovery() {
     properties: { requestID: request.id, sessionID: binding.sessionID, answers: [["A"]] },
   })
   assert.equal(records.get(request.id).status, "answered")
+}
+
+async function smokeRunAlerts() {
+  const sent = []
+  const markers = new Set()
+  const state = {
+    runAlertSent: (userID, alertKey) => markers.has(`${userID}:${alertKey}`),
+    async markRunAlertSent(userID, alertKey) { markers.add(`${userID}:${alertKey}`) },
+  }
+  const alerter = createRunAlerter({
+    config: { finalNotifications: { userIds: [11, 22] } },
+    state,
+    telegram: { async sendMessage(message) { sent.push(message); return { message_id: sent.length } } },
+  })
+  const binding = { serverID: "dima", sessionID: "session-1", chatId: -100123, topicId: 456, topicTitle: "Run topic" }
+
+  assert.equal(await alerter.notify({
+    binding,
+    alertKey: "dima:session-1:user-1",
+    kind: "error",
+    detail: "Provider failed",
+    topicMessageId: 789,
+    sessionUrl: "https://example.test/session/1",
+  }), 2)
+  assert.equal(sent.length, 2)
+  assert.ok(sent.every((message) => /OpenCodez run error/.test(message.text)))
+  assert.ok(sent.every((message) => message.replyMarkup.inline_keyboard[0].length === 2))
+
+  assert.equal(await alerter.notify({
+    binding,
+    alertKey: "dima:session-1:user-1",
+    kind: "interrupted",
+    detail: "No final response",
+  }), 0)
+  assert.equal(sent.length, 2)
+
+  assert.equal(await alerter.notify({
+    binding,
+    alertKey: "dima:session-1:user-2",
+    kind: "interrupted",
+    detail: "No final response",
+  }), 2)
+  assert.equal(sent.length, 4)
+  assert.ok(sent.slice(2).every((message) => /Run interrupted/.test(message.text)))
 }
 
 async function smokeOpenCodeMessagePaging() {
@@ -2338,6 +2388,7 @@ async function smokeKillCommandAbortFailure() {
 async function smokeKillSuppressesAbortFallout() {
   const binding = { chatId: 123, topicId: 456, serverID: "nuc", sessionID: "ses_kill", directory: "/tmp/work" }
   const sent = []
+  const alerts = []
   const promptQueue = new PromptQueue(async () => {})
   const reconciler = createSessionReconciler({
     config: { telegram: { autocreateTopics: false }, reconcile: {} },
@@ -2364,6 +2415,7 @@ async function smokeKillSuppressesAbortFallout() {
     },
     renderer: {},
     promptQueue,
+    runAlerter: { async notify(alert) { alerts.push(alert) } },
     backendRequest: async () => {},
     skippedBackendRequest: async () => {},
     createTopicForSession: async () => null,
@@ -2378,12 +2430,15 @@ async function smokeKillSuppressesAbortFallout() {
   promptQueue.markExpectedStop(binding)
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.error", properties: { sessionID: "ses_kill", error: "aborted" } })
   assert.equal(sent.length, 0)
+  assert.equal(alerts.length, 0)
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.error", properties: { sessionID: "ses_kill", error: "abort cleanup" } })
   assert.equal(sent.length, 0)
 
   promptQueue.clearExpectedStop(binding)
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.error", properties: { sessionID: "ses_kill", error: "real failure" } })
   assert.equal(sent.length, 1)
+  assert.equal(alerts.length, 1)
+  assert.equal(alerts[0].kind, "error")
   assert.match(sent[0].text, /OpenCodez session error/)
   assert.match(sent[0].text, /real failure/)
 
@@ -2393,6 +2448,13 @@ async function smokeKillSuppressesAbortFallout() {
   assert.match(sent[1].text, /Provider &lt;rate&gt; limit exceeded/)
   assert.doesNotMatch(sent[1].text, /Provider <rate>/)
   assert.doesNotMatch(sent[1].text, /secret response/)
+
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, {
+    type: "session.next.step.failed",
+    properties: { sessionID: "ses_kill", assistantMessageID: "assistant-failed", error: { name: "StepError", message: "Tool execution failed" } },
+  })
+  assert.equal(alerts.length, 3)
+  assert.equal(alerts[2].kind, "error")
 }
 
 async function smokeManualCompactionSuppression() {
@@ -2513,6 +2575,7 @@ async function smokeQueueDrainsOnSessionIdle() {
 async function smokeIncompleteRunNotice() {
   const binding = { chatId: 123, topicId: 456, serverID: "nuc", sessionID: "ses_incomplete", directory: "/tmp/work" }
   const notices = []
+  const alerts = []
   const handledRuns = new Set()
   const mirroredUsers = new Set()
   const mirroredAssistants = new Set()
@@ -2532,7 +2595,7 @@ async function smokeIncompleteRunNotice() {
       incompleteRunHandled: (key) => handledRuns.has(key),
       markIncompleteRunHandled: async (item) => handledRuns.add(item.key),
     },
-    telegram: { async sendMessage(message) { notices.push(message) } },
+    telegram: { async sendMessage(message) { notices.push(message); return { message_id: notices.length } } },
     opencode: {
       async request() { return {} },
       async messages() { return messages },
@@ -2546,6 +2609,7 @@ async function smokeIncompleteRunNotice() {
       shouldPinUserPrompts: () => false,
     },
     promptQueue,
+    runAlerter: { async notify(alert) { alerts.push(alert) } },
     backendRequest: async (_serverID, _label, request) => request(),
     skippedBackendRequest: Symbol("skipped"),
     createTopicForSession: async () => null,
@@ -2572,6 +2636,7 @@ async function smokeIncompleteRunNotice() {
   })
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(notices.length, 0)
+  assert.equal(alerts.length, 0)
   assert.deepEqual(repairedNotifications, [{ assistantMessageID: "msg_complete_assistant", messageId: null }])
 
   messages = [
@@ -2583,12 +2648,16 @@ async function smokeIncompleteRunNotice() {
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.idle", properties: { sessionID: binding.sessionID } })
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(notices.length, 1)
+  assert.equal(alerts.length, 1)
+  assert.equal(alerts[0].kind, "interrupted")
+  assert.equal(alerts[0].topicMessageId, 1)
   assert.match(notices[0].text, /run was interrupted/)
   assert.equal(notices[0].replyMarkup.inline_keyboard[0][0].text, "Open session")
 
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.idle", properties: { sessionID: binding.sessionID } })
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(notices.length, 1)
+  assert.equal(alerts.length, 1)
 
   messages = [
     { info: { id: "msg_empty_user", role: "user", sessionID: binding.sessionID }, parts: [{ type: "text", text: "finish visibly" }] },
@@ -2598,6 +2667,8 @@ async function smokeIncompleteRunNotice() {
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.idle", properties: { sessionID: binding.sessionID } })
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(notices.length, 2)
+  assert.equal(alerts.length, 2)
+  assert.equal(alerts[1].kind, "interrupted")
   assert.match(notices[1].text, /stopped without a final response/)
   assert.match(notices[1].text, /terminal assistant message contained no visible text/)
   assert.equal(repairedNotifications.length, 1)
@@ -2605,6 +2676,7 @@ async function smokeIncompleteRunNotice() {
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.idle", properties: { sessionID: binding.sessionID } })
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(notices.length, 2)
+  assert.equal(alerts.length, 2)
 
   messages = [
     { info: { id: "msg_aborted_user", role: "user", sessionID: binding.sessionID }, parts: [{ type: "text", text: "abort" }] },
@@ -2617,6 +2689,7 @@ async function smokeIncompleteRunNotice() {
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.idle", properties: { sessionID: binding.sessionID } })
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(notices.length, 2)
+  assert.equal(alerts.length, 2)
 }
 
 async function smokePeriodicIncompleteRunGrace() {

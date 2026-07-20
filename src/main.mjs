@@ -10,6 +10,7 @@ import { OpenCodeClient } from "./opencode.mjs"
 import { createPromptRouter } from "./prompt-routing.mjs"
 import { createQuestionManager } from "./questions.mjs"
 import { MirrorRenderer } from "./render.mjs"
+import { createRunAlerter } from "./run-alerts.mjs"
 import { createSessionReconciler } from "./session-reconcile.mjs"
 import { SpeechModule } from "./speech/index.mjs"
 import { StateStore } from "./state.mjs"
@@ -81,6 +82,7 @@ const questionManager = createQuestionManager({
   skippedBackendRequest,
   logError,
 })
+const runAlerter = createRunAlerter({ config, state, telegram, logError })
 const artifactUploads = new ArtifactUploadBuffer({
   settings: config.artifactUploads,
   flushUpload: ({ message, files }) => handleArtifactUploadMessage({ telegram, config, opencode, message, files }),
@@ -94,6 +96,7 @@ sessionReconciler = createSessionReconciler({
   renderer,
   promptQueue,
   questionManager,
+  runAlerter,
   backendRequest,
   skippedBackendRequest,
   createTopicForSession,

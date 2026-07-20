@@ -212,6 +212,8 @@ The final DM is intentionally short and mode-neutral: it includes a source `Topi
 
 The same configured `userIds` receive blocking OpenCodez question alerts with a direct link to the topic message. These alerts do not follow the per-user final-notification toggle because a pending question stops the active run. No additional recipient setting is required.
 
+The same configured `userIds` receive private operational alerts for explicit run errors, failed assistant steps, and unexpected interrupted or empty-terminal runs. Operational alerts also ignore the per-user final-answer toggle. Expected user-initiated stops remain silent. `state.runAlerts` retains only bounded recipient/run dedupe keys and never stores the error detail, prompt, progress, tool output, or answer text.
+
 Question recovery uses the existing `reconcile.intervalMs` cadence; there is no separate question polling knob or scheduler. Live `question.asked` remains immediate through SSE. Periodic and post-reconnect recovery query pending questions for unique active bound directories with the shared backend backoff, so a missed ephemeral event is normally recovered within one reconcile interval without duplicate Telegram messages.
 
 ## Artifacts

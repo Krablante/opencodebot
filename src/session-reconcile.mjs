@@ -13,6 +13,7 @@ export function createSessionReconciler({
   renderer,
   promptQueue,
   questionManager,
+  runAlerter,
   backendRequest,
   skippedBackendRequest,
   createTopicForSession,
@@ -187,7 +188,15 @@ export function createSessionReconciler({
             break
           }
           if (promptQueue.hasExpectedStop(binding)) break
-          await notifyRunFailed(binding, properties, promptQueue.clear(binding))
+          {
+            const failure = await notifyRunFailed(binding, properties, promptQueue.clear(binding))
+            await notifyRunAlert(binding, {
+              kind: "error",
+              properties,
+              detail: failure.errorText || "The run finished with an error.",
+              topicMessageId: failure.message?.message_id,
+            })
+          }
           break
         case "session.error":
           clearRunCheck(binding)
@@ -198,7 +207,15 @@ export function createSessionReconciler({
             break
           }
           if (promptQueue.hasExpectedStop(binding)) break
-          await notifySessionError(binding, properties)
+          {
+            const failure = await notifySessionError(binding, properties)
+            await notifyRunAlert(binding, {
+              kind: "error",
+              properties,
+              detail: failure.detail ? `${failure.detail.title}: ${failure.detail.message}` : "OpenCodez session error.",
+              topicMessageId: failure.message?.message_id,
+            })
+          }
           break
         case "session.next.tool.called":
           if (manualCompaction) break
@@ -441,7 +458,7 @@ export function createSessionReconciler({
       const configuredServer = config.opencode.servers.find((item) => item.id === binding.serverID)
       const sessionUrl = sessionWebUrl(configuredServer || server, binding)
       const emptyTerminal = outcome.reason === "empty_terminal"
-      await telegram.sendMessage({
+      const warning = await telegram.sendMessage({
         chatId: binding.chatId,
         topicId: binding.topicId,
         text: [
@@ -454,6 +471,12 @@ export function createSessionReconciler({
         ].join("\n\n"),
         disablePreview: true,
         replyMarkup: sessionUrl ? { inline_keyboard: [[{ text: "Open session", url: sessionUrl }]] } : undefined,
+      })
+      await notifyRunAlert(binding, {
+        kind: "interrupted",
+        runID: outcome.userMessageID || warningKey,
+        detail: incompleteRunReason(outcome),
+        topicMessageId: warning?.message_id,
       })
       await state.markIncompleteRunHandled({
         key: warningKey,
@@ -862,11 +885,12 @@ export function createSessionReconciler({
       lines.push("", "<b>Cleared queued prompts:</b>")
       lines.push(...clearedQueue.map((item) => `${item.index}. <code>${escapeHtml(item.summary)}</code>`))
     }
-    await telegram.sendMessage({
+    const message = await telegram.sendMessage({
       chatId: binding.chatId,
       topicId: binding.topicId,
       text: lines.join("\n"),
     })
+    return { message, errorText }
   }
 
   async function notifySessionError(binding, properties) {
@@ -874,10 +898,31 @@ export function createSessionReconciler({
     const text = detail
       ? `❌ <b>OpenCodez session error</b>\n<blockquote><b>${escapeHtml(detail.title)}</b>\n${escapeHtml(detail.message)}</blockquote>`
       : "❌ <b>OpenCodez session error.</b>"
-    await telegram.sendMessage({
+    const message = await telegram.sendMessage({
       chatId: binding.chatId,
       topicId: binding.topicId,
       text,
+    })
+    return { message, detail }
+  }
+
+  async function notifyRunAlert(binding, { kind, properties = {}, detail, topicMessageId, runID } = {}) {
+    if (!runAlerter?.notify) return
+    const currentRunID = runID
+      || properties.userMessageID
+      || latestUserMessages.get(bindingKey(binding))
+      || properties.assistantMessageID
+      || properties.messageID
+      || properties.id
+      || alertFingerprint(detail)
+    const server = config.opencode?.servers?.find((item) => item.id === binding.serverID)
+    await runAlerter.notify({
+      binding,
+      alertKey: `${binding.serverID}:${binding.sessionID}:${currentRunID}`,
+      kind,
+      detail,
+      topicMessageId,
+      sessionUrl: sessionWebUrl(server, binding),
     })
   }
 
@@ -1205,6 +1250,12 @@ function sessionWebUrl(server, binding) {
   if (!base || !binding?.sessionID) return ""
   const directory = binding.directory || "/"
   return `${base}/${Buffer.from(directory).toString("base64url")}/session/${binding.sessionID}`
+}
+
+function alertFingerprint(value) {
+  let hash = 5381
+  for (const character of String(value || "run-alert")) hash = ((hash << 5) + hash + character.charCodeAt(0)) >>> 0
+  return `event-${hash.toString(16)}`
 }
 
 function delay(ms) {
