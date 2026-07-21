@@ -9,6 +9,32 @@ import { promptHash } from "./state.mjs"
 import { escapeHtml, topicId } from "./telegram.mjs"
 import { prepareSavedFilesForServer } from "./upload-transfer.mjs"
 
+export async function bindPendingTopicSession({ state, opencode, pending, message, text = "", files = [] }) {
+  const directory = pending.directory || opencode.defaultNewSessionDirectory(pending.serverID)
+  const session = await opencode.createSession(pending.serverID, { directory })
+  const binding = {
+    chatId: message.chat.id,
+    topicId: topicId(message),
+    topicTitle: pending.topicTitle || pending.title,
+    topicBaseTitle: pending.topicBaseTitle || pending.title,
+    topicServerSuffixManaged: pending.topicServerSuffixManaged === true,
+    topicIconCustomEmojiId: pending.topicIconCustomEmojiId,
+    topicIconEmoji: pending.topicIconEmoji,
+    serverID: pending.serverID,
+    sessionID: session.id,
+    directory: session.directory || directory,
+    title: pending.title || titleFromText(text || files[0]?.filename || "Attachments"),
+    titleSource: pending.titleSource || "auto",
+    chatTemplateName: pending.chatTemplateName,
+    agent: pending.chatTemplate?.agent,
+    model: pending.chatTemplate?.model,
+  }
+  await state.bindTopic(binding)
+  await state.markSeenSession(binding.serverID, binding.sessionID)
+  await applyChatTemplate(opencode, pending.serverID, session.id, pending.chatTemplate, { directory })
+  return binding
+}
+
 export function createPromptRouter({ config, state, telegram, opencode, renderer, scheduleReconcile, logError }) {
   const promptFeedbackMessages = new Map()
   const activityPersistedAt = new Map()
@@ -46,28 +72,14 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       return
     }
     if (!context.pending) return
-    const directory = context.pending.directory || opencode.defaultNewSessionDirectory(context.pending.serverID)
-    const session = await opencode.createSession(context.pending.serverID, { directory })
-    await applyChatTemplate(opencode, context.pending.serverID, session.id, context.pending.chatTemplate, { directory })
-    const newBinding = {
-      chatId: context.message.chat.id,
-      topicId: topicId(context.message),
-      topicTitle: context.pending.topicTitle || context.pending.title,
-      topicBaseTitle: context.pending.topicBaseTitle || context.pending.title,
-      topicServerSuffixManaged: context.pending.topicServerSuffixManaged === true,
-      topicIconCustomEmojiId: context.pending.topicIconCustomEmojiId,
-      topicIconEmoji: context.pending.topicIconEmoji,
-      serverID: context.pending.serverID,
-      sessionID: session.id,
-      directory: session.directory || directory,
-      title: context.pending.title || titleFromText(text || files[0]?.filename || "Attachments"),
-      titleSource: context.pending.titleSource || "auto",
-      chatTemplateName: context.pending.chatTemplateName,
-      agent: context.pending.chatTemplate?.agent,
-      model: context.pending.chatTemplate?.model,
-    }
-    await state.bindTopic(newBinding)
-    await state.markSeenSession(newBinding.serverID, newBinding.sessionID)
+    const newBinding = await bindPendingTopicSession({
+      state,
+      opencode,
+      pending: context.pending,
+      message: context.message,
+      text,
+      files,
+    })
     await activateBindingForPrompt(newBinding, "telegram-new-topic")
     await sendTelegramPrompt(newBinding, text, files, { sourceMessageId })
   }

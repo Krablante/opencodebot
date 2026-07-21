@@ -6,7 +6,7 @@ The useful shape is deliberately narrow. A topic is a working thread with at mos
 
 ## Topics
 
-The bot expects a forum-enabled Telegram chat when topic creation is used. A topic can be created from Telegram with `/new`, or autocreated for web-created OpenCodez sessions discovered through events or bounded reconcile.
+The bot expects a forum-enabled Telegram chat when topic creation is used. A topic can be created from Telegram with `/new`, or autocreated for web-created OpenCodez sessions discovered through events or bounded reconcile. When the first prompt materializes a `/new` topic, its new OpenCodez session is bound to that Telegram topic before profile model/System settings are applied; setup events therefore cannot be mistaken for an unbound web session and create a second forum topic.
 
 Deleting or closing a Telegram topic is treated as an explicit stop for that topic's mirror binding. The bot disables the binding and must not continue mirroring that session into `#General` or any other fallback topic.
 

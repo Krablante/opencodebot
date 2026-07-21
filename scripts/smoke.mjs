@@ -19,6 +19,7 @@ import { createTelegramCommandHandlers, telegramBotCommands } from "../src/comma
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { createFinalNotifier, finalNotificationMarkdown, finalNotificationTopicSource, formatDebugDiagnosticsText, formatDuration, formatTokenCount, runDiagnosticsBeforeAssistant, toolSummaryBeforeAssistant, turnMetadataBeforeAssistant, turnTokenUsageBeforeAssistant } from "../src/final-notifications.mjs"
 import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
+import { bindPendingTopicSession } from "../src/prompt-routing.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { createQuestionManager } from "../src/questions.mjs"
 import { MirrorRenderer, richWebPromptMessages, webPromptMessages } from "../src/render.mjs"
@@ -69,6 +70,7 @@ async function smokeLocalInvariants() {
   await smokeCanonicalTopicMetadata()
   await smokeActiveBindingLeavesUsersOnlyCatchup()
   await smokeTopicCreationSingleFlight()
+  await smokePendingTopicBindingPrecedesProfileSetup()
   await smokeReconcileTopicRetry()
   await smokeReconcileSingleFlight()
   await smokeMirrorModeCommands()
@@ -2125,6 +2127,57 @@ async function smokeActiveBindingLeavesUsersOnlyCatchup() {
   } finally {
     await rm(root, { recursive: true, force: true })
   }
+}
+
+async function smokePendingTopicBindingPrecedesProfileSetup() {
+  const order = []
+  let binding = null
+  const state = {
+    async bindTopic(next) {
+      binding = next
+      order.push("bind")
+    },
+    async markSeenSession(serverID, sessionID) {
+      assert.equal(binding?.serverID, serverID)
+      assert.equal(binding?.sessionID, sessionID)
+      order.push("seen")
+    },
+  }
+  const opencode = {
+    defaultNewSessionDirectory: () => "/srv/toma",
+    async createSession() {
+      order.push("create")
+      return { id: "ses_telegram_new", directory: "/srv/toma" }
+    },
+    async switchSessionModel(serverID, sessionID) {
+      assert.equal(binding?.serverID, serverID)
+      assert.equal(binding?.sessionID, sessionID)
+      order.push("model")
+    },
+    async selectSystemPrompt(serverID, sessionID) {
+      assert.equal(binding?.serverID, serverID)
+      assert.equal(binding?.sessionID, sessionID)
+      order.push("system")
+    },
+  }
+  const result = await bindPendingTopicSession({
+    state,
+    opencode,
+    pending: {
+      serverID: "toma",
+      title: "zikzik",
+      titleSource: "user",
+      chatTemplateName: "sol",
+      chatTemplate: {
+        model: { providerID: "openai", modelID: "gpt-5.6", variant: "high" },
+        opencodezSystem: "full",
+      },
+    },
+    message: { chat: { id: -100123 }, message_thread_id: 38740 },
+    text: "First prompt",
+  })
+  assert.equal(result.topicId, 38740)
+  assert.deepEqual(order, ["create", "bind", "seen", "model", "system"])
 }
 
 async function smokeTopicCreationSingleFlight() {
