@@ -30,7 +30,7 @@ Incremental-reconcile checks cover `limit`/`before` cursor propagation, a durabl
 
 Question recovery smoke covers an SSE `question.asked` racing with pending-question reconciliation, one Telegram send under request single-flight, resolution after that send completes, the periodic reconcile hook, and the SSE connected hook. Keep this in central smoke rather than adding a dedicated test file.
 
-Run-alert smoke covers per-recipient durable dedupe across error/interruption shapes, expected-stop suppression, explicit `session.error`, failed assistant-step wiring, unexpected idle interruption wiring, topic/session buttons, and marker persistence. Keep this in central smoke rather than adding a dedicated test file.
+Run-alert smoke covers per-recipient durable dedupe across error/interruption shapes, separation of later prompt/continuation failures in the same session, expected-stop suppression, explicit `session.error`, failed assistant-step wiring, unexpected idle interruption wiring, topic/session buttons, and marker persistence. Keep this in central smoke rather than adding a dedicated test file.
 
 Speech transcript smoke covers HTML escaping, lossless multi-message reconstruction beyond 10,000 characters, the ordinary 4,096-character payload ceiling, footer-only-last behavior, sequential reply delivery, and partial-delivery accounting. Long-transcript behavior stays in central smoke rather than a new speech-specific test file.
 

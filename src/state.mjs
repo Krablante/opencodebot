@@ -601,6 +601,17 @@ export class StateStore {
     return null
   }
 
+  activePromptOrigin(serverID, sessionID) {
+    const server = String(serverID)
+    const session = String(sessionID)
+    for (let index = this.data.promptOrigins.length - 1; index >= 0; index -= 1) {
+      const origin = this.data.promptOrigins[index]
+      if (origin.serverID !== server || origin.sessionID !== session || origin.status !== "active") continue
+      return { ...origin }
+    }
+    return null
+  }
+
   async recordPromptOrigin({ chatID, topicID, telegramMessageID, serverID, sessionID, opencodeMessageID }) {
     const origin = {
       chatID: String(chatID),

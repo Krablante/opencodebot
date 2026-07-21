@@ -911,6 +911,7 @@ export function createSessionReconciler({
     const currentRunID = runID
       || properties.userMessageID
       || latestUserMessages.get(bindingKey(binding))
+      || state.activePromptOrigin?.(binding.serverID, binding.sessionID)?.opencodeMessageID
       || properties.assistantMessageID
       || properties.messageID
       || properties.id

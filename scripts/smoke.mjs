@@ -522,10 +522,29 @@ async function smokeDeferredStatePersistence() {
     assert.equal(state.runAlertSent(42, "dima:session:user-1"), false)
     await state.markRunAlertSent(42, "dima:session:user-1")
     assert.equal(state.runAlertSent(42, "dima:session:user-1"), true)
+    await state.recordPromptOrigin({
+      chatID: 123,
+      topicID: 456,
+      telegramMessageID: 789,
+      serverID: "dima",
+      sessionID: "session",
+      opencodeMessageID: "user-1",
+    })
+    await state.recordPromptOrigin({
+      chatID: 123,
+      topicID: 456,
+      telegramMessageID: 790,
+      serverID: "dima",
+      sessionID: "session",
+      opencodeMessageID: "user-2",
+    })
+    assert.equal(state.activePromptOrigin("dima", "session")?.opencodeMessageID, "user-2")
+    assert.equal(state.activePromptOrigin("dima", "other-session"), null)
     const reloaded = new StateStore(statePath)
     await reloaded.load()
     assert.equal(reloaded.contextTurnsForUser(42, 3), 6)
     assert.equal(reloaded.runAlertSent(42, "dima:session:user-1"), true)
+    assert.equal(reloaded.activePromptOrigin("dima", "session")?.opencodeMessageID, "user-2")
 
     const legacyPath = path.join(root, "legacy-state.json")
     await writeFile(legacyPath, JSON.stringify({ telegram: { contextPairsByUser: { 42: 7 } } }))
@@ -2389,12 +2408,14 @@ async function smokeKillSuppressesAbortFallout() {
   const binding = { chatId: 123, topicId: 456, serverID: "nuc", sessionID: "ses_kill", directory: "/tmp/work" }
   const sent = []
   const alerts = []
+  let activePromptID = "user-first"
   const promptQueue = new PromptQueue(async () => {})
   const reconciler = createSessionReconciler({
     config: { telegram: { autocreateTopics: false }, reconcile: {} },
     state: {
       mirrorEnabled: () => true,
       findBinding: (serverID, sessionID) => (serverID === binding.serverID && sessionID === binding.sessionID ? binding : null),
+      activePromptOrigin: () => ({ opencodeMessageID: activePromptID }),
       markAssistantMirrored: async () => {},
     },
     telegram: { async sendMessage(message) { sent.push(message) } },
@@ -2439,6 +2460,7 @@ async function smokeKillSuppressesAbortFallout() {
   assert.equal(sent.length, 1)
   assert.equal(alerts.length, 1)
   assert.equal(alerts[0].kind, "error")
+  assert.equal(alerts[0].alertKey, "nuc:ses_kill:user-first")
   assert.match(sent[0].text, /OpenCodez session error/)
   assert.match(sent[0].text, /real failure/)
 
@@ -2449,12 +2471,14 @@ async function smokeKillSuppressesAbortFallout() {
   assert.doesNotMatch(sent[1].text, /Provider <rate>/)
   assert.doesNotMatch(sent[1].text, /secret response/)
 
+  activePromptID = "user-continued"
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, {
     type: "session.next.step.failed",
     properties: { sessionID: "ses_kill", assistantMessageID: "assistant-failed", error: { name: "StepError", message: "Tool execution failed" } },
   })
   assert.equal(alerts.length, 3)
   assert.equal(alerts[2].kind, "error")
+  assert.equal(alerts[2].alertKey, "nuc:ses_kill:user-continued")
 }
 
 async function smokeManualCompactionSuppression() {
