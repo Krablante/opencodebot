@@ -53,6 +53,32 @@ export function createSessionReconciler({
     return current
   }
 
+  function queuedPromptCount(binding) {
+    if (typeof promptQueue.status !== "function") return 0
+    const status = promptQueue.status(binding)
+    if (Array.isArray(status)) return status.length
+    return Number(status?.queued || 0)
+  }
+
+  async function reconcileQueuedPromptStatus(binding) {
+    if (!queuedPromptCount(binding) || typeof opencode.sessionStatus !== "function") return
+    const status = await backendRequest(binding.serverID, "reconcile queued prompt status", () => opencode.sessionStatus(
+      binding.serverID,
+      binding.sessionID,
+      { directory: binding.directory },
+    ))
+    if (status === skippedBackendRequest || status?.type !== "idle") return
+    const result = await promptQueue.markBackendIdle(binding)
+    if (result.status === "sent") {
+      logInfo("queue.reconcile.sent", {
+        source: binding.serverID,
+        sessionID: binding.sessionID,
+        topicId: binding.topicId,
+        remaining: result.remaining,
+      })
+    }
+  }
+
   function handleOpenCodeEvent(server, event) {
     const sessionID = eventSessionID(event.properties)
     if (!sessionID) return Promise.resolve()
@@ -337,7 +363,7 @@ export function createSessionReconciler({
   }
 
   async function handleSessionIdle(server, binding) {
-    const queued = promptQueue.status(binding).queued
+    const queued = queuedPromptCount(binding) > 0
     const result = await promptQueue.markBackendIdle(binding)
     if (queued && result.status !== "sent") await reconcileBindingNow(binding)
     if (promptQueue.hasExpectedStop(binding)) {
@@ -788,7 +814,10 @@ export function createSessionReconciler({
       }
       if (info.role !== "assistant" || !info.id) continue
       if (!isCompleted(info)) continue
-      if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) continue
+      if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
+        if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding)
+        continue
+      }
       if (info.summary === true) {
         skippedAssistantIDs.push(info.id)
         if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding)
@@ -806,6 +835,7 @@ export function createSessionReconciler({
       mirroredAssistants += 1
     }
     if (skippedAssistantIDs.length) await state.markAssistantMirroredMany(binding.serverID, binding.sessionID, skippedAssistantIDs)
+    await reconcileQueuedPromptStatus(binding)
     await repairLatestFinalNotification(binding, messages)
     await markBindingReconciled(binding, messages)
     const elapsedMs = durationMs(startedAt)

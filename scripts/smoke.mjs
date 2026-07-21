@@ -2753,8 +2753,8 @@ async function smokePeriodicIncompleteRunGrace() {
     let stopped = false
     const deadline = Date.now() + 500
     let messageCalls = 0
-    let terminalMirrored = 0
     const notices = []
+    const queuedPrompts = []
     const opencode = {
       listSessions: async () => [],
       messages: async () => {
@@ -2766,19 +2766,12 @@ async function smokePeriodicIncompleteRunGrace() {
         return [user, finalAssistant]
       },
       request: async () => ({ [binding.sessionID]: { type: "idle" } }),
+      sessionStatus: async () => ({ type: "idle" }),
       server: () => server,
     }
-    const promptQueue = {
-      status: () => ({ queued: 0 }),
-      hasExpectedStop: () => false,
-      markBackendIdle: async () => ({ status: "idle" }),
-      markTerminalMirrored: async () => {
-        terminalMirrored += 1
-      },
-      clearExpectedStop: () => {},
-      flushIfPossible: async () => {},
-      clear: async () => [],
-    }
+    const promptQueue = new PromptQueue(async (_binding, text) => queuedPrompts.push(text))
+    promptQueue.markBusy(binding)
+    await promptQueue.enqueue(binding, "queued after recovered final")
     const reconciler = createSessionReconciler({
       config: {
         opencode: { servers: [server] },
@@ -2809,7 +2802,8 @@ async function smokePeriodicIncompleteRunGrace() {
     assert.equal(messageCalls >= 2, true)
     assert.deepEqual(notices, [])
     assert.equal(state.data.incompleteRunHistory.length, 0)
-    assert.equal(terminalMirrored >= 1, true)
+    assert.deepEqual(queuedPrompts, ["queued after recovered final"])
+    assert.equal(promptQueue.status(binding).length, 0)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
