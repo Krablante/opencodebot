@@ -405,7 +405,7 @@ export function createSessionReconciler({
   function scheduleIncompleteRunCheck(server, binding, { expectedStop = false, source } = {}) {
     const key = bindingKey(binding)
     const existing = incompleteChecks.get(key)
-    if (existing) clearTimeout(existing)
+    if (existing) return
     const verificationSource = source || (expectedStop ? "expected-stop" : "idle")
     const timer = setTimeout(() => {
       incompleteChecks.delete(key)

@@ -93,6 +93,7 @@ async function smokeLocalInvariants() {
   await smokeQueueDrainsOnSessionIdle()
   await smokeIncompleteRunNotice()
   await smokePeriodicIncompleteRunGrace()
+  await smokePeriodicReconcileDoesNotPostponeIncompleteWarning()
 }
 
 function smokeIncomingRichMessages() {
@@ -2857,6 +2858,89 @@ async function smokePeriodicIncompleteRunGrace() {
     assert.equal(state.data.incompleteRunHistory.length, 0)
     assert.deepEqual(queuedPrompts, ["queued after recovered final"])
     assert.equal(promptQueue.status(binding).length, 0)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+}
+
+async function smokePeriodicReconcileDoesNotPostponeIncompleteWarning() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-periodic-warning-"))
+  try {
+    const state = new StateStore(path.join(root, "state.json"))
+    await state.load()
+    const server = { id: "dima", url: "http://opencode.test", directory: "/work" }
+    const binding = {
+      serverID: server.id,
+      sessionID: "session-periodic-warning",
+      chatId: 123,
+      topicId: 456,
+      directory: server.directory,
+      title: "Interrupted run",
+      createdAt: new Date().toISOString(),
+      lastActive: new Date().toISOString(),
+      reconcileAfter: new Date(Date.now() - 60_000).toISOString(),
+      reconcileUntil: new Date(Date.now() + 60_000).toISOString(),
+    }
+    await state.bindTopic(binding)
+    const messages = [
+      {
+        info: { id: "user-periodic-warning", role: "user", time: { created: Date.now() - 2_000 } },
+        parts: [{ type: "text", text: "finish the work" }],
+      },
+      {
+        info: {
+          id: "assistant-periodic-warning",
+          role: "assistant",
+          parentID: "user-periodic-warning",
+          time: { created: Date.now() - 1_000 },
+        },
+        parts: [{ type: "text", text: "I will finish this now." }],
+      },
+    ]
+    await state.markUserMirrored(server.id, binding.sessionID, messages[0].info.id)
+    await state.markAssistantMirrored(server.id, binding.sessionID, messages[1].info.id)
+
+    const notices = []
+    const deadline = Date.now() + 100
+    const reconciler = createSessionReconciler({
+      config: {
+        opencode: { servers: [server] },
+        telegram: { autocreateTopics: false },
+        reconcile: { enabled: true, startupSeed: false, intervalMs: 1, lookbackMs: 60_000 },
+      },
+      state,
+      telegram: {
+        async sendMessage(payload) {
+          notices.push(payload)
+          return { message_id: notices.length }
+        },
+      },
+      opencode: {
+        listSessions: async () => [],
+        messages: async () => messages,
+        request: async () => ({ [binding.sessionID]: { type: "idle" } }),
+        server: () => server,
+      },
+      renderer: {},
+      promptQueue: new PromptQueue(async () => {}),
+      questionManager: null,
+      backendRequest: async (_serverID, _operation, request) => request(),
+      skippedBackendRequest: Symbol("skipped"),
+      createTopicForSession: async () => {},
+      createTopicForWebSession: async () => {},
+      isInternalSession: () => false,
+      activateBindingForPrompt: async () => {},
+      maybeExtendBindingActivity: async () => {},
+      logError: (error) => assert.fail(error),
+      shouldStop: () => Date.now() >= deadline,
+      incompleteRunGraceMs: 15,
+    })
+
+    await reconciler.reconcileLoop()
+
+    assert.equal(notices.length, 1)
+    assert.match(notices[0].text, /run was interrupted/)
+    assert.equal(state.data.incompleteRunHistory.at(-1)?.userMessageID, "user-periodic-warning")
   } finally {
     await rm(root, { recursive: true, force: true })
   }
