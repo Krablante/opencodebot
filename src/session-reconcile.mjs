@@ -35,7 +35,6 @@ export function createSessionReconciler({
   const incompleteNotifications = new Set()
   const latestUserMessages = new Map()
   const manualCompactions = new Set()
-  const finalNotificationAttempts = new Map()
   const reconcileTimers = new Map()
   const targetedMessageTimers = new Map()
   const targetedMessageRoles = new Map()
@@ -447,7 +446,6 @@ export function createSessionReconciler({
       scheduleIncompleteRunCheck(server, binding, { source })
       return
     }
-    if (outcome.finalAnswer) await repairLatestFinalNotification(binding, history)
     if (expectedStop) {
       if (!outcome.complete) {
         await state.markIncompleteRunHandled({
@@ -836,7 +834,6 @@ export function createSessionReconciler({
     }
     if (skippedAssistantIDs.length) await state.markAssistantMirroredMany(binding.serverID, binding.sessionID, skippedAssistantIDs)
     await reconcileQueuedPromptStatus(binding)
-    await repairLatestFinalNotification(binding, messages)
     await markBindingReconciled(binding, messages)
     const elapsedMs = durationMs(startedAt)
     if (mirroredUsers || mirroredAssistants || skippedAssistants || shouldLogSlow(elapsedMs)) {
@@ -885,17 +882,6 @@ export function createSessionReconciler({
     }
     lastWatchdogAt.set(key, Date.now())
     return true
-  }
-
-  async function repairLatestFinalNotification(binding, messages) {
-    if (typeof renderer.notifyFinalMessage !== "function") return
-    const outcome = latestRunOutcome(messages)
-    if (!outcome?.finalAnswer || !outcome.assistantMessageID) return
-    const key = `${bindingKey(binding)}:${outcome.assistantMessageID}`
-    const now = Date.now()
-    if (now - (finalNotificationAttempts.get(key) || 0) < 60_000) return
-    finalNotificationAttempts.set(key, now)
-    await renderer.notifyFinalMessage(binding, { assistantMessageID: outcome.assistantMessageID, messageId: null })
   }
 
   async function handleMirrorError(binding, error) {
@@ -1011,9 +997,6 @@ export function createSessionReconciler({
   function detachBinding(binding) {
     clearRunCheck(binding)
     const key = bindingKey(binding)
-    for (const attemptKey of finalNotificationAttempts.keys()) {
-      if (attemptKey.startsWith(`${key}:`)) finalNotificationAttempts.delete(attemptKey)
-    }
     const timer = reconcileTimers.get(key)
     if (timer) {
       clearTimeout(timer)

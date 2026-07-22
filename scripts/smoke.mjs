@@ -76,7 +76,7 @@ async function smokeLocalInvariants() {
   await smokeMirrorModeCommands()
   await smokeMirrorModeRendering()
   smokeFinalToolSummary()
-  await smokeFinalNotificationRetry()
+  await smokeFinalNotificationDelivery()
   await smokeCoreFailureInvariants()
   await smokeDeferredStatePersistence()
   await smokeQuestionRecovery()
@@ -437,7 +437,7 @@ function smokeFinalToolSummary() {
   assert.doesNotMatch(notification, /\/home\/bloob|C:\\repo|old\.txt|failed\.mjs|Explore|Todo/)
 }
 
-async function smokeFinalNotificationRetry() {
+async function smokeFinalNotificationDelivery() {
   const marked = new Set()
   const attempts = []
   let failingUserAttempts = 1
@@ -477,15 +477,19 @@ async function smokeFinalNotificationRetry() {
   const binding = { chatId: -1001234567890, topicId: 456, serverID: "nuc", sessionID: "ses_retry", directory: "/tmp/work" }
 
   await notifier.notifyFinalAnswerReady(binding, { assistantMessageID: "msg_final", messageId: null })
+  assert.equal(attempts.length, 0)
+  assert.equal(marked.size, 0)
+
+  await notifier.notifyFinalAnswerReady(binding, { assistantMessageID: "msg_final", messageId: 789 })
   assert.equal(marked.has("user-1:nuc:ses_retry:msg_final"), true)
   assert.equal(marked.has("user-2:nuc:ses_retry:msg_final"), false)
-  assert.match(attempts[0].replyMarkup.inline_keyboard[0][0].url, /\/456$/)
+  assert.match(attempts[0].replyMarkup.inline_keyboard[0][0].url, /\/789$/)
 
-  await notifier.notifyFinalAnswerReady(binding, { assistantMessageID: "msg_final", messageId: null })
+  await notifier.notifyFinalAnswerReady(binding, { assistantMessageID: "msg_final", messageId: 789 })
   assert.equal(marked.has("user-2:nuc:ses_retry:msg_final"), true)
-  const attemptsAfterRepair = attempts.length
-  await notifier.notifyFinalAnswerReady(binding, { assistantMessageID: "msg_final", messageId: null })
-  assert.equal(attempts.length, attemptsAfterRepair)
+  const attemptsAfterRetry = attempts.length
+  await notifier.notifyFinalAnswerReady(binding, { assistantMessageID: "msg_final", messageId: 789 })
+  assert.equal(attempts.length, attemptsAfterRetry)
 
   const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-final-notification-state-"))
   try {
@@ -2715,7 +2719,7 @@ async function smokeIncompleteRunNotice() {
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(notices.length, 0)
   assert.equal(alerts.length, 0)
-  assert.deepEqual(repairedNotifications, [{ assistantMessageID: "msg_complete_assistant", messageId: null }])
+  assert.deepEqual(repairedNotifications, [])
 
   messages = [
     { info: { id: "msg_incomplete_user", role: "user", sessionID: binding.sessionID }, parts: [{ type: "text", text: "start" }] },
@@ -2749,7 +2753,7 @@ async function smokeIncompleteRunNotice() {
   assert.equal(alerts[1].kind, "interrupted")
   assert.match(notices[1].text, /stopped without a final response/)
   assert.match(notices[1].text, /terminal assistant message contained no visible text/)
-  assert.equal(repairedNotifications.length, 1)
+  assert.equal(repairedNotifications.length, 0)
 
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.idle", properties: { sessionID: binding.sessionID } })
   await new Promise((resolve) => setTimeout(resolve, 10))

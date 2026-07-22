@@ -14,13 +14,17 @@ export function createFinalNotifier({ config, state, telegram, opencode }) {
     async notifyFinalAnswerReady(binding, { assistantMessageID, messageId }) {
       if (config.finalNotifications?.enabled === false) return
       if (!assistantMessageID) return
+      // A final DM must point to a final answer that the bot actually mirrored
+      // into Telegram. Historical OpenCodez outcomes discovered by reconcile
+      // have no exact Telegram message and must never create a new DM.
+      if (!messageId) return
       const configuredUserIds = new Set((config.finalNotifications?.userIds || []).map(String))
       const userIds = state.finalNotificationUserIds().filter((userId) => (
         configuredUserIds.has(String(userId))
         && !state.finalNotificationSent(userId, binding.serverID, binding.sessionID, assistantMessageID)
       ))
       if (!userIds.length) return
-      const link = telegramMessageLink(binding.chatId, messageId || binding.topicId)
+      const link = telegramMessageLink(binding.chatId, messageId)
       const topicSource = finalNotificationTopicSource(state.topicRecord?.(binding.chatId, binding.topicId) || binding)
       const summary = await finalSessionSummary({
         opencode,
@@ -42,8 +46,7 @@ export function createFinalNotifier({ config, state, telegram, opencode }) {
             serverID: binding.serverID,
             sessionID: binding.sessionID,
             topicId: binding.topicId,
-            messageId: messageId || null,
-            repaired: !messageId,
+            messageId,
           })
         } catch (error) {
           logErrorEvent("final_notification.failed", error, {
@@ -51,8 +54,7 @@ export function createFinalNotifier({ config, state, telegram, opencode }) {
             serverID: binding.serverID,
             sessionID: binding.sessionID,
             topicId: binding.topicId,
-            messageId: messageId || null,
-            repaired: !messageId,
+            messageId,
           })
         }
       }
