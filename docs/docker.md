@@ -220,6 +220,10 @@ The self-updater never refreshes or restarts OpenCodez. If Git paths for the bun
 changed, the final Telegram card reports the manual follow-up. See [Self-Update](self-update.md) and
 [Artifact Gateway](artifact-gateway.md#updating).
 
+Updates that change `docker-compose*.yml` or the host runner scripts are manual by design. Telegram omits the apply
+button and shows the appropriate `git pull`, optional `update-runner:install`, and `deploy:bot`/`deploy:all` command.
+This avoids claiming rollback when the deployment contract itself changed.
+
 ## What Docker Owns
 
 Docker runs opencodebot and, only when the `telegram-local` profile is enabled, the optional Telegram Bot API sidecar. It does not run OpenCodez or WireGuard.

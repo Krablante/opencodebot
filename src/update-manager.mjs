@@ -9,6 +9,7 @@ const GITHUB_API_VERSION = "2026-03-10"
 const SCHEDULE_INTERVAL_MS = 60_000
 const STATUS_INTERVAL_MS = 2_500
 const SCHEDULE_RETRY_MS = 15 * 60_000
+const STALE_RUN_MS = 35 * 60_000
 const EMPTY_KEYBOARD = { inline_keyboard: [] }
 
 export function createUpdateManager({ config, state, telegram, fetchImpl = globalThis.fetch, now = () => new Date() }) {
@@ -24,6 +25,7 @@ class UpdateManager {
     this.now = now
     this.runtimeDir = config.updates.runtimeDir
     this.requestPath = path.join(this.runtimeDir, "request.json")
+    this.processingPath = path.join(this.runtimeDir, "request.processing.json")
     this.statusPath = path.join(this.runtimeDir, "status.json")
     this.runnerInfoPath = path.join(this.runtimeDir, "runner.json")
     this.checkPromise = null
@@ -134,6 +136,15 @@ class UpdateManager {
         messageId,
         text: `⏸️ <b>Update deferred</b>\n\n<code>${shortRevision(offer.baseSha)}</code> → <code>${shortRevision(targetSha)}</code>\nI’ll check again tomorrow at ${escapeHtml(this.config.updates.checkAt)} ${escapeHtml(this.config.updates.timeZone)}.`,
         replyMarkup: EMPTY_KEYBOARD,
+      })
+      return true
+    }
+
+    if (offer.components?.controlPlane?.length) {
+      await this.telegram.answerCallbackQuery({
+        callbackQueryId: query.id,
+        text: "This update changes deployment control-plane files and must be installed manually.",
+        showAlert: true,
       })
       return true
     }
@@ -356,12 +367,23 @@ class UpdateManager {
       this.statusTimer = null
       return
     }
-    const status = await readJson(this.statusPath)
-    if (!status || status.id !== run.id || status.stage === run.lastStage) return
-    if (status.stage === "succeeded" || status.stage === "failed") {
+    const loadedStatus = await readJson(this.statusPath)
+    const status = loadedStatus?.id === run.id ? loadedStatus : null
+    if (status?.stage === "succeeded" || status?.stage === "failed") {
       await this.finishRun(run, status)
       return
     }
+    if (runIsStale(run, status, this.now())) {
+      await fs.rm(this.requestPath, { force: true })
+      await fs.rm(this.processingPath, { force: true })
+      await this.finishRun(run, {
+        stage: "failed",
+        error: "The host update runner stopped reporting progress for over 35 minutes. The stale update lock was cleared; run /update to retry.",
+        serviceMayHaveChanged: ["restarting", "verifying", "rolling_back"].includes(status?.stage),
+      })
+      return
+    }
+    if (!status || status.stage === run.lastStage) return
     await this.telegram.editMessageText({
       chatId: run.chatId,
       messageId: run.messageId,
@@ -394,6 +416,14 @@ class UpdateManager {
 }
 
 function offerKeyboard(result) {
+  if (result.components?.controlPlane?.length) {
+    return {
+      inline_keyboard: [
+        [{ text: "View all changes ↗", url: result.compareUrl }],
+        [{ text: "Not now", callback_data: `upd:later:${result.targetSha}` }],
+      ],
+    }
+  }
   return {
     inline_keyboard: [
       [{ text: "View all changes ↗", url: result.compareUrl }],
@@ -413,7 +443,8 @@ function formatOfferMessage(result) {
   ]
   appendSummary(lines, result.summary)
   appendCompanionNotice(lines, result.components, false)
-  lines.push("", "Only opencodebot will be rebuilt and restarted.")
+  if (result.components?.controlPlane?.length) appendManualUpdateNotice(lines, result.components.controlPlane)
+  else lines.push("", "Only opencodebot will be rebuilt and restarted.")
   return lines.join("\n")
 }
 
@@ -503,6 +534,23 @@ function appendCompanionNotice(lines, components, completed) {
   lines.push(completed
     ? "Their installed OpenCodez copies were not updated. Apply them manually when convenient."
     : "Their installed OpenCodez copies will not be updated automatically.")
+}
+
+function appendManualUpdateNotice(lines, paths) {
+  const composeChanged = paths.some((value) => /^(?:docker-)?compose(?:\.[^/]+)?\.ya?ml$/i.test(value))
+  const installerChanged = paths.includes("scripts/install-update-runner.mjs")
+  const commands = ["git pull"]
+  if (installerChanged) commands.push("npm run update-runner:install")
+  commands.push(composeChanged ? "npm run deploy:all" : "npm run deploy:bot")
+  lines.push("", "🛡 <b>Manual update required</b>")
+  lines.push("This range changes deployment control-plane files, so one-click update is disabled to preserve reliable rollback.")
+  for (const changedPath of paths) lines.push(`• <code>${escapeHtml(changedPath)}</code>`)
+  lines.push("", "Run on the opencodebot host:", `<code>${escapeHtml(commands.join(" && "))}</code>`)
+}
+
+function runIsStale(run, status, now) {
+  const timestamp = Date.parse(status?.updatedAt || run?.requestedAt || "")
+  return Number.isFinite(timestamp) && now.getTime() - timestamp > STALE_RUN_MS
 }
 
 function formatDuration(durationMs) {

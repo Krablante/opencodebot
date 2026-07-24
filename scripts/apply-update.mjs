@@ -52,6 +52,9 @@ async function main() {
       .map((value) => value.trim())
       .filter(Boolean)
     components = classifyChangedPaths(changedPaths)
+    if (components.controlPlane.length) {
+      throw new Error(`Automatic update is blocked for deployment control-plane changes: ${components.controlPlane.join(", ")}`)
+    }
 
     const head = (await capture("git", ["rev-parse", "HEAD"])).trim()
     if (head !== request.targetSha) await run("git", ["merge", "--ff-only", request.targetSha])

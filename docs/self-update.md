@@ -17,6 +17,11 @@ link, and two actions:
 - `Update & restart` queues the exact displayed target revision.
 - `Not now` removes the buttons and suppresses the same revision until the next London calendar day.
 
+One-click update is deliberately unavailable when the range changes `docker-compose*.yml`,
+`scripts/apply-update.mjs`, or `scripts/install-update-runner.mjs`. Those files define the deployment control plane;
+using their new contents to roll back an old image would not restore the old runtime contract. The card shows the exact
+paths and one host command using `deploy:bot` or `deploy:all` instead.
+
 Notes come from the exact GitHub compare range. `feat:`, `fix:`, and `perf:` commit subjects become New, Fixed, and
 Performance sections. Documentation, test, refactor, build, and chore commits collapse into one technical-maintenance
 count. At most eight user-facing entries are shown; GitHub remains the full record. Keep commit subjects concise and
@@ -25,6 +30,9 @@ human-readable so update cards stay useful without a second manually synchronize
 During an approved update, the same Telegram message moves through queue, repository verification, dependency install,
 checks, image build, restart, and live verification. The active run and message identity are durable. After Compose
 restarts the bot, the new process reads the host result and edits the original card to success or failure.
+If the host runner stops reporting progress, the bot marks the run interrupted after 35 minutes, removes stale request
+files, and releases the update lock so `/update` can retry. The systemd service timeout remains 30 minutes, leaving a
+five-minute recovery margin.
 
 ## Architecture
 

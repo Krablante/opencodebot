@@ -11,7 +11,7 @@ export function normalizeUpdatesConfig(value = {}, { statePath, env = process.en
   const branch = String(source.branch || DEFAULT_BRANCH).trim()
   const checkAt = String(source.checkAt || DEFAULT_CHECK_AT).trim()
   const timeZone = String(source.timeZone || DEFAULT_TIME_ZONE).trim()
-  const currentRevision = normalizeRevision(env.OPENCODEBOT_BUILD_SHA || source.currentRevision)
+  const currentRevision = normalizeRevision(env.OPENCODEBOT_BUILD_SHA)
   const runtimeDir = path.resolve(String(
     env.OPENCODEBOT_UPDATE_RUNTIME_DIR
       || source.runtimeDir

@@ -165,6 +165,10 @@ The Telegram self-updater also rebuilds and restarts only opencodebot. If an exa
 `plugins/opencodebot-artifacts/` or `skills/telegram-artifact-send/`, its offer and success card report that manual
 follow-up. It never refreshes installed OpenCodez copies or restarts OpenCodez.
 
+One-click update is also disabled when a range changes Compose or the host updater itself. Telegram then shows the exact
+control-plane paths and the required `git pull` plus revision-aware manual deployment command; this keeps rollback honest
+instead of running an old image through a new Compose contract.
+
 When convenient, refresh changed plugin and skill copies wherever OpenCodez loads them. Copy the whole skill directory,
 including `agents/openai.yaml`; that file carries short trigger metadata for the agent. Restart each affected OpenCodez
 service manually after updating those files, because running agents may not reload plugin code or skill metadata.

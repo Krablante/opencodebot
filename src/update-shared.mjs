@@ -58,9 +58,15 @@ export function summarizeUpdateCommits(commits = [], { maxItems = 8 } = {}) {
 
 export function classifyChangedPaths(paths = []) {
   const normalized = paths.map((value) => String(value || "").replaceAll("\\", "/").replace(/^\.\//, ""))
+  const controlPlane = normalized.filter((value) => (
+    /^(?:docker-)?compose(?:\.[^/]+)?\.ya?ml$/i.test(value)
+    || value === "scripts/apply-update.mjs"
+    || value === "scripts/install-update-runner.mjs"
+  ))
   return {
     plugin: normalized.some((value) => value.startsWith("plugins/opencodebot-artifacts/")),
     skill: normalized.some((value) => value.startsWith("skills/telegram-artifact-send/")),
+    controlPlane,
   }
 }
 

@@ -1035,6 +1035,10 @@ function smokeUpdateSubsystem() {
   assert.equal(updates.currentRevision, baseSha)
   assert.equal(updates.checkAt, "07:00")
   assert.equal(updates.timeZone, "Europe/London")
+  assert.equal(normalizeUpdatesConfig({ currentRevision: targetSha }, {
+    statePath: path.join(projectRoot, "state", "state.json"),
+    env: {},
+  }).currentRevision, "unknown")
 
   const summer = zonedScheduleParts(new Date("2026-07-24T06:00:00.000Z"), "Europe/London")
   const winter = zonedScheduleParts(new Date("2026-01-24T07:00:00.000Z"), "Europe/London")
@@ -1067,7 +1071,16 @@ function smokeUpdateSubsystem() {
     "skills/telegram-artifact-send/SKILL.md",
     "src/main.mjs",
   ])
-  assert.deepEqual(components, { plugin: true, skill: true })
+  assert.deepEqual(components, { plugin: true, skill: true, controlPlane: [] })
+  assert.deepEqual(classifyChangedPaths([
+    "docker-compose.yml",
+    "scripts\\apply-update.mjs",
+    "scripts/install-update-runner.mjs",
+  ]).controlPlane, [
+    "docker-compose.yml",
+    "scripts/apply-update.mjs",
+    "scripts/install-update-runner.mjs",
+  ])
   const summary = summarizeUpdateCommits([
     { commit: { message: "feat: add daily update checks" } },
     { commit: { message: "fix(ui): keep update status after restart" } },
@@ -1128,6 +1141,7 @@ async function smokeUpdateManager() {
       return true
     },
   }
+  let changedFiles = [{ filename: "skills/telegram-artifact-send/SKILL.md" }]
   const fetchImpl = async () => ({
     ok: true,
     status: 200,
@@ -1141,7 +1155,7 @@ async function smokeUpdateManager() {
           { commit: { message: "feat: add a polished update menu" } },
           { commit: { message: "fix: preserve update progress across restarts" } },
         ],
-        files: [{ filename: "skills/telegram-artifact-send/SKILL.md" }],
+        files: changedFiles,
       }
     },
   })
@@ -1171,6 +1185,29 @@ async function smokeUpdateManager() {
     assert.equal(request.baseSha, baseSha)
     assert.equal(request.targetSha, targetSha)
     assert.equal(data.updates.activeRun.targetSha, targetSha)
+
+    data.updates.activeRun.requestedAt = "2026-07-24T05:00:00.000Z"
+    await manager.reconcileStatus()
+    assert.equal(data.updates.activeRun, null)
+    await assert.rejects(() => readFile(path.join(tempRoot, "request.json"), "utf8"), { code: "ENOENT" })
+
+    changedFiles = [
+      { filename: "docker-compose.yml" },
+      { filename: "scripts/install-update-runner.mjs" },
+    ]
+    const manualCallsStart = calls.length
+    await manager.checkNow({ chatId: -100, topicId: 5 })
+    const manualEdit = calls.slice(manualCallsStart).find(([kind, payload]) => kind === "edit" && payload.replyMarkup?.inline_keyboard?.length)
+    assert.ok(manualEdit)
+    assert.match(manualEdit[1].text, /Manual update required/)
+    assert.match(manualEdit[1].text, /npm run update-runner:install.*npm run deploy:all/)
+    assert.equal(JSON.stringify(manualEdit[1].replyMarkup).includes("upd:apply:"), false)
+    await manager.handleCallback({
+      id: "callback-2",
+      data: `upd:apply:${targetSha}`,
+      message: { message_id: 77, chat: { id: -100 } },
+    })
+    assert.match(calls.at(-1)[1].text, /must be installed manually/)
   } finally {
     manager.stop()
     await rm(tempRoot, { recursive: true, force: true })
