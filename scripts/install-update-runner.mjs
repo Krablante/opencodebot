@@ -40,7 +40,7 @@ Description=Apply one approved opencodebot update
 Type=oneshot
 UMask=0077
 TimeoutStartSec=30min
-WorkingDirectory=${unitValue(projectRoot)}
+WorkingDirectory=${pathValue(projectRoot)}
 Environment=${unitValue(`OPENCODEBOT_UPDATE_RUNTIME_DIR=${runtimeDir}`)}
 Environment=${unitValue(`OPENCODEBOT_UPDATE_REPOSITORY=${repository}`)}
 Environment=${unitValue(`OPENCODEBOT_UPDATE_BRANCH=${branch}`)}
@@ -51,7 +51,7 @@ const pathUnit = `[Unit]
 Description=Watch for approved opencodebot update requests
 
 [Path]
-PathExists=${unitValue(path.join(runtimeDir, "request.json"))}
+PathExists=${pathValue(path.join(runtimeDir, "request.json"))}
 Unit=opencodebot-update.service
 
 [Install]
@@ -62,6 +62,7 @@ await fs.writeFile(servicePath, service, { mode: 0o644 })
 await fs.writeFile(pathUnitPath, pathUnit, { mode: 0o644 })
 await systemctl(["daemon-reload"])
 await systemctl(["enable", "--now", "opencodebot-update.path"])
+await systemctl(["is-active", "opencodebot-update.path"])
 await writeJsonAtomic(path.join(runtimeDir, "runner.json"), {
   installedAt: new Date().toISOString(),
   projectRoot,
@@ -74,6 +75,10 @@ console.log(`Installed opencodebot update runner for ${runtimeDir}`)
 
 function unitValue(value) {
   return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
+}
+
+function pathValue(value) {
+  return String(value).replaceAll("\\", "\\\\").replaceAll(" ", "\\x20")
 }
 
 function optionValue(name) {
