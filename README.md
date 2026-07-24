@@ -54,8 +54,9 @@ session activity into Telegram.
 - Telegram-authored Rich Messages are accepted as prompts: block text is normalized into readable prompt text and
   embedded rich photos reuse the ordinary attachment pipeline.
 - Optional WireGuard helper for private off-LAN access to the existing OpenCodez web UI.
-- Daily `07:00 Europe/London` GitHub update checks, a manual `/update` command, readable commit-range notes, and an
-  approved one-click rebuild/restart path that never changes or restarts OpenCodez.
+- Configurable daily GitHub update checks (`07:00 Europe/London` in the example and current deployment), a manual
+  `/update` command, readable commit-range notes, and an approved one-click rebuild/restart path that never changes or
+  restarts OpenCodez.
 
 ## Shape
 
@@ -204,8 +205,9 @@ Use `/start` or `/help` when you want the bot to show its command summary. These
 topic, and they do not create or change an OpenCodez session.
 
 Use `/update` to check GitHub immediately. An available revision is shown with readable notes, a full compare link, and
-`Update & restart` / `Not now` buttons. Scheduled checks stay fixed at `07:00 Europe/London` and publish available
-updates in General. The apply action rebuilds and restarts only opencodebot; see [Self-Update](docs/self-update.md).
+`Update & restart` / `Not now` buttons. Scheduled checks use `updates.checkAt` and `updates.timeZone` from private config
+and publish available updates in General. The apply action rebuilds and restarts only opencodebot; see
+[Self-Update](docs/self-update.md).
 
 Use `/new` when you want a fresh Telegram topic and a new OpenCodez session. You can give it a server id, an optional
 chat profile, an optional `dir:<path>` override, and a title. If no server id is given, the configured default server is

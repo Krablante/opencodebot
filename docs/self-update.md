@@ -1,6 +1,7 @@
 # Self-Update
 
-opencodebot checks its public GitHub `main` branch every day at `07:00 Europe/London`. When a newer commit exists, it
+With the example and current private config, opencodebot checks its public GitHub `main` branch every day at
+`07:00 Europe/London`. The schedule comes from `updates.checkAt` and `updates.timeZone`. When a newer commit exists, it
 posts one concise update card in the Telegram General topic. `/update` performs the same check immediately and reports
 in the topic where the command was used. A manual check does not move or disable the daily schedule.
 
@@ -68,7 +69,7 @@ deployment source of truth, `/update` offers the same target again, and retry do
 
 ## Configuration
 
-Shareable defaults:
+Shareable configuration example:
 
 ```json
 {
@@ -85,6 +86,10 @@ Shareable defaults:
 Use an IANA time zone. `Europe/London` tracks GMT and British Summer Time automatically. The scheduler checks London
 calendar time once per minute and persists the last completed calendar date, so a restart after 07:00 performs the
 missed check instead of waiting until the next day.
+
+There is no code-level schedule fallback. `updates.enabled` must be `true`, and both `updates.checkAt` and
+`updates.timeZone` must be present; otherwise checks stay disabled or config validation fails. This keeps the operating
+schedule visible in the private runtime config instead of hiding it in source constants.
 
 The running Git revision comes from `OPENCODEBOT_BUILD_SHA`. Do not set it by hand in runtime config. `npm run deploy:bot`
 derives it from the clean checkout and supplies it to Docker. An image with missing or malformed revision metadata can

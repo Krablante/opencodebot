@@ -61,9 +61,10 @@ buffering, and tool compaction limits are fixed defaults in code.
 
 ## Updates
 
-`updates.enabled` controls GitHub checks, `updates.repository` and `updates.branch` select the public source, and
-`updates.checkAt` plus `updates.timeZone` define the daily local schedule. The default is `07:00 Europe/London`, which
-tracks GMT and British Summer Time. `/update` performs an additional immediate check without moving that schedule.
+`updates.enabled` explicitly enables GitHub checks. When enabled, `updates.checkAt` and `updates.timeZone` are required
+runtime settings rather than code defaults; the current deployment uses `07:00` and `Europe/London`, which tracks GMT
+and British Summer Time. `updates.repository` and `updates.branch` select the public source. `/update` performs an
+additional immediate check without moving the configured schedule. Omitting the `updates` block leaves checks disabled.
 
 The image build supplies `OPENCODEBOT_BUILD_SHA`; it is not a secret and should be a full 40-character revision. The
 container derives its update request/status directory beside `paths.state`, normally `/app/state/updates`. The Linux

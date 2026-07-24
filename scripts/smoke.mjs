@@ -1028,13 +1028,21 @@ function restoreEnv(name, value) {
 function smokeUpdateSubsystem() {
   const baseSha = "1".repeat(40)
   const targetSha = "2".repeat(40)
-  const updates = normalizeUpdatesConfig({}, {
+  const updates = normalizeUpdatesConfig({
+    enabled: true,
+    checkAt: "07:00",
+    timeZone: "Europe/London",
+  }, {
     statePath: path.join(projectRoot, "state", "state.json"),
     env: { OPENCODEBOT_BUILD_SHA: baseSha },
   })
   assert.equal(updates.currentRevision, baseSha)
   assert.equal(updates.checkAt, "07:00")
   assert.equal(updates.timeZone, "Europe/London")
+  assert.equal(normalizeUpdatesConfig({}, {
+    statePath: path.join(projectRoot, "state", "state.json"),
+    env: { OPENCODEBOT_BUILD_SHA: baseSha },
+  }).enabled, false)
   assert.equal(normalizeUpdatesConfig({ currentRevision: targetSha }, {
     statePath: path.join(projectRoot, "state", "state.json"),
     env: {},
@@ -1097,14 +1105,21 @@ function smokeUpdateSubsystem() {
     requestedAt: null,
   })
   assert.throws(() => validateUpdateRequest({ id: "bad;command", baseSha, targetSha }))
-  assert.throws(() => normalizeUpdatesConfig({ timeZone: "Not/AZone" }, { statePath: path.join(projectRoot, "state.json"), env: {} }))
+  assert.throws(() => normalizeUpdatesConfig({ enabled: true, timeZone: "Europe/London" }, { statePath: path.join(projectRoot, "state.json"), env: {} }), /checkAt is required/)
+  assert.throws(() => normalizeUpdatesConfig({ enabled: true, checkAt: "07:00" }, { statePath: path.join(projectRoot, "state.json"), env: {} }), /timeZone is required/)
+  assert.throws(() => normalizeUpdatesConfig({ enabled: true, checkAt: "07:00", timeZone: "Not\/AZone" }, { statePath: path.join(projectRoot, "state.json"), env: {} }))
 }
 
 async function smokeUpdateManager() {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "opencodebot-update-smoke-"))
   const baseSha = "1".repeat(40)
   const targetSha = "2".repeat(40)
-  const updates = normalizeUpdatesConfig({ runtimeDir: tempRoot }, {
+  const updates = normalizeUpdatesConfig({
+    enabled: true,
+    checkAt: "07:00",
+    timeZone: "Europe/London",
+    runtimeDir: tempRoot,
+  }, {
     statePath: path.join(tempRoot, "state.json"),
     env: { OPENCODEBOT_BUILD_SHA: baseSha },
   })
