@@ -53,10 +53,21 @@ configured list for OpenCodez password lookup.
 
 Non-secret config is intentionally small. It covers deployment identity and ownership: chat id, allowed user ids,
 OpenCodez servers, default prompt profile, chat templates, attachment limits, speech transcription settings, artifact
-upload folders, final-notification recipients, artifact gateway address, paths, and optional web/WireGuard helpers. The
-global full/economy mirror mode is runtime state controlled by `/mode`, and the global final-DM diagnostics mode is
+upload folders, final-notification recipients, artifact gateway address, update schedule, paths, and optional
+web/WireGuard helpers. The global full/economy mirror mode is runtime state controlled by `/mode`, and the global
+final-DM diagnostics mode is
 runtime state controlled by `/debug_on`, `/debug_off`, and `/debug_status`; prompt pinning, reconcile windows, multipart
 buffering, and tool compaction limits are fixed defaults in code.
+
+## Updates
+
+`updates.enabled` controls GitHub checks, `updates.repository` and `updates.branch` select the public source, and
+`updates.checkAt` plus `updates.timeZone` define the daily local schedule. The default is `07:00 Europe/London`, which
+tracks GMT and British Summer Time. `/update` performs an additional immediate check without moving that schedule.
+
+The image build supplies `OPENCODEBOT_BUILD_SHA`; it is not a secret and should be a full 40-character revision. The
+container derives its update request/status directory beside `paths.state`, normally `/app/state/updates`. The Linux
+host runner uses the source side of that same state bind mount. See [Self-Update](self-update.md).
 
 ## Telegram
 

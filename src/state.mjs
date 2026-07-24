@@ -46,6 +46,7 @@ export class StateStore {
       this.data.telegram.artifactsTopic ||= null
       this.data.telegram.soundsTopic ||= null
       this.data.runtime ||= {}
+      this.data.updates = normalizeUpdatesState(this.data.updates)
       const legacyMirrorMarkers = hasMirrorMarkers(this.data)
       await this.loadMirrorMarkerJournal()
       const migratedResetTitles = migrateResetTitleOwnership(this.data)
@@ -834,6 +835,22 @@ function defaultState() {
     questionMessages: [],
     seenSessions: [],
     runtime: {},
+    updates: normalizeUpdatesState(),
+  }
+}
+
+function normalizeUpdatesState(value = {}) {
+  const source = value && typeof value === "object" ? value : {}
+  return {
+    lastScheduledDate: source.lastScheduledDate || null,
+    lastCheckedAt: source.lastCheckedAt || null,
+    lastCheckKind: source.lastCheckKind || null,
+    lastNotifiedSha: source.lastNotifiedSha || null,
+    lastNotifiedDate: source.lastNotifiedDate || null,
+    dismissedSha: source.dismissedSha || null,
+    dismissedDate: source.dismissedDate || null,
+    offers: Array.isArray(source.offers) ? source.offers.slice(-12) : [],
+    activeRun: source.activeRun && typeof source.activeRun === "object" ? source.activeRun : null,
   }
 }
 

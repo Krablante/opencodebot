@@ -57,6 +57,7 @@ title synchronization after `/reset`.
 /notify_on                       enable final-answer DMs for configured recipients
 /notify_off                      disable final-answer DMs for configured recipients
 /notify_status                   show configured final-answer DM status
+/update                          check GitHub now and offer an opencodebot-only update
 /debug_on                        enable global final-DM diagnostics
 /debug_off                       disable global final-DM diagnostics
 /debug_status                    show global diagnostics status

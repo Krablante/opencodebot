@@ -17,6 +17,7 @@ import {
 import { AttachmentBuffer, extractTelegramFiles } from "../src/attachments.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "../src/commands.mjs"
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
+import { normalizeUpdatesConfig } from "../src/config/updates.mjs"
 import { createFinalNotifier, finalNotificationMarkdown, finalNotificationTopicSource, formatDebugDiagnosticsText, formatDuration, formatTokenCount, runDiagnosticsBeforeAssistant, toolSummaryBeforeAssistant, turnMetadataBeforeAssistant, turnTokenUsageBeforeAssistant } from "../src/final-notifications.mjs"
 import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { bindPendingTopicSession } from "../src/prompt-routing.mjs"
@@ -35,7 +36,10 @@ import { TelegramClient } from "../src/telegram.mjs"
 import { normalizeTelegramRichMessage } from "../src/telegram-rich-message.mjs"
 import { createTelegramPolling } from "../src/telegram-polling.mjs"
 import { createTopicLifecycle } from "../src/topic-lifecycle.mjs"
+import { createUpdateManager } from "../src/update-manager.mjs"
+import { classifyChangedPaths, scheduledCheckDue, summarizeUpdateCommits, zonedScheduleParts } from "../src/update-shared.mjs"
 import { OpencodebotArtifactsPlugin } from "../plugins/opencodebot-artifacts/src/index.js"
+import { validateUpdateRequest } from "./apply-update.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, "..")
@@ -47,6 +51,8 @@ await smokeRuntimeHealth(config, { explicit: Boolean(explicitConfigPath) })
 
 async function smokeLocalInvariants() {
   smokeConfigExample()
+  smokeUpdateSubsystem()
+  await smokeUpdateManager()
   smokeSyntheticTextFilter()
   smokeNestedRichListNormalization()
   smokeIncomingRichMessages()
@@ -1017,6 +1023,158 @@ function listen(server) {
 function restoreEnv(name, value) {
   if (value === undefined) delete process.env[name]
   else process.env[name] = value
+}
+
+function smokeUpdateSubsystem() {
+  const baseSha = "1".repeat(40)
+  const targetSha = "2".repeat(40)
+  const updates = normalizeUpdatesConfig({}, {
+    statePath: path.join(projectRoot, "state", "state.json"),
+    env: { OPENCODEBOT_BUILD_SHA: baseSha },
+  })
+  assert.equal(updates.currentRevision, baseSha)
+  assert.equal(updates.checkAt, "07:00")
+  assert.equal(updates.timeZone, "Europe/London")
+
+  const summer = zonedScheduleParts(new Date("2026-07-24T06:00:00.000Z"), "Europe/London")
+  const winter = zonedScheduleParts(new Date("2026-01-24T07:00:00.000Z"), "Europe/London")
+  assert.equal(summer.minuteOfDay, 7 * 60)
+  assert.equal(winter.minuteOfDay, 7 * 60)
+  assert.equal(scheduledCheckDue({
+    now: new Date("2026-07-24T05:59:00.000Z"),
+    timeZone: "Europe/London",
+    hour: 7,
+    minute: 0,
+    lastScheduledDate: "2026-07-23",
+  }).due, false)
+  assert.equal(scheduledCheckDue({
+    now: new Date("2026-07-24T06:00:00.000Z"),
+    timeZone: "Europe/London",
+    hour: 7,
+    minute: 0,
+    lastScheduledDate: "2026-07-23",
+  }).due, true)
+  assert.equal(scheduledCheckDue({
+    now: new Date("2026-07-24T06:00:00.000Z"),
+    timeZone: "Europe/London",
+    hour: 7,
+    minute: 0,
+    lastScheduledDate: "2026-07-24",
+  }).due, false)
+
+  const components = classifyChangedPaths([
+    "plugins\\opencodebot-artifacts\\src\\index.js",
+    "skills/telegram-artifact-send/SKILL.md",
+    "src/main.mjs",
+  ])
+  assert.deepEqual(components, { plugin: true, skill: true })
+  const summary = summarizeUpdateCommits([
+    { commit: { message: "feat: add daily update checks" } },
+    { commit: { message: "fix(ui): keep update status after restart" } },
+    { commit: { message: "perf: reduce duplicate GitHub calls" } },
+    { commit: { message: "docs: explain the update runner" } },
+  ])
+  assert.deepEqual(summary.sections.map((section) => section.title), ["New", "Fixed", "Performance"])
+  assert.equal(summary.maintenanceCount, 1)
+  assert.equal(`upd:apply:${targetSha}`.length <= 64, true)
+  assert.deepEqual(validateUpdateRequest({ id: "12345678-1234-1234-1234-123456789abc", baseSha, targetSha }), {
+    id: "12345678-1234-1234-1234-123456789abc",
+    baseSha,
+    targetSha,
+    requestedAt: null,
+  })
+  assert.throws(() => validateUpdateRequest({ id: "bad;command", baseSha, targetSha }))
+  assert.throws(() => normalizeUpdatesConfig({ timeZone: "Not/AZone" }, { statePath: path.join(projectRoot, "state.json"), env: {} }))
+}
+
+async function smokeUpdateManager() {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "opencodebot-update-smoke-"))
+  const baseSha = "1".repeat(40)
+  const targetSha = "2".repeat(40)
+  const updates = normalizeUpdatesConfig({ runtimeDir: tempRoot }, {
+    statePath: path.join(tempRoot, "state.json"),
+    env: { OPENCODEBOT_BUILD_SHA: baseSha },
+  })
+  const data = {
+    updates: {
+      lastScheduledDate: null,
+      lastCheckedAt: null,
+      lastCheckKind: null,
+      lastNotifiedSha: null,
+      lastNotifiedDate: null,
+      dismissedSha: null,
+      dismissedDate: null,
+      offers: [],
+      activeRun: null,
+    },
+  }
+  const state = {
+    data,
+    chatId: -100,
+    async update(mutator) { await mutator(data) },
+  }
+  const calls = []
+  const telegram = {
+    async sendMessage(payload) {
+      calls.push(["send", payload])
+      return { message_id: 77 }
+    },
+    async editMessageText(payload) {
+      calls.push(["edit", payload])
+      return { message_id: payload.messageId }
+    },
+    async answerCallbackQuery(payload) {
+      calls.push(["answer", payload])
+      return true
+    },
+  }
+  const fetchImpl = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    async json() {
+      return {
+        status: "ahead",
+        ahead_by: 2,
+        head_commit: { sha: targetSha },
+        commits: [
+          { commit: { message: "feat: add a polished update menu" } },
+          { commit: { message: "fix: preserve update progress across restarts" } },
+        ],
+        files: [{ filename: "skills/telegram-artifact-send/SKILL.md" }],
+      }
+    },
+  })
+  const manager = createUpdateManager({
+    config: { updates, telegram: { chatId: -100 } },
+    state,
+    telegram,
+    fetchImpl,
+    now: () => new Date("2026-07-24T06:00:00.000Z"),
+  })
+  try {
+    await manager.checkNow({ chatId: -100, topicId: 5 })
+    const offerEdit = calls.find(([kind, payload]) => kind === "edit" && payload.replyMarkup?.inline_keyboard?.length)
+    assert.ok(offerEdit)
+    assert.match(offerEdit[1].text, /polished update menu/)
+    assert.match(offerEdit[1].text, /telegram-artifact-send skill/)
+    assert.equal(data.updates.offers.length, 1)
+
+    await mkdir(tempRoot, { recursive: true })
+    await writeFile(path.join(tempRoot, "runner.json"), "{}\n")
+    await manager.handleCallback({
+      id: "callback-1",
+      data: `upd:apply:${targetSha}`,
+      message: { message_id: 77, chat: { id: -100 } },
+    })
+    const request = JSON.parse(await readFile(path.join(tempRoot, "request.json"), "utf8"))
+    assert.equal(request.baseSha, baseSha)
+    assert.equal(request.targetSha, targetSha)
+    assert.equal(data.updates.activeRun.targetSha, targetSha)
+  } finally {
+    manager.stop()
+    await rm(tempRoot, { recursive: true, force: true })
+  }
 }
 
 function smokeConfigExample() {

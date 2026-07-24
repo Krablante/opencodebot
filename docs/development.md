@@ -126,7 +126,7 @@ Every completed Politia `opencodebot` change must finish with a live Compose reb
 successful commit and push do not replace this rollout step. Rebuild/restart and check logs with Compose:
 
 ```bash
-docker compose up -d --build opencodebot
+npm run deploy:bot
 docker compose logs --since=2m opencodebot
 npm run smoke:live
 ```
@@ -145,6 +145,11 @@ Do not introduce TypeScript as a build pipeline by default. A useful future step
 
 Tests should stay proportional. Add or keep checks only when a regression is expensive to catch manually or has already
 caused production pain. Avoid pretending this is an enterprise test suite.
+
+Use concise Conventional Commit subjects because the self-updater turns the exact deployed-to-target range into Telegram
+release notes. Prefer `feat:`, `fix:`, and `perf:` for user-visible outcomes; use `docs:`, `test:`, `refactor:`, `build:`,
+and `chore:` for maintenance that can be collapsed. Describe the result a user or operator will notice, not the editing
+process. See [Self-Update](self-update.md#telegram-ux).
 
 ## Git
 

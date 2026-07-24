@@ -223,11 +223,11 @@ function parseCommand(text) {
 }
 
 function artifactTopicCommandAllowed(commandName) {
-  return ["artifacts_here", "session", "help", "start", "notify_on", "notify_off", "notify_status"].includes(commandName)
+  return ["artifacts_here", "session", "update", "help", "start", "notify_on", "notify_off", "notify_status"].includes(commandName)
 }
 
 function soundsTopicCommandAllowed(commandName) {
-  return ["sounds_here", "sounds_off", "sounds_status", "session", "help", "start", "notify_on", "notify_off", "notify_status"].includes(commandName)
+  return ["sounds_here", "sounds_off", "sounds_status", "session", "update", "help", "start", "notify_on", "notify_off", "notify_status"].includes(commandName)
 }
 
 function delay(ms) {

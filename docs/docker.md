@@ -142,7 +142,7 @@ Linux/macOS:
 
 ```bash
 mkdir -p state
-docker compose up -d --build
+npm run deploy:bot
 docker compose logs -f opencodebot
 ```
 
@@ -150,7 +150,7 @@ PowerShell:
 
 ```powershell
 New-Item -ItemType Directory -Force state
-docker compose up -d --build
+npm run deploy:bot
 docker compose logs -f opencodebot
 ```
 
@@ -202,11 +202,23 @@ Update after pulling new code:
 
 ```bash
 git pull
-docker compose up -d --build opencodebot
-npm run smoke:live
+npm run deploy:bot
 ```
 
-Use full `docker compose up -d --build` when Compose services or the Telegram Bot API sidecar changed. If the update changed the OpenCodez artifact plugin or Telegram artifact skill, also refresh those OpenCodez copies and restart the affected OpenCodez services; see [Artifact Gateway](artifact-gateway.md#updating).
+`deploy:bot` is cross-platform, refuses a dirty checkout, labels the image with the exact Git revision, runs checks,
+recreates only opencodebot, and finishes with live smoke. Use `npm run deploy:all` when Compose services or the Telegram
+Bot API sidecar itself changed; it preserves the same revision metadata while rebuilding the full project.
+
+For approved Telegram-button updates on the Linux Compose host, install the user-level request watcher once:
+
+```bash
+npm run update-runner:install
+systemctl --user status opencodebot-update.path
+```
+
+The self-updater never refreshes or restarts OpenCodez. If Git paths for the bundled artifact plugin or Telegram skill
+changed, the final Telegram card reports the manual follow-up. See [Self-Update](self-update.md) and
+[Artifact Gateway](artifact-gateway.md#updating).
 
 ## What Docker Owns
 

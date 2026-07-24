@@ -18,6 +18,7 @@ import { escapeHtml, TelegramClient } from "./telegram.mjs"
 import { createTelegramPolling } from "./telegram-polling.mjs"
 import { createTopicLifecycle } from "./topic-lifecycle.mjs"
 import { managedTopicTitle } from "./topic-titles.mjs"
+import { createUpdateManager } from "./update-manager.mjs"
 
 const config = loadConfig()
 assertRuntimeConfig(config)
@@ -83,6 +84,7 @@ const questionManager = createQuestionManager({
   logError,
 })
 const runAlerter = createRunAlerter({ config, state, telegram, logError })
+const updateManager = createUpdateManager({ config, state, telegram })
 const artifactUploads = new ArtifactUploadBuffer({
   settings: config.artifactUploads,
   flushUpload: ({ message, files }) => handleArtifactUploadMessage({ telegram, config, opencode, message, files }),
@@ -120,6 +122,7 @@ const commandHandlers = createTelegramCommandHandlers({
   detachBinding: sessionReconciler.detachBinding,
   speech,
   questionManager,
+  updateManager,
 })
 const telegramPolling = createTelegramPolling({
   config,
@@ -148,6 +151,7 @@ process.once("SIGTERM", () => requestShutdown("SIGTERM"))
 
 await telegram.deleteWebhook()
 await telegramPolling.syncCommandMenu()
+await updateManager.start()
 await cleanupUploads(config.paths.uploadsDir, config.attachments.cleanupAfterMs).catch(logError)
 setInterval(() => cleanupUploads(config.paths.uploadsDir, config.attachments.cleanupAfterMs).catch(logError), 60 * 60 * 1000).unref?.()
 startArtifactGateway({ config, state, telegram, signal: abort.signal })
@@ -201,6 +205,7 @@ function requestShutdown(signalName) {
   if (shutdownRequested) return
   shutdownRequested = true
   console.info(`[opencodebot] received ${signalName}, shutting down`)
+  updateManager.stop()
   abort.abort()
   setTimeout(() => {
     console.info("[opencodebot] shutdown grace elapsed, exiting")

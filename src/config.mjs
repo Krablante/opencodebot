@@ -8,6 +8,7 @@ import { loadEnvFile, pickToken, pickValue, readFirstNumber, readNumberList, uni
 import { readServers } from "./config/servers.mjs"
 import { normalizeSpeechConfig } from "./config/speech.mjs"
 import { normalizeTelegramBotApi } from "./config/telegram.mjs"
+import { normalizeUpdatesConfig } from "./config/updates.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, "..")
@@ -77,6 +78,7 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
     artifactUploads: normalizeArtifactUploads(config.artifactUploads, config.opencode?.defaultServerId || config.defaultPrompt?.serverID),
     attachments: normalizeAttachments(attachmentConfig, telegramBotApi),
     speech: normalizeSpeechConfig(config.speech, mergedEnv),
+    updates: normalizeUpdatesConfig(config.updates, { statePath, env: mergedEnv }),
     chatTemplates: normalizeChatTemplates(config.chatTemplates),
     web: config.web || {},
     wireguard: {

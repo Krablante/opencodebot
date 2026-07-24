@@ -17,6 +17,13 @@
       "localFilesRoot": "/var/lib/telegram-bot-api"
     }
   },
+  "updates": {
+    "enabled": true,
+    "repository": "Krablante/opencodebot",
+    "branch": "main",
+    "checkAt": "07:00",
+    "timeZone": "Europe/London"
+  },
   "attachments": {
     "enabled": true,
     "maxInlineBytes": 20000000,

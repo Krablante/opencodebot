@@ -221,15 +221,17 @@ After pulling a new opencodebot checkout, rebuild and restart the bot container:
 
 ```bash
 git pull
-docker compose up -d --build opencodebot
-npm run smoke:live
+npm run deploy:bot
 ```
 
-Use full `docker compose up -d --build` instead when Compose services or the Telegram Bot API sidecar changed.
+Use `npm run deploy:all` instead when Compose services or the Telegram Bot API sidecar changed.
 
 If the update changed `plugins/opencodebot-artifacts/`, refresh the plugin package wherever OpenCodez loads it. If the update changed `skills/telegram-artifact-send/`, refresh the whole skill directory in the OpenCodez skills location, including `agents/openai.yaml`.
 
 Restart every permitted OpenCodez service whose plugin or skill copy changed. Running agents may not reload plugin code or skill metadata until the service restarts. In Politia, use the harness deploy script for this rollout; when a host must remain running, stage its managed files with `--skip-restart-host HOST` and restart it only during an approved maintenance window.
+
+The Telegram self-updater is intentionally narrower: it rebuilds and restarts only opencodebot, then reports plugin or
+skill source changes as a manual follow-up. It never invokes this OpenCodez rollout or restarts an OpenCodez service.
 
 ## Verification
 

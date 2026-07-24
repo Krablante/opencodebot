@@ -54,6 +54,8 @@ session activity into Telegram.
 - Telegram-authored Rich Messages are accepted as prompts: block text is normalized into readable prompt text and
   embedded rich photos reuse the ordinary attachment pipeline.
 - Optional WireGuard helper for private off-LAN access to the existing OpenCodez web UI.
+- Daily `07:00 Europe/London` GitHub update checks, a manual `/update` command, readable commit-range notes, and an
+  approved one-click rebuild/restart path that never changes or restarts OpenCodez.
 
 ## Shape
 
@@ -134,7 +136,7 @@ Run with Docker Compose:
 
 ```bash
 mkdir -p state
-docker compose up -d --build
+npm run deploy:bot
 docker compose logs -f opencodebot
 ```
 
@@ -142,7 +144,7 @@ PowerShell:
 
 ```powershell
 New-Item -ItemType Directory -Force state
-docker compose up -d --build
+npm run deploy:bot
 docker compose logs -f opencodebot
 ```
 
@@ -150,25 +152,29 @@ For direct local usage, run `npm start`. Production/live operation should use Do
 
 ## Update
 
-Update the bot container first:
+Update only the bot service with the revision-aware deployment wrapper:
 
 ```bash
 git pull
-docker compose up -d --build opencodebot
-npm run smoke:live
+npm run deploy:bot
 ```
 
-Use full `docker compose up -d --build` instead when the Compose file, Telegram Bot API sidecar, or other services
-changed.
+Use `npm run deploy:all` instead when the Compose file, Telegram Bot API sidecar, or other services changed.
 
-If the update changes `plugins/opencodebot-artifacts/` or `skills/telegram-artifact-send/`, refresh the OpenCodez plugin
-and skill copies wherever OpenCodez loads them. Copy the whole skill directory, including `agents/openai.yaml`; that
-file carries short trigger metadata for the agent. Restart each OpenCodez service after updating plugin or skill files,
-because running agents may not reload plugin code or skill metadata until the service restarts.
+The Telegram self-updater also rebuilds and restarts only opencodebot. If an exact update range changes
+`plugins/opencodebot-artifacts/` or `skills/telegram-artifact-send/`, its offer and success card report that manual
+follow-up. It never refreshes installed OpenCodez copies or restarts OpenCodez.
+
+When convenient, refresh changed plugin and skill copies wherever OpenCodez loads them. Copy the whole skill directory,
+including `agents/openai.yaml`; that file carries short trigger metadata for the agent. Restart each affected OpenCodez
+service manually after updating those files, because running agents may not reload plugin code or skill metadata.
 
 In Politia, use `/home/bloob/politia/services/harness/opencodez/deploy.sh` for that OpenCodez rollout. If you are
 running the update from `nuc`, restart the local OpenCodez service last and deferred so the current agent session is not
 interrupted early.
+
+See [Self-Update](docs/self-update.md) for checker configuration, update notes, host-runner installation, rollback, and
+verification.
 
 Your `config.local.json`, `servers.json`, `token.env`, and `state/` directory stay local and are not overwritten by
 updates.
@@ -192,6 +198,10 @@ The local Telegram Bot API sidecar is also optional. Add `TELEGRAM_API_ID` and `
 
 Use `/start` or `/help` when you want the bot to show its command summary. These commands are safe to run in a normal
 topic, and they do not create or change an OpenCodez session.
+
+Use `/update` to check GitHub immediately. An available revision is shown with readable notes, a full compare link, and
+`Update & restart` / `Not now` buttons. Scheduled checks stay fixed at `07:00 Europe/London` and publish available
+updates in General. The apply action rebuilds and restarts only opencodebot; see [Self-Update](docs/self-update.md).
 
 Use `/new` when you want a fresh Telegram topic and a new OpenCodez session. You can give it a server id, an optional
 chat profile, an optional `dir:<path>` override, and a title. If no server id is given, the configured default server is

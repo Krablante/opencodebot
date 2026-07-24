@@ -29,6 +29,7 @@ export const telegramBotCommands = [
   { command: "notify_on", description: "Enable final-answer DMs" },
   { command: "notify_off", description: "Disable final-answer DMs" },
   { command: "notify_status", description: "Show final-answer DM status" },
+  { command: "update", description: "Check for opencodebot updates" },
   { command: "debug_on", description: "Enable global final-DM diagnostics" },
   { command: "debug_off", description: "Disable global final-DM diagnostics" },
   { command: "debug_status", description: "Show global diagnostics status" },
@@ -51,6 +52,7 @@ export function createTelegramCommandHandlers({
   detachBinding = () => {},
   speech,
   questionManager,
+  updateManager,
 }) {
   const compactOperations = new Map()
   const handlers = {
@@ -79,6 +81,7 @@ export function createTelegramCommandHandlers({
     notify_on: handleNotifyOn,
     notify_off: handleNotifyOff,
     notify_status: handleNotifyStatus,
+    update: handleUpdate,
     debug_on: (message) => handleDebugMode(message, true),
     debug_off: (message) => handleDebugMode(message, false),
     debug_status: handleDebugStatus,
@@ -95,9 +98,14 @@ export function createTelegramCommandHandlers({
       return true
     },
     async handleCallback(query) {
+      if (await updateManager?.handleCallback?.(query)) return true
       if (await questionManager?.handleCallback?.(query)) return true
       return Boolean(await speech?.handleCallbackQuery?.(query))
     },
+  }
+
+  async function handleUpdate(message) {
+    await updateManager.checkNow({ chatId: message.chat.id, topicId: topicId(message) })
   }
 
   async function handleMirrorMode(message, args) {
