@@ -5,6 +5,21 @@ import { normalizeTelegramRichMessage } from "./telegram-rich-message.mjs"
 
 const FINAL_VOICE_STATE_LIMIT = 512
 const TELEGRAM_TEXT_LIMIT = 3900
+const LATIN_ACRONYM_NAMES = {
+  A: "эй", B: "би", C: "си", D: "ди", E: "и", F: "эф", G: "джи", H: "эйч", I: "ай",
+  J: "джей", K: "кей", L: "эл", M: "эм", N: "эн", O: "оу", P: "пи", Q: "кью", R: "эр",
+  S: "эс", T: "ти", U: "ю", V: "ви", W: "дабл ю", X: "икс", Y: "уай", Z: "зет",
+}
+const LATIN_SPEECH_OVERRIDES = { nuc: "нюк", opencode: "опенкод", opencodez: "опенкод зет" }
+const LATIN_DIGRAPHS = {
+  shch: "щ", sch: "щ", zh: "ж", kh: "х", ts: "ц", ch: "ч", sh: "ш", yu: "ю", ya: "я", yo: "ё", ye: "е",
+}
+const LATIN_DIGRAPH_KEYS = Object.keys(LATIN_DIGRAPHS)
+const LATIN_CHARACTERS = {
+  a: "а", b: "б", d: "д", e: "е", f: "ф", g: "г", h: "х", i: "и", j: "дж", k: "к", l: "л",
+  m: "м", n: "н", o: "о", p: "п", q: "к", r: "р", s: "с", t: "т", u: "у", v: "в", w: "в",
+  x: "кс", y: "й", z: "з",
+}
 
 export class FinalVoiceModule {
   constructor({ config, state, telegram, signal }) {
@@ -385,11 +400,13 @@ export class FinalVoiceModule {
     const template = job.settings.introTemplate
     if (!template) return summary
     const binding = this.bindingFor(job.chatId, job.topicId)
-    const topicName = job.topicTitle || binding?.topicTitle || binding?.title || "топика Оупенкод"
     const serverID = job.serverID || binding?.serverID || "основном сервере"
+    const topicTitle = job.topicTitle || binding?.topicTitle || binding?.title || "топика Оупенкод"
+    const topicName = speakableVoiceMetadata(withoutServerSuffix(topicTitle, serverID))
+    const serverName = speakableVoiceMetadata(serverID)
     const intro = template
       .replaceAll("{topicname}", topicName)
-      .replaceAll("{server}", serverID)
+      .replaceAll("{server}", serverName)
       .trim()
     return intro ? `${intro}\n\n${summary}` : summary
   }
@@ -486,6 +503,54 @@ function isFinalVoiceState(value) {
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+export function speakableVoiceMetadata(value) {
+  return String(value || "")
+    .replace(/([A-Za-z])(\d)/gu, "$1 $2")
+    .replace(/(\d)([A-Za-z])/gu, "$1 $2")
+    .replace(/[A-Za-z]+/gu, latinWordForSpeech)
+    .replace(/[_/\\|–—-]+/gu, " ")
+    .replace(/[([{]+/gu, ", ")
+    .replace(/[)\]}]+/gu, "")
+    .replace(/\s+([,.;:!?])/gu, "$1")
+    .replace(/\s+/gu, " ")
+    .trim()
+}
+
+function latinWordForSpeech(word) {
+  const lower = word.toLowerCase()
+  if (LATIN_SPEECH_OVERRIDES[lower]) return LATIN_SPEECH_OVERRIDES[lower]
+  if (word.length <= 6 && word === word.toUpperCase()) {
+    return [...word].map((letter) => LATIN_ACRONYM_NAMES[letter] || letter).join(" ")
+  }
+
+  const source = lower.length > 3 && lower.endsWith("e") && !/[aeiou]e$/u.test(lower)
+    ? lower.slice(0, -1)
+    : lower
+  let result = ""
+  for (let index = 0; index < source.length;) {
+    const digraph = LATIN_DIGRAPH_KEYS.find((item) => source.startsWith(item, index))
+    if (digraph) {
+      result += LATIN_DIGRAPHS[digraph]
+      index += digraph.length
+      continue
+    }
+    const character = source[index]
+    if (character === "c") result += /[eiy]/u.test(source[index + 1] || "") ? "с" : "к"
+    else result += LATIN_CHARACTERS[character] || character
+    index += 1
+  }
+  return result
+}
+
+function withoutServerSuffix(topicTitle, serverID) {
+  const title = String(topicTitle || "").trim()
+  const suffix = `(${String(serverID || "").trim()})`
+  if (suffix.length > 2 && title.toLowerCase().endsWith(suffix.toLowerCase())) {
+    return title.slice(0, -suffix.length).trim()
+  }
+  return title
 }
 
 function splitArgs(value) {

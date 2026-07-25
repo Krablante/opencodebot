@@ -20,7 +20,7 @@ import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { normalizeFinalVoiceConfig } from "../src/config/final-voice.mjs"
 import { normalizeUpdatesConfig } from "../src/config/updates.mjs"
 import { createFinalNotifier, finalNotificationMarkdown, finalNotificationTopicSource, formatDebugDiagnosticsText, formatDuration, formatTokenCount, runDiagnosticsBeforeAssistant, toolSummaryBeforeAssistant, turnMetadataBeforeAssistant, turnTokenUsageBeforeAssistant } from "../src/final-notifications.mjs"
-import { FinalVoiceModule } from "../src/final-voice.mjs"
+import { FinalVoiceModule, speakableVoiceMetadata } from "../src/final-voice.mjs"
 import { catalogKeys, configureI18n, getLanguage, setLanguage, t, tFor } from "../src/i18n/index.mjs"
 import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { bindPendingTopicSession } from "../src/prompt-routing.mjs"
@@ -232,7 +232,7 @@ async function smokeFinalVoiceFlow() {
       finalText: "Полный финальный ответ.",
       telegramChatID: -1001,
       telegramTopicID: 77,
-      telegramTopicTitle: "Автоматический топик",
+      telegramTopicTitle: "TTS-opencode (nuc)",
       telegramFinalMessageID: 88,
     }), true)
     const sent = await Promise.race([voiceSent, wait(2_000).then(() => { throw new Error("Final Voice smoke timed out") })])
@@ -247,7 +247,8 @@ async function smokeFinalVoiceFlow() {
     assert.equal(requests[1].url, "/audio/speech")
     assert.equal(requests[1].body.voice, "xenia")
     assert.equal(requests[1].body.response_format, "opus")
-    assert.equal(requests[1].body.input, "Пришло новое сообщение из топика, Автоматический топик, на сервере, nuc.\n\nКороткое итоговое сообщение.")
+    assert.equal(requests[1].body.input, "Пришло новое сообщение из топика, ти ти эс опенкод, на сервере, нюк.\n\nКороткое итоговое сообщение.")
+    assert.equal(speakableVoiceMetadata("KFR101"), "кей эф эр 101")
     await wait(25)
     assert.equal(state.data.finalVoice.sent[0].telegramMessageId, 901)
     const commandMessage = { chat: { id: -1001 }, message_id: 100, message_thread_id: 77 }
@@ -267,7 +268,7 @@ async function smokeFinalVoiceFlow() {
     const manualSent = await Promise.race([voiceSent, wait(2_000).then(() => { throw new Error("Manual Final Voice smoke timed out") })])
     assert.equal(manualSent.replyToMessageId, 600)
     assert.equal(requests[2].body.messages[1].content, "Ручной Rich Message")
-    assert.equal(requests[3].body.input, "Пришло новое сообщение из топика, Ручной топик, на сервере, dima.\n\nКороткое итоговое сообщение.")
+    assert.equal(requests[3].body.input, "Пришло новое сообщение из топика, Ручной топик, на сервере, дима.\n\nКороткое итоговое сообщение.")
     assert.doesNotMatch(requests[2].body.messages[1].content, /Пришло новое сообщение/)
     voiceSent = new Promise((resolve) => { resolveVoice = resolve })
     await handlers.speak({
@@ -279,7 +280,7 @@ async function smokeFinalVoiceFlow() {
     const quotedSent = await Promise.race([voiceSent, wait(2_000).then(() => { throw new Error("Quoted Final Voice smoke timed out") })])
     assert.equal(quotedSent.replyToMessageId, 602)
     assert.equal(requests[4].body.messages[1].content, "Текст внешней цитаты")
-    assert.equal(requests[5].body.input, "Пришло новое сообщение из топика, Ручной топик, на сервере, dima.\n\nКороткое итоговое сообщение.")
+    assert.equal(requests[5].body.input, "Пришло новое сообщение из топика, Ручной топик, на сервере, дима.\n\nКороткое итоговое сообщение.")
     await handlers.tts(commandMessage, "off")
     assert.equal(finalVoice.settings().enabled, false)
     const anotherTopic = { chat: { id: -1001 }, message_id: 101, message_thread_id: 999 }

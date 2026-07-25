@@ -109,6 +109,11 @@ never sent to the summary provider. Disabled historical bindings are not used fo
 The rendered intro and summary are separated by a blank line. The Silero bridge preserves this paragraph boundary as a
 hard synthesis-chunk boundary, ensuring the topic/server announcement is spoken before the response body.
 
+The topic value comes from the canonical Telegram title. Its managed `(server)` suffix is removed because the template
+speaks `{server}` separately. Latin acronyms and identifiers inside `{topicname}` and `{server}` are converted locally to
+deterministic Cyrillic pronunciation before TTS (for example, `TTS-opencode (nuc)` becomes `ти ти эс опенкод` plus
+`нюк`). Only intro metadata is normalized; the summary and user/model content are unchanged.
+
 The queue is intentionally in-memory. A restart drops incomplete voice work, while existing renderer markers prevent old finals from being replayed. Successful Telegram deliveries are recorded in a bounded persistent marker list. This provides clean at-most-once behavior without a second job database.
 
 Provider failures never alter the final text. Automatic failures are logged structurally. Manual failures replace the temporary progress message with a concise retry notice.
