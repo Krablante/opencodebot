@@ -1,6 +1,6 @@
 import { summarizeWords } from "./prompt-queue.mjs"
 import { escapeHtml, topicId } from "./telegram.mjs"
-import { parseResetArgs } from "./chat-templates.mjs"
+import { parseResetArgs } from "./prompt-profiles.mjs"
 import { managedTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
 import { formatArtifactUploadHelp } from "./artifact-uploads.mjs"
 import { logErrorEvent, logInfo, logWarn } from "./logger.mjs"
@@ -492,7 +492,7 @@ export function createTelegramCommandHandlers({
 
     let requested
     try {
-      requested = parseResetArgs(args, { chatTemplates: config.chatTemplates, servers: opencode.servers })
+      requested = parseResetArgs(args, { promptProfiles: config.promptProfiles, servers: opencode.servers })
     } catch (error) {
       await telegram.sendMessage({
         chatId: message.chat.id,
@@ -514,9 +514,9 @@ export function createTelegramCommandHandlers({
         return
       }
       const topic = state.topicRecord(message.chat.id, currentTopicId) || pending
-      const profile = requested.chatTemplateName ? requested : {
-        chatTemplateName: pending.chatTemplateName,
-        chatTemplate: pending.chatTemplate,
+      const profile = requested.promptProfileName ? requested : {
+        promptProfileName: pending.promptProfileName,
+        promptProfile: pending.promptProfile,
       }
       const previousServerID = pending.serverID
       const previousTopicTitle = topic.topicTitle
@@ -553,7 +553,7 @@ export function createTelegramCommandHandlers({
         chatId: message.chat.id,
         topicId: currentTopicId,
         text: t("commands.reset.pendingStatus", {
-          profileHtml: escapeHtml(updated.chatTemplateName || t("common.current")),
+          profileHtml: escapeHtml(updated.promptProfileName || t("common.current")),
           serverLine: serverChanged
             ? t("commands.reset.serverChanged", { previousHtml: escapeHtml(previousServerID), nextHtml: escapeHtml(updated.serverID) })
             : t("commands.reset.server", { serverHtml: escapeHtml(updated.serverID) }),
@@ -573,7 +573,7 @@ export function createTelegramCommandHandlers({
     const topic = state.topicRecord(message.chat.id, currentTopicId) || binding
     let profile
     try {
-      profile = resolveResetProfile(requested, binding, config.chatTemplates)
+      profile = resolveResetProfile(requested, binding, config.promptProfiles)
     } catch (error) {
       await telegram.sendMessage({
         chatId: message.chat.id,
@@ -642,7 +642,7 @@ export function createTelegramCommandHandlers({
       chatId: message.chat.id,
       topicId: currentTopicId,
       text: t("commands.reset.freshReady", {
-        profileHtml: escapeHtml(reset.pending.chatTemplateName || t("common.current")),
+        profileHtml: escapeHtml(reset.pending.promptProfileName || t("common.current")),
         serverLine: serverChanged
           ? t("commands.reset.serverChanged", { previousHtml: escapeHtml(binding.serverID), nextHtml: escapeHtml(reset.pending.serverID) })
           : t("commands.reset.server", { serverHtml: escapeHtml(reset.pending.serverID) }),
@@ -859,7 +859,7 @@ export function createTelegramCommandHandlers({
         t("commands.session.binding"),
         t("commands.session.waiting"),
         t("commands.session.server", { valueHtml: escapeHtml(pending.serverID || "") }),
-        pending.chatTemplateName ? t("commands.session.profile", { valueHtml: escapeHtml(pending.chatTemplateName) }) : t("commands.session.profileDefault"),
+        pending.promptProfileName ? t("commands.session.profile", { valueHtml: escapeHtml(pending.promptProfileName) }) : t("commands.session.profileDefault"),
         previousBinding?.sessionID
           ? t("commands.session.previous", { valueHtml: escapeHtml(previousBinding.sessionID) })
           : null,
@@ -922,22 +922,22 @@ export function createTelegramCommandHandlers({
   }
 }
 
-function resolveResetProfile(requested, binding, chatTemplates = {}) {
-  if (requested.chatTemplateName) return requested
+function resolveResetProfile(requested, binding, promptProfiles = {}) {
+  if (requested.promptProfileName) return requested
 
-  const chatTemplateName = binding.chatTemplateName || null
-  if (!chatTemplateName) return { chatTemplateName: null, chatTemplate: null }
+  const promptProfileName = binding.promptProfileName || null
+  if (!promptProfileName) return { promptProfileName: null, promptProfile: null }
 
-  const chatTemplate = chatTemplates[chatTemplateName]
-  if (!chatTemplate) {
-    const available = Object.keys(chatTemplates).join(", ") || "none configured"
+  const promptProfile = promptProfiles[promptProfileName]
+  if (!promptProfile) {
+    const available = Object.keys(promptProfiles).join(", ") || "none configured"
     throw new Error(
-      `Current profile is no longer configured: ${chatTemplateName}. ` +
+      `Current profile is no longer configured: ${promptProfileName}. ` +
         `Choose one with /reset PROFILE [SERVER]. Available profiles: ${available}`,
     )
   }
 
-  return { chatTemplateName, chatTemplate }
+  return { promptProfileName, promptProfile }
 }
 
 function sessionWebUrl(server, sessionID, session) {

@@ -62,26 +62,7 @@ export class FinalVoiceModule {
   commandHandlers() {
     return {
       tts: (message, args) => this.handleTTS(message, args),
-      озвучка: (message, args) => this.handleTTS(message, args),
-      status: (message) => this.sendStatus(message),
-      статус: (message) => this.sendStatus(message),
-      prompt: (message, args) => this.handlePrompt(message, args),
-      промпт: (message, args) => this.handlePrompt(message, args),
-      prompt_reset: (message) => this.resetPrompt(message),
-      промпт_сброс: (message) => this.resetPrompt(message),
-      voice: (message, args) => this.handleVoice(message, args),
-      голос: (message, args) => this.handleVoice(message, args),
-      engine: (message, args) => this.handleEngine(message, args),
-      движок: (message, args) => this.handleEngine(message, args),
-      minlength: (message, args) => this.handleMinLength(message, args),
-      минимум: (message, args) => this.handleMinLength(message, args),
-      steps: (message) => this.handleSteps(message),
-      шаги: (message) => this.handleSteps(message),
-      intro: (message, args) => this.handleIntro(message, args),
-      стартовый: (message, args) => this.handleIntro(message, args),
       speak: (message) => this.handleSpeak(message),
-      озвучь: (message) => this.handleSpeak(message),
-      помощь: (message) => this.reply(message, this.helpText()),
     }
   }
 
@@ -97,16 +78,15 @@ export class FinalVoiceModule {
     const tokens = splitArgs(args)
     const action = String(tokens.shift() || "").toLowerCase()
     if (!action) return this.sendStatus(message)
-    if (["on", "enable", "вкл", "включить"].includes(action)) return this.setGlobalEnabled(message, true)
-    if (["off", "disable", "выкл", "выключить"].includes(action)) return this.setGlobalEnabled(message, false)
-    if (["status", "статус"].includes(action)) return this.sendStatus(message)
-    if (["help", "помощь"].includes(action)) return this.reply(message, this.helpText())
-    if (["prompt", "промпт"].includes(action)) return this.handlePrompt(message, tokens.join(" "))
-    if (["voice", "голос"].includes(action)) return this.handleVoice(message, tokens.join(" "))
-    if (["engine", "движок"].includes(action)) return this.handleEngine(message, tokens.join(" "))
-    if (["minlength", "minimum", "минимум"].includes(action)) return this.handleMinLength(message, tokens.join(" "))
-    if (["intro", "стартовый"].includes(action)) return this.handleIntro(message, tokens.join(" "))
-    if (["steps", "шаги"].includes(action)) return this.handleSteps(message)
+    if (action === "on") return this.setGlobalEnabled(message, true)
+    if (action === "off") return this.setGlobalEnabled(message, false)
+    if (action === "status") return this.sendStatus(message)
+    if (action === "help") return this.reply(message, this.helpText())
+    if (action === "prompt") return this.handlePrompt(message, tokens.join(" "))
+    if (action === "voice") return this.handleVoice(message, tokens.join(" "))
+    if (action === "engine") return this.handleEngine(message, tokens.join(" "))
+    if (action === "minlength") return this.handleMinLength(message, tokens.join(" "))
+    if (action === "intro") return this.handleIntro(message, tokens.join(" "))
     return this.reply(message, t("finalVoice.unknownSubcommand"))
   }
 
@@ -151,7 +131,7 @@ export class FinalVoiceModule {
       const label = t(settings.promptOverride ? "finalVoice.promptTitleCustom" : "finalVoice.promptTitleDefault")
       return this.reply(message, `${label}:\n\n${clampText(settings.prompt, 3400)}`)
     }
-    if (["reset", "сброс"].includes(value.toLowerCase())) return this.resetPrompt(message)
+    if (value.toLowerCase() === "reset") return this.resetPrompt(message)
     if (value.length > 12_000) return this.reply(message, t("finalVoice.promptTooLong"))
     await this.patchSettings({ prompt: value })
     return this.reply(message, t("finalVoice.promptUpdated"))
@@ -201,21 +181,17 @@ export class FinalVoiceModule {
     if (!value) return this.reply(message, settings.introTemplate
       ? t("finalVoice.introCurrent", { value: settings.introTemplate })
       : t("finalVoice.introDisabled"))
-    if (["off", "выкл", "выключить"].includes(value.toLowerCase())) {
+    if (value.toLowerCase() === "off") {
       await this.patchSettings({ introTemplate: "" })
       return this.reply(message, t("finalVoice.introDisabledGlobally"))
     }
-    if (["reset", "сброс"].includes(value.toLowerCase())) {
+    if (value.toLowerCase() === "reset") {
       await this.patchSettings({ introTemplate: null })
       return this.reply(message, t("finalVoice.introReset"))
     }
     if (value.length > 1_000) return this.reply(message, t("finalVoice.introTooLong"))
     await this.patchSettings({ introTemplate: value })
     return this.reply(message, t("finalVoice.introUpdated"))
-  }
-
-  async handleSteps(message) {
-    return this.reply(message, t("finalVoice.stepsUnsupported"))
   }
 
   async handleSpeak(message) {
@@ -499,26 +475,13 @@ export class FinalVoiceModule {
 
 function normalizeFinalVoiceState(value) {
   return {
-    settings: isObject(value?.settings) ? value.settings : migrateTopicSettings(value?.topics),
+    settings: isObject(value?.settings) ? value.settings : {},
     sent: Array.isArray(value?.sent) ? value.sent.filter((item) => item?.key).slice(-FINAL_VOICE_STATE_LIMIT) : [],
   }
 }
 
 function isFinalVoiceState(value) {
-  return value && isObject(value.settings) && Array.isArray(value.sent) && !Object.hasOwn(value, "topics")
-}
-
-function migrateTopicSettings(topics) {
-  if (!isObject(topics)) return {}
-  const overrides = Object.values(topics).filter(isObject)
-  const settings = {}
-  if (overrides.some((item) => item.enabled === true)) settings.enabled = true
-  else if (overrides.some((item) => item.enabled === false)) settings.enabled = false
-  for (const field of ["prompt", "profile", "voice", "minFinalChars", "introTemplate"]) {
-    const source = overrides.find((item) => Object.hasOwn(item, field))
-    if (source) settings[field] = source[field]
-  }
-  return settings
+  return value && isObject(value.settings) && Array.isArray(value.sent)
 }
 
 function isObject(value) {

@@ -3,7 +3,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { defaultArtifacts, normalizeArtifactUploads, normalizeArtifacts, normalizeAttachments } from "./config/artifacts.mjs"
-import { normalizeChatTemplates } from "./config/chat-templates.mjs"
+import { normalizePromptProfiles } from "./config/prompt-profiles.mjs"
 import { loadEnvFile, pickToken, pickValue, readFirstNumber, readNumberList, uniqueNumbers } from "./config/common.mjs"
 import { normalizeFinalVoiceConfig } from "./config/final-voice.mjs"
 import { readServers } from "./config/servers.mjs"
@@ -86,7 +86,7 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
     speech: normalizeSpeechConfig(config.speech, mergedEnv),
     finalVoice: normalizeFinalVoiceConfig(config.finalVoice, mergedEnv),
     updates: normalizeUpdatesConfig(config.updates, { statePath, env: mergedEnv }),
-    chatTemplates: normalizeChatTemplates(config.chatTemplates),
+    promptProfiles: normalizePromptProfiles(config.promptProfiles),
     web: config.web || {},
     wireguard: {
       ...config.wireguard,

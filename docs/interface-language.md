@@ -71,4 +71,4 @@ Useful smoke sequence:
 4. Select English in the panel and repeat the checks.
 5. Return to the preferred production language.
 
-Rollback is one panel click or `/lang eng`; no restart, database migration, or deployment change is required.
+Switching back to English is one panel click or `/lang eng`; no restart or deployment change is required.

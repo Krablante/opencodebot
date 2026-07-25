@@ -45,7 +45,7 @@ per-session message loss, Telegram download limits, synthetic file text filterin
 `/kill`, native `/compact` request shape and internal-summary suppression, structured session-error normalization and
 history fallback without raw provider-data leakage, queued prompt release after terminal mirror and session idle, the
 interrupted and empty-terminal warning paths, per-recipient final-notification delivery/dedupe with mandatory Telegram
-message ids and legacy-marker compatibility, full/economy mode behavior, task/subagent spawn notices, final notification
+message ids, full/economy mode behavior, task/subagent spawn notices, final notification
 summaries, artifact-topic host rejection, and artifact upload path handling. Incoming Rich Message smoke covers nested
 inline text, headings, lists, code, details, tables, explicit link targets, captions, largest-photo selection, multiple
 embedded photos, attachment descriptor reuse, and unsupported-media reporting. Web-prompt smoke covers the ordinary
@@ -68,9 +68,9 @@ was already mirrored and an authoritative idle status discovered without a live 
 keep live OpenCodez `sessionStatus` authoritative over a stale local queue-busy hint while separately rejecting a
 genuinely in-flight compaction. Context-export checks cover completed answers, ledger-marked and superseded
 interruptions with all visible progress notes, reasoning/tool/step exclusion, active-turn exclusion, paginated stopping,
-attachment descriptors, escaped collapsed Rich Message chunking without truncation, strict 1–10 parsing, pairs-to-turns
-preference migration, command wiring, and fail-closed rich delivery. State smoke covers no-op/deferred saves plus atomic
-migration from legacy JSON marker maps into the sibling append journal and successful marker recovery after reload. Keep
+attachment descriptors, escaped collapsed Rich Message chunking without truncation, strict 1–10 parsing, turn-count
+preference behavior, command wiring, and fail-closed rich delivery. State smoke covers no-op/deferred saves plus compact
+append-journal loading and successful marker recovery after reload. Keep
 these contracts in the existing focused tests and central smoke rather than introducing a separate performance-test
 framework.
 

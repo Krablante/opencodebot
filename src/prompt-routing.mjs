@@ -1,6 +1,6 @@
 import { formatDuration } from "./backend-backoff.mjs"
 import { AttachmentBuffer, cleanupFiles, downloadTelegramFiles } from "./attachments.mjs"
-import { applyChatTemplate } from "./chat-templates.mjs"
+import { applyPromptProfile } from "./prompt-profiles.mjs"
 import { logErrorEvent, logInfo } from "./logger.mjs"
 import { MultipartPromptBuffer } from "./multipart-prompts.mjs"
 import { promptPayload, resolveSessionProfile, titleFromText } from "./opencode.mjs"
@@ -26,13 +26,13 @@ export async function bindPendingTopicSession({ state, opencode, pending, messag
     directory: session.directory || directory,
     title: pending.title || titleFromText(text || files[0]?.filename || "Attachments"),
     titleSource: pending.titleSource || "auto",
-    chatTemplateName: pending.chatTemplateName,
-    agent: pending.chatTemplate?.agent,
-    model: pending.chatTemplate?.model,
+    promptProfileName: pending.promptProfileName,
+    agent: pending.promptProfile?.agent,
+    model: pending.promptProfile?.model,
   }
   await state.bindTopic(binding)
   await state.markSeenSession(binding.serverID, binding.sessionID)
-  await applyChatTemplate(opencode, pending.serverID, session.id, pending.chatTemplate, { directory })
+  await applyPromptProfile(opencode, pending.serverID, session.id, pending.promptProfile, { directory })
   return binding
 }
 

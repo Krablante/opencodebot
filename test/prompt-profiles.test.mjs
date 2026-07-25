@@ -2,13 +2,13 @@ import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import test from "node:test"
 
-import { applyChatTemplate, parseNewTopicArgs, parseResetArgs, parseResetProfileArg } from "../src/chat-templates.mjs"
-import { normalizeChatTemplates } from "../src/config/chat-templates.mjs"
+import { applyPromptProfile, parseNewTopicArgs, parseResetArgs, parseResetProfileArg } from "../src/prompt-profiles.mjs"
+import { normalizePromptProfiles } from "../src/config/prompt-profiles.mjs"
 import { OpenCodeClient, profileFromMessages } from "../src/opencode.mjs"
 import { baseTitleFromTelegramTitle, managedTopicTitle } from "../src/topic-titles.mjs"
 
-test("built-in chat profiles use current models, variants, and System prompts", () => {
-  const profiles = normalizeChatTemplates()
+test("built-in prompt profiles use current models, variants, and System prompts", () => {
+  const profiles = normalizePromptProfiles()
 
   assert.deepEqual(Object.keys(profiles).sort(), ["d4flash", "d4pro", "luna", "sol", "solh", "solm", "solmax", "terra"])
   assert.deepEqual(profiles.sol, {
@@ -33,56 +33,55 @@ test("built-in chat profiles use current models, variants, and System prompts", 
   })
 })
 
-test("/new resolves a profile and rejects the retired gpt55p alias", async () => {
-  const profiles = normalizeChatTemplates()
-  const options = { servers: new Map([["nuc", {}]]), defaultServerID: "nuc", chatTemplates: profiles }
+test("/new resolves a profile and preserves an unknown token as title text", async () => {
+  const profiles = normalizePromptProfiles()
+  const options = { servers: new Map([["nuc", {}]]), defaultServerID: "nuc", promptProfiles: profiles }
   const parsed = parseNewTopicArgs("nuc sol opencodebot-first", options)
 
-  assert.equal(parsed.chatTemplateName, "sol")
+  assert.equal(parsed.promptProfileName, "sol")
   assert.equal(parsed.title, "opencodebot-first")
-  assert.equal(parseNewTopicArgs("solm medium-work", options).chatTemplate.model.variant, "medium")
-  assert.equal(parseNewTopicArgs("solh high-work", options).chatTemplate.model.variant, "high")
-  assert.equal(parseNewTopicArgs("solmax max-work", options).chatTemplate.model.variant, "max")
+  assert.equal(parseNewTopicArgs("solm medium-work", options).promptProfile.model.variant, "medium")
+  assert.equal(parseNewTopicArgs("solh high-work", options).promptProfile.model.variant, "high")
+  assert.equal(parseNewTopicArgs("solmax max-work", options).promptProfile.model.variant, "max")
 
   const calls = []
-  await applyChatTemplate({
+  await applyPromptProfile({
     switchSessionModel: (...args) => calls.push(["model", ...args]),
     selectSystemPrompt: (...args) => calls.push(["system", ...args]),
-  }, "nuc", "ses_test", parsed.chatTemplate)
+  }, "nuc", "ses_test", parsed.promptProfile)
   assert.deepEqual(calls, [
     ["model", "nuc", "ses_test", profiles.sol.model, {}],
     ["system", "nuc", "ses_test", "codex_gpt_5_6_sol", {}],
   ])
-  assert.throws(() => parseNewTopicArgs("nuc gpt55p old-chat", options), /Profile gpt55p was removed/)
+  assert.equal(parseNewTopicArgs("nuc custom-token old-chat", options).title, "custom-token old-chat")
 })
 
 test("/reset accepts exactly one configured profile", () => {
-  const profiles = normalizeChatTemplates()
-  assert.equal(parseResetProfileArg("", { chatTemplates: profiles }), null)
-  assert.deepEqual(parseResetProfileArg("sol", { chatTemplates: profiles }), {
-    chatTemplateName: "sol",
-    chatTemplate: profiles.sol,
+  const profiles = normalizePromptProfiles()
+  assert.equal(parseResetProfileArg("", { promptProfiles: profiles }), null)
+  assert.deepEqual(parseResetProfileArg("sol", { promptProfiles: profiles }), {
+    promptProfileName: "sol",
+    promptProfile: profiles.sol,
   })
-  assert.equal(parseResetProfileArg("solm", { chatTemplates: profiles }).chatTemplate.model.variant, "medium")
-  assert.equal(parseResetProfileArg("solh", { chatTemplates: profiles }).chatTemplate.model.variant, "high")
-  assert.equal(parseResetProfileArg("solmax", { chatTemplates: profiles }).chatTemplate.model.variant, "max")
-  assert.throws(() => parseResetProfileArg("unknown", { chatTemplates: profiles }), /Unknown profile unknown/)
-  assert.throws(() => parseResetProfileArg("sol extra", { chatTemplates: profiles }), /Usage: \/reset \[profile\]/)
-  assert.throws(() => parseResetProfileArg("gpt55p", { chatTemplates: profiles }), /Profile gpt55p was removed/)
+  assert.equal(parseResetProfileArg("solm", { promptProfiles: profiles }).promptProfile.model.variant, "medium")
+  assert.equal(parseResetProfileArg("solh", { promptProfiles: profiles }).promptProfile.model.variant, "high")
+  assert.equal(parseResetProfileArg("solmax", { promptProfiles: profiles }).promptProfile.model.variant, "max")
+  assert.throws(() => parseResetProfileArg("unknown", { promptProfiles: profiles }), /Unknown profile unknown/)
+  assert.throws(() => parseResetProfileArg("sol extra", { promptProfiles: profiles }), /Usage: \/reset \[profile\]/)
 })
 
 test("/reset resolves optional profile and server overrides", () => {
-  const profiles = normalizeChatTemplates()
+  const profiles = normalizePromptProfiles()
   const servers = new Map([["nuc", { id: "nuc" }], ["dima", { id: "dima" }]])
-  const options = { chatTemplates: profiles, servers }
-  assert.deepEqual(parseResetArgs("", options), { chatTemplateName: null, chatTemplate: null, serverID: null })
-  assert.deepEqual(parseResetArgs("dima", options), { chatTemplateName: null, chatTemplate: null, serverID: "dima" })
-  assert.equal(parseResetArgs("solh", options).chatTemplate.model.variant, "high")
-  assert.deepEqual(parseResetArgs("solh dima", options), { chatTemplateName: "solh", chatTemplate: profiles.solh, serverID: "dima" })
+  const options = { promptProfiles: profiles, servers }
+  assert.deepEqual(parseResetArgs("", options), { promptProfileName: null, promptProfile: null, serverID: null })
+  assert.deepEqual(parseResetArgs("dima", options), { promptProfileName: null, promptProfile: null, serverID: "dima" })
+  assert.equal(parseResetArgs("solh", options).promptProfile.model.variant, "high")
+  assert.deepEqual(parseResetArgs("solh dima", options), { promptProfileName: "solh", promptProfile: profiles.solh, serverID: "dima" })
   assert.throws(() => parseResetArgs("solh unknown", options), /Unknown OpenCodez server: unknown/)
   assert.throws(() => parseResetArgs("unknown", options), /Unknown reset profile or server: unknown/)
   assert.throws(() => parseResetArgs("solh dima extra", options), /Usage: \/reset \[profile\] \[server\]/)
-  assert.throws(() => parseResetArgs("solh", { chatTemplates: profiles, servers: new Map([["solh", { id: "solh" }]]) }), /ambiguous/)
+  assert.throws(() => parseResetArgs("solh", { promptProfiles: profiles, servers: new Map([["solh", { id: "solh" }]]) }), /ambiguous/)
 })
 
 test("managed topic titles add server suffix only for multi-server deployments", () => {

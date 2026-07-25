@@ -316,8 +316,7 @@ Use `/notify_on`, `/notify_off`, and `/notify_status` to manage private final-an
 recipients. Delivery is deduplicated per recipient and final assistant message. A final DM is sent only after the bot
 has mirrored a new final answer into Telegram and received its exact `message_id`; restart reconciliation never
 backfills DMs for already mirrored historical answers. Catch-up may still mirror a genuinely missing final answer, which
-then follows the ordinary notification path with a valid message link. Legacy sent markers remain recognized during
-migration. Those DMs include the source topic, an `Open topic` button, context quotes, a completed task list when the
+then follows the ordinary notification path with a valid message link. Those DMs include the source topic, an `Open topic` button, context quotes, a completed task list when the
 agent closed one, and a separate quoted `Tools`/`Patched` summary with compact tool counts and semicolon-separated file
 names for successful structured file mutations. `/debug_on`, `/debug_off`, and `/debug_status` additionally control one
 global expandable run-diagnostics block at the very end of every final DM, including agent-step latency, effective TPS,
@@ -331,7 +330,7 @@ topics.
 Use `/mirror_on` and `/mirror_off` when you need to pause or resume web-to-Telegram mirroring without stopping the bot.
 
 Default chat profiles are `d4flash`, `d4pro`, `luna`, `terra`, `solm`, `solh`, `sol`, and `solmax`. Each profile keeps
-its agent, model, variant, and OpenCodez System prompt in `chatTemplates`; local deployments can override those values
+its agent, model, variant, and OpenCodez System prompt in `promptProfiles`; local deployments can override those values
 in runtime config without changing code. DeepSeek profiles use the OpenCodez `default` System prompt, Luna and Terra
 share `codex_gpt_5_6_luna_terra`, and all four Sol profiles use `codex_gpt_5_6_sol`. They select the same Sol model with
 `medium`, `high`, `xhigh`, and `max` variants respectively.

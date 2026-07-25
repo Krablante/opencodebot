@@ -3,7 +3,7 @@ import { startArtifactGateway } from "./artifacts-gateway.mjs"
 import { ArtifactUploadBuffer, handleArtifactUploadMessage } from "./artifact-uploads.mjs"
 import { cleanupUploads, extractTelegramFiles } from "./attachments.mjs"
 import { createBackendRequester } from "./backend-backoff.mjs"
-import { parseNewTopicArgs } from "./chat-templates.mjs"
+import { parseNewTopicArgs } from "./prompt-profiles.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "./commands.mjs"
 import { createFinalNotifier } from "./final-notifications.mjs"
 import { FinalVoiceModule } from "./final-voice.mjs"
@@ -211,20 +211,20 @@ async function createPendingTopic(message, args) {
     parsed = parseNewTopicArgs(args, {
       servers: opencode.servers,
       defaultServerID: config.defaultPrompt.serverID,
-      chatTemplates: config.chatTemplates,
+      promptProfiles: config.promptProfiles,
     })
   } catch (error) {
     await telegram.sendMessage({ chatId: message.chat.id, topicId: message.message_thread_id, text: escapeHtml(error.message) })
     return
   }
-  const { serverID, title, titleSource, chatTemplateName, chatTemplate, directory: requestedDirectory } = parsed
+  const { serverID, title, titleSource, promptProfileName, promptProfile, directory: requestedDirectory } = parsed
   const directory = requestedDirectory || opencode.defaultNewSessionDirectory(serverID)
   const chatId = state.chatId || message.chat.id
   const topicIcon = await randomTopicIcon()
   const titleFields = managedTopicTitle(title, serverID, opencode.servers)
   const topic = await telegram.createForumTopic({ chatId, name: titleFields.topicTitle, iconCustomEmojiId: topicIcon?.customEmojiId })
-  await state.addPendingTopic(topic.message_thread_id, { serverID, ...titleFields, topicIconCustomEmojiId: topic.icon_custom_emoji_id || topicIcon?.customEmojiId, topicIconEmoji: topicIcon?.emoji, title: titleFields.topicBaseTitle, titleSource, chatTemplateName, chatTemplate, directory })
-  const suffix = chatTemplateName ? t("topic.profileSuffix", { profileHtml: escapeHtml(chatTemplateName) }) : ""
+  await state.addPendingTopic(topic.message_thread_id, { serverID, ...titleFields, topicIconCustomEmojiId: topic.icon_custom_emoji_id || topicIcon?.customEmojiId, topicIconEmoji: topicIcon?.emoji, title: titleFields.topicBaseTitle, titleSource, promptProfileName, promptProfile, directory })
+  const suffix = promptProfileName ? t("topic.profileSuffix", { profileHtml: escapeHtml(promptProfileName) }) : ""
   const directoryLine = directory ? t("topic.directoryLine", { directoryHtml: escapeHtml(directory) }) : ""
   await telegram.sendMessage({
     chatId,

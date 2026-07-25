@@ -256,7 +256,7 @@ test("final notification history keeps the full-history recovery fallback", asyn
     messagePage: async () => assert.fail("pagination must stop after exact-message failure"),
     messages: async () => fallback,
   }, {
-    serverID: "legacy",
+    serverID: "recovery",
     sessionID: "session-1",
     directory: "/workspace",
   }, "assistant-final")

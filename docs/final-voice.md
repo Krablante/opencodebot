@@ -75,21 +75,14 @@ The compact interface is:
 /speak                       reply to text, a Rich Message, or quoted text for one manual voice
 ```
 
-Legacy commands remain accepted: `/озвучка`, `/промпт`, `/промпт_сброс`, `/голос`, `/движок`, `/минимум`, `/шаги`, `/стартовый`, `/озвучь`, `/статус`, `/помощь`, and their English aliases from the previous service.
-
 Telegram Bot API command-menu names permit only lowercase English letters, digits, and underscores. The compact visible
 menu advertises `/speak`; Final Voice configuration lives in the General control panel and `/tts` remains available as a
-typed accelerator. Cyrillic aliases work when typed manually.
+typed accelerator.
 
 All Final Voice settings are global and stored once in the existing atomic `state.json`: automatic on/off, prompt, TTS profile, voice, minimum final length, and intro. The preferred UI is `General → Voice`; commands remain available as direct accelerators. Changing any setting from the panel or one topic immediately affects every topic. Telegram topic data is used only to route the resulting voice reply. A session `/reset` does not reset Final Voice settings.
 
 Panel buttons set explicit on/off values and never perform a blind toggle. Bare `/tts` is likewise status-only so that
-checking state cannot accidentally disable automatic voice. `/tts toggle` remains available only as an explicit legacy
-shortcut.
-
-On first startup after upgrading from the earlier topic-local format, OpenCodeBot migrates the enabled state and existing overrides into the single global settings object and removes the obsolete topic map. Existing prompts are preserved.
-
-The legacy `/steps` command remains understandable but reports that the current OpenAI-compatible Silero profile does not use a synthesis-step parameter. Supertonic is not bundled or emulated.
+checking state cannot accidentally disable automatic voice.
 
 ## Runtime Behavior
 
@@ -112,6 +105,9 @@ command message instead.
 The configured intro template is rendered only after summary generation and prepended to the TTS input. `{topicname}`
 and `{server}` come from the exact automatic-final binding or the current active binding for manual `/speak`; they are
 never sent to the summary provider. Disabled historical bindings are not used for intro metadata.
+
+The rendered intro and summary are separated by a blank line. The Silero bridge preserves this paragraph boundary as a
+hard synthesis-chunk boundary, ensuring the topic/server announcement is spoken before the response body.
 
 The queue is intentionally in-memory. A restart drops incomplete voice work, while existing renderer markers prevent old finals from being replayed. Successful Telegram deliveries are recorded in a bounded persistent marker list. This provides clean at-most-once behavior without a second job database.
 
@@ -160,6 +156,7 @@ curl -fsS http://TTS_HOST:8000/healthz
 
 `/tts status` deliberately does not probe providers. It reports configuration readiness and queue state without introducing health-polling traffic or startup coupling.
 
-## Rollback
+## Disable
 
-Turn off voice globally with `/tts off`, or set the deployment gate to false and restart OpenCodeBot. Text behavior is unaffected. The previous service can then be re-enabled if it was preserved for rollback, but the two automatic senders must not overlap.
+Turn off voice globally with `/tts off`, or set the deployment gate to false and restart OpenCodeBot. Text behavior is
+unaffected.

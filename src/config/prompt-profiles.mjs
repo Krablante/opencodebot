@@ -1,4 +1,4 @@
-const defaultChatTemplates = {
+const defaultPromptProfiles = {
   d4flash: {
     agent: "build",
     model: { providerID: "deepseek", modelID: "deepseek-v4-flash", variant: "max" },
@@ -19,13 +19,13 @@ const defaultChatTemplates = {
     model: { providerID: "openai", modelID: "gpt-5.6-terra", variant: "xhigh" },
     opencodezSystem: "codex_gpt_5_6_luna_terra",
   },
-  solm: solTemplate("medium"),
-  solh: solTemplate("high"),
-  sol: solTemplate("xhigh"),
-  solmax: solTemplate("max"),
+  solm: solProfile("medium"),
+  solh: solProfile("high"),
+  sol: solProfile("xhigh"),
+  solmax: solProfile("max"),
 }
 
-function solTemplate(variant) {
+function solProfile(variant) {
   return {
     agent: "build",
     model: { providerID: "openai", modelID: "gpt-5.6-sol", variant },
@@ -33,22 +33,22 @@ function solTemplate(variant) {
   }
 }
 
-export function normalizeChatTemplates(value = {}) {
-  const merged = { ...defaultChatTemplates, ...(value || {}) }
+export function normalizePromptProfiles(value = {}) {
+  const merged = { ...defaultPromptProfiles, ...(value || {}) }
   return Object.fromEntries(
     Object.entries(merged)
-      .map(([name, template]) => [String(name).trim(), normalizeChatTemplate(template)])
-      .filter(([name, template]) => name && template),
+      .map(([name, profile]) => [String(name).trim(), normalizePromptProfile(profile)])
+      .filter(([name, profile]) => name && profile),
   )
 }
 
-function normalizeChatTemplate(template = {}) {
-  const model = normalizeModel(template.model)
-  if (!template.agent && !model && !template.opencodezSystem) return null
+function normalizePromptProfile(profile = {}) {
+  const model = normalizeModel(profile.model)
+  if (!profile.agent && !model && !profile.opencodezSystem) return null
   return {
-    agent: template.agent ? String(template.agent) : undefined,
+    agent: profile.agent ? String(profile.agent) : undefined,
     model,
-    opencodezSystem: template.opencodezSystem ? String(template.opencodezSystem) : undefined,
+    opencodezSystem: profile.opencodezSystem ? String(profile.opencodezSystem) : undefined,
   }
 }
 

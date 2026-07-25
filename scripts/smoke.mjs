@@ -75,7 +75,7 @@ async function smokeLocalInvariants() {
   await smokeAttachmentTextChunksWaitForIdle()
   smokeExpiredBindingReconcileRefresh()
   smokeCatchupAssistantGate()
-  smokeManagedTopicMigrationGate()
+  smokeManagedTopicTitleGate()
   smokeManualCompactionDetection()
   smokeSessionErrorNormalization()
   await smokeCanonicalTopicMetadata()
@@ -167,9 +167,7 @@ async function smokeFinalVoiceFlow() {
     await state.load()
     await state.update((data) => {
       data.finalVoice = {
-        topics: {
-          "-1001:77": { enabled: true, prompt: "Мигрированный общий промпт." },
-        },
+        settings: { enabled: true, prompt: "Глобальный общий промпт." },
         sent: [],
       }
       data.bindings.push(
@@ -226,8 +224,7 @@ async function smokeFinalVoiceFlow() {
     })
     await finalVoice.start()
     assert.equal(state.data.finalVoice.settings.enabled, true)
-    assert.equal(state.data.finalVoice.settings.prompt, "Мигрированный общий промпт.")
-    assert.equal(Object.hasOwn(state.data.finalVoice, "topics"), false)
+    assert.equal(state.data.finalVoice.settings.prompt, "Глобальный общий промпт.")
     assert.equal(finalVoice.enqueueAutomatic({
       serverID: "nuc",
       sessionID: "session-1",
@@ -245,7 +242,7 @@ async function smokeFinalVoiceFlow() {
     assert.equal(requests[0].url, "/chat/completions")
     assert.equal(requests[0].body.model, "deepseek-v4-flash")
     assert.equal(requests[0].body.reasoning_effort, "max")
-    assert.equal(requests[0].body.messages[0].content, "Мигрированный общий промпт.")
+    assert.equal(requests[0].body.messages[0].content, "Глобальный общий промпт.")
     assert.equal(requests[0].body.messages[1].content, "Полный финальный ответ.")
     assert.equal(requests[1].url, "/audio/speech")
     assert.equal(requests[1].body.voice, "xenia")
@@ -286,13 +283,13 @@ async function smokeFinalVoiceFlow() {
     await handlers.tts(commandMessage, "off")
     assert.equal(finalVoice.settings().enabled, false)
     const anotherTopic = { chat: { id: -1001 }, message_id: 101, message_thread_id: 999 }
-    await handlers.озвучка(anotherTopic, "")
+    assert.deepEqual(Object.keys(handlers).sort(), ["speak", "tts"])
+    await handlers.tts(anotherTopic, "")
     assert.equal(finalVoice.settings().enabled, false)
-    await handlers.озвучка(anotherTopic, "включить")
+    await handlers.tts(anotherTopic, "on")
     assert.equal(finalVoice.settings().enabled, true)
-    await handlers.status(commandMessage)
+    await handlers.tts(commandMessage, "status")
     assert.match(replies.at(-1), /Reasoning: max/)
-    assert.deepEqual(parseCommand("/озвучка включить"), { name: "озвучка", args: "включить" })
     finalVoice.stop()
   } finally {
     await close()
@@ -513,7 +510,7 @@ async function smokeMirrorModeCommands() {
     assert.equal(state.mirrorMode(), "full")
     let menuRefreshes = 0
     const handlers = createTelegramCommandHandlers({
-      config: { chatTemplates: {} },
+      config: { promptProfiles: {} },
       state,
       telegram: { async sendMessage(message) { sent.push(message) } },
       opencode: {},
@@ -717,8 +714,6 @@ async function smokeFinalNotificationDelivery() {
     await store.markFinalNotificationSent("user-1", "nuc", "ses_state", "msg_state")
     assert.equal(store.finalNotificationSent("user-1", "nuc", "ses_state", "msg_state"), true)
     assert.equal(store.finalNotificationSent("user-2", "nuc", "ses_state", "msg_state"), false)
-    await store.update((data) => data.finalNotifications.sentMessages.push("nuc:ses_legacy:msg_legacy:123"))
-    assert.equal(store.finalNotificationSent("user-2", "nuc", "ses_legacy", "msg_legacy"), true)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -771,15 +766,6 @@ async function smokeDeferredStatePersistence() {
     assert.equal(reloaded.contextTurnsForUser(42, 3), 6)
     assert.equal(reloaded.runAlertSent(42, "dima:session:user-1"), true)
     assert.equal(reloaded.activePromptOrigin("dima", "session")?.opencodeMessageID, "user-2")
-
-    const legacyPath = path.join(root, "legacy-state.json")
-    await writeFile(legacyPath, JSON.stringify({ telegram: { contextPairsByUser: { 42: 7 } } }))
-    const migrated = new StateStore(legacyPath)
-    await migrated.load()
-    assert.equal(migrated.contextTurnsForUser(42, 3), 7)
-    const migratedData = JSON.parse(await readFile(legacyPath, "utf8"))
-    assert.deepEqual(migratedData.telegram.contextTurnsByUser, { 42: 7 })
-    assert.equal("contextPairsByUser" in migratedData.telegram, false)
 
     let saves = 0
     const save = state.save.bind(state)
@@ -979,7 +965,8 @@ async function smokeStateMarkerBatching() {
     assert.equal(saves, 0)
     assert.equal(state.isAssistantMirrored("nuc", "ses", "msg-3"), true)
     const persisted = JSON.parse(await readFile(path.join(root, "state.json"), "utf8"))
-    assert.deepEqual(persisted.mirroredAssistantBySession, {})
+    assert.equal(Object.hasOwn(persisted, "mirroredAssistantBySession"), false)
+    assert.equal(Object.hasOwn(persisted, "mirroredUserBySession"), false)
     const reloaded = new StateStore(path.join(root, "state.json"))
     await reloaded.load()
     assert.equal(reloaded.isAssistantMirrored("nuc", "ses", "msg-3"), true)
@@ -988,19 +975,6 @@ async function smokeStateMarkerBatching() {
     await journalOnly.load()
     assert.equal(journalOnly.isAssistantMirrored("nuc", "ses", "msg-3"), true)
 
-    const legacyPath = path.join(root, "legacy-state.json")
-    await writeFile(legacyPath, JSON.stringify({
-      version: 1,
-      mirroredAssistantBySession: { "nuc:legacy": ["legacy-assistant"] },
-      mirroredUserBySession: { "nuc:legacy": ["legacy-user"] },
-    }))
-    const legacy = new StateStore(legacyPath)
-    await legacy.load()
-    assert.equal(legacy.isAssistantMirrored("nuc", "legacy", "legacy-assistant"), true)
-    assert.equal(legacy.isUserMirrored("nuc", "legacy", "legacy-user"), true)
-    const migrated = JSON.parse(await readFile(legacyPath, "utf8"))
-    assert.deepEqual(migrated.mirroredAssistantBySession, {})
-    assert.deepEqual(migrated.mirroredUserBySession, {})
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -1869,7 +1843,7 @@ async function smokeKillCommand() {
   promptQueue.markBusy(binding)
   await promptQueue.enqueue(binding, "queued prompt")
   const handlers = createTelegramCommandHandlers({
-    config: { chatTemplates: {} },
+    config: { promptProfiles: {} },
     state: {
       findBindingByTopic(chatId, threadId) {
         assert.equal(chatId, 123)
@@ -1938,7 +1912,7 @@ async function smokeCompactCommand() {
     onQueueCleared: async () => {},
   })
   const handlers = createTelegramCommandHandlers({
-    config: { chatTemplates: {}, defaultPrompt: { agent: "build" } },
+    config: { promptProfiles: {}, defaultPrompt: { agent: "build" } },
     state: {
       findBindingByTopic() {
         return binding
@@ -2036,7 +2010,7 @@ async function smokeContextCommands() {
     },
   ]
   const handlers = createTelegramCommandHandlers({
-    config: { chatTemplates: {} },
+    config: { promptProfiles: {} },
     state: {
       findBindingByTopic() {
         return binding
@@ -2114,15 +2088,15 @@ async function smokeResetCommand() {
     directory: "/tmp/work",
     title: "Old session",
     titleSource: "opencode",
-    chatTemplateName: "gpt",
-    chatTemplate: { model: "openai/test" },
+    promptProfileName: "gpt",
+    promptProfile: { model: "openai/test" },
   }
   const sent = []
   const renamed = []
   const steps = []
   const preservedTopicTitle = "Current visible topic"
-  const chatTemplates = {
-    gpt: binding.chatTemplate,
+  const promptProfiles = {
+    gpt: binding.promptProfile,
     sol: { agent: "build", model: { providerID: "openai", modelID: "gpt-5.6-sol", variant: "xhigh" } },
     terra: { agent: "build", model: { providerID: "openai", modelID: "gpt-5.6-terra", variant: "xhigh" } },
   }
@@ -2140,7 +2114,7 @@ async function smokeResetCommand() {
     promptQueue.markBusy(binding)
     await promptQueue.enqueue(binding, "queued prompt")
     const handlers = createTelegramCommandHandlers({
-      config: { chatTemplates, opencode: { servers: [{ id: "nuc", url: "http://127.0.0.1:4098" }] } },
+      config: { promptProfiles, opencode: { servers: [{ id: "nuc", url: "http://127.0.0.1:4098" }] } },
       state,
       telegram: {
         async sendMessage(message) { sent.push(message) },
@@ -2180,7 +2154,7 @@ async function smokeResetCommand() {
     assert.equal(state.findBinding("nuc", "ses_reset_old").disabled, undefined)
     assert.match(sent.at(-1).text, /Unknown reset profile or server: unknown/)
 
-    state.findBinding("nuc", "ses_reset_old").chatTemplateName = "retired"
+    state.findBinding("nuc", "ses_reset_old").promptProfileName = "missing"
     await handlers.handle(
       { chat: { id: 123 }, message_thread_id: 456, message_id: 788 },
       { name: "reset", args: "" },
@@ -2189,8 +2163,8 @@ async function smokeResetCommand() {
     assert.deepEqual(steps, [])
     assert.equal(state.findBinding("nuc", "ses_reset_old").disabled, undefined)
     assert.match(sent.at(-1).text, /Reset needs a profile/)
-    assert.match(sent.at(-1).text, /Current profile is no longer configured: retired/)
-    state.findBinding("nuc", "ses_reset_old").chatTemplateName = "gpt"
+    assert.match(sent.at(-1).text, /Current profile is no longer configured: missing/)
+    state.findBinding("nuc", "ses_reset_old").promptProfileName = "gpt"
 
     const handled = await handlers.handle(
       { chat: { id: 123 }, message_thread_id: 456, message_id: 789 },
@@ -2202,8 +2176,8 @@ async function smokeResetCommand() {
     assert.equal(state.findBinding("nuc", "ses_reset_old"), undefined)
     assert.equal(state.findAnyBindingByTopic(123, 456).disabledReason, "topic-reset")
     assert.equal(state.pendingTopic(456).directory, binding.directory)
-    assert.equal(state.pendingTopic(456).chatTemplateName, "gpt")
-    assert.deepEqual(state.pendingTopic(456).chatTemplate, chatTemplates.gpt)
+    assert.equal(state.pendingTopic(456).promptProfileName, "gpt")
+    assert.deepEqual(state.pendingTopic(456).promptProfile, promptProfiles.gpt)
     assert.equal(state.pendingTopic(456).title, preservedTopicTitle)
     assert.equal(state.pendingTopic(456).topicBaseTitle, preservedTopicTitle)
     assert.equal(state.pendingTopic(456).topicTitle, `${preservedTopicTitle} (nuc)`)
@@ -2233,8 +2207,8 @@ async function smokeResetCommand() {
     assert.deepEqual(steps, ["multipart", "attachments"])
     assert.match(sent.at(-1).text, /already waiting for its first prompt/)
     assert.match(sent.at(-1).text, /Profile: <code>terra<\/code>/)
-    assert.equal(state.pendingTopic(456).chatTemplateName, "terra")
-    assert.deepEqual(state.pendingTopic(456).chatTemplate, chatTemplates.terra)
+    assert.equal(state.pendingTopic(456).promptProfileName, "terra")
+    assert.deepEqual(state.pendingTopic(456).promptProfile, promptProfiles.terra)
 
     steps.length = 0
     await handlers.handle(
@@ -2254,21 +2228,6 @@ async function smokeResetCommand() {
     assert.equal(reloaded.pendingTopic(456).topicTitle, `${preservedTopicTitle} (dima)`)
     assert.equal(reloaded.pendingTopic(456).titleSource, "user")
     assert.equal(reloaded.findAnyBindingByTopic(123, 456).disabled, true)
-    reloaded.data.pendingTopics["456"].titleSource = "opencode"
-    await reloaded.save()
-    const migratedPending = new StateStore(statePath)
-    await migratedPending.load()
-    assert.equal(migratedPending.pendingTopic(456).titleSource, "user")
-
-    const pending = migratedPending.pendingTopic(456)
-    await migratedPending.bindTopic({ ...pending, chatId: 123, topicId: 456, sessionID: "ses_reset_new", title: "Generated session title" })
-    assert.equal(migratedPending.findBindingByTopic(123, 456).titleSource, "user")
-    assert.equal(migratedPending.findBindingByTopic(123, 456).topicTitle, `${preservedTopicTitle} (dima)`)
-    migratedPending.findBindingByTopic(123, 456).titleSource = "opencode"
-    await migratedPending.save()
-    const migratedActive = new StateStore(statePath)
-    await migratedActive.load()
-    assert.equal(migratedActive.findBindingByTopic(123, 456).titleSource, "user")
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -2488,9 +2447,9 @@ function smokeCatchupAssistantGate() {
   assert.equal(shouldSkipAssistantForCatchup(true, true), false)
 }
 
-function smokeManagedTopicMigrationGate() {
-  assert.equal(shouldSyncManagedTopicTitle({ title: "legacy", titleSource: "auto" }, "legacy"), false)
-  assert.equal(shouldSyncManagedTopicTitle({ title: "legacy", titleSource: "auto" }, "renamed"), true)
+function smokeManagedTopicTitleGate() {
+  assert.equal(shouldSyncManagedTopicTitle({ title: "managed", titleSource: "auto" }, "managed"), false)
+  assert.equal(shouldSyncManagedTopicTitle({ title: "managed", titleSource: "auto" }, "renamed"), true)
   assert.equal(shouldSyncManagedTopicTitle({ title: "manual", titleSource: "user" }, "backend"), false)
   assert.equal(shouldSyncManagedTopicTitle({ title: "managed", titleSource: "user", topicBaseTitle: "managed" }, "backend"), true)
 }
@@ -2595,8 +2554,8 @@ async function smokePendingTopicBindingPrecedesProfileSetup() {
       serverID: "toma",
       title: "zikzik",
       titleSource: "user",
-      chatTemplateName: "sol",
-      chatTemplate: {
+      promptProfileName: "sol",
+      promptProfile: {
         model: { providerID: "openai", modelID: "gpt-5.6", variant: "high" },
         opencodezSystem: "full",
       },
@@ -2867,7 +2826,7 @@ async function smokeKillCommandAbortFailure() {
   promptQueue.markBusy(binding)
   await promptQueue.enqueue(binding, "queued prompt")
   const handlers = createTelegramCommandHandlers({
-    config: { chatTemplates: {} },
+    config: { promptProfiles: {} },
     state: { findBindingByTopic: () => binding },
     telegram: { async sendMessage(message) { sent.push(message) } },
     opencode: { async abortSession() { throw new Error("abort failed") } },
@@ -3414,7 +3373,7 @@ async function smokeRuntimeHealth(runtimeConfig, { explicit }) {
 
   console.log(`config: ${runtimeConfig.sourcePath}`)
   console.log(`servers: ${runtimeConfig.opencode.servers.map((server) => server.id).join(", ")}`)
-  console.log(`templates: ${Object.keys(runtimeConfig.chatTemplates || {}).join(", ") || "none"}`)
+  console.log(`prompt profiles: ${Object.keys(runtimeConfig.promptProfiles || {}).join(", ") || "none"}`)
 
   const telegram = new TelegramClient(runtimeConfig.telegram.token, runtimeConfig.telegram.botApi)
   const opencode = new OpenCodeClient(runtimeConfig)

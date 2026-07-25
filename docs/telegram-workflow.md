@@ -67,9 +67,8 @@ The bot syncs the small slash-command menu on startup through Bot API `setMyComm
 group-chat, administrator, configured-chat, and configured-member scopes. Bot API has no command scope for one forum
 topic, so General and working topics share this list.
 
-`/tts` is the compact Final Voice interface; legacy Russian and English voice commands from the previous service are
-also accepted when typed manually. `/speak` works only as a reply to a text message. See [Final Voice](final-voice.md)
-for provider configuration, all command forms, topic state, queue behavior, and safe cutover.
+`/tts` is the compact Final Voice interface. `/speak` works only as a reply to a text message. See
+[Final Voice](final-voice.md) for provider configuration, command forms, global state, queue behavior, and operations.
 
 `/artifacts_here` marks the current forum topic as the only artifact target for agent uploads. If another topic later
 runs `/artifacts_here`, the new topic replaces the old one. Artifact topics do not mirror OpenCodez sessions. Ordinary
@@ -143,7 +142,7 @@ profile, server, and directory. The inherited profile is resolved from the curre
 model, variant, and System settings are applied; if that named profile was removed, the bot asks for an explicit
 configured profile before changing the session. One argument may be either a configured profile or server; two arguments
 are interpreted strictly as profile then server, so `/reset solh dima` changes both while `/reset dima` changes only the
-server. Unknown, retired, extra, or ambiguous arguments are rejected before any abort or state change. A same-server
+server. Unknown, extra, or ambiguous arguments are rejected before any abort or state change. A same-server
 reset preserves the exact current directory. A cross-server reset first checks the target backend and then uses that
 server's configured default new-session directory instead of carrying an invalid host-local path across machines. Only
 after a successful preflight does the command apply the same backend abort boundary as `/kill`; abort failure leaves the
@@ -163,7 +162,7 @@ rejected in `#General`, the artifacts topic, the sounds topic, and a manually cr
 pending binding.
 
 `/new` parses arguments from left to right. If the first argument matches a configured server id, that server is used.
-If the next argument, or the first argument when no server was given, matches a profile in `chatTemplates`, that profile
+If the next argument, or the first argument when no server was given, matches a profile in `promptProfiles`, that profile
 is used. A `dir:<path>` argument sets the OpenCodez session directory for this topic; otherwise `/new` uses the selected
 server's configured home directory. Everything left becomes the user-owned topic title.
 
@@ -172,8 +171,7 @@ The suffix is applied to `/new`, web-created topics, backend title synchronizati
 changing server replaces only the managed suffix without changing the user-owned base title. For example,
 `/reset sol dima` turns `trash (nuc)` into `trash (dima)`. Single-server installations keep plain titles. The formatter
 recognizes every configured server suffix, reserves suffix space inside Telegram's 128-character title limit, and avoids
-duplicate suffixes. Existing topics migrate lazily on their next title synchronization or reset instead of being renamed
-in one noisy bulk pass.
+duplicate suffixes.
 
 Examples:
 
@@ -195,8 +193,7 @@ The default profiles are `d4flash`, `d4pro`, `luna`, `terra`, `solm`, `solh`, `s
 host-independent Telegram-created-session profiles. `solm`, `solh`, `sol`, and `solmax` use the same configured Sol
 model and System prompt with `medium`, `high`, `xhigh`, and `max` variants respectively. Each profile keeps its agent,
 model, variant, and OpenCodez System prompt in config. After creating the session and before sending the first prompt,
-the bot switches the session's next model and selects that System. The retired `gpt55p` profile is rejected with a
-direct migration hint instead of being misread as a topic title.
+the bot switches the session's next model and selects that System.
 
 ## Prompts
 
@@ -347,15 +344,14 @@ stop the active run and do not launch another queued prompt automatically.
 ## Final Notifications
 
 Final-summary metadata is read from the exact completed assistant message and paged backward only to the current turn's
-user message. If the exact-message or paginated API path fails, the bot retains the previous full-history lookup as a
-compatibility and recovery fallback; notification content is unchanged.
+user message. If the exact-message or paginated API path fails, the bot uses a full-history recovery lookup;
+notification content is unchanged.
 
 `/notify_on`, `/notify_off`, and `/notify_status` control private DM notifications for `finalNotifications.userIds`.
 When enabled, the bot sends a short private message to each configured recipient only after a final answer has been
 mirrored into Telegram and has an exact Telegram `message_id`. Delivery is deduplicated independently per recipient and
 final assistant message. Restart reconciliation never backfills a DM for an already mirrored historical answer or links
-only to a topic root. Legacy message-id-based markers remain accepted during migration, so already delivered
-notifications are not replayed. The DM includes a source `Topic:` line from the topic's current canonical Telegram
+only to a topic root. The DM includes a source `Topic:` line from the topic's current canonical Telegram
 metadata, not the stale session snapshot that happened to finish, with the Telegram topic name and topic custom emoji
 when Telegram provides it. A compact `⏱️ … · 🤖 model (variant)` line reports wall-clock time from the preceding user
 message to the completed final assistant message plus the main model metadata for that turn. The following

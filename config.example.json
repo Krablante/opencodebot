@@ -125,7 +125,7 @@
     "port": 8788,
     "tokenEnvNames": ["OPENCODEBOT_ARTIFACT_TOKEN"]
   },
-  "chatTemplates": {
+  "promptProfiles": {
     "d4flash": {
       "agent": "build",
       "model": { "providerID": "deepseek", "modelID": "deepseek-v4-flash", "variant": "max" },

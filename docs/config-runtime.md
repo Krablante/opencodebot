@@ -52,7 +52,7 @@ unrelated environment variables for Telegram-looking tokens or user ids. `openco
 configured list for OpenCodez password lookup.
 
 Non-secret config is intentionally small. It covers deployment identity and ownership: chat id, allowed user ids,
-OpenCodez servers, default prompt profile, chat templates, attachment limits, speech transcription settings, artifact
+OpenCodez servers, default prompt profile, prompt profiles, attachment limits, speech transcription settings, artifact
 upload folders, final-notification recipients, artifact gateway address, update schedule, paths, and optional
 web/WireGuard helpers. The global full/economy mirror mode is runtime state controlled by `/mode`, and the global
 final-DM diagnostics mode is
@@ -117,8 +117,6 @@ OpenCodez. If Telegram splits a large follow-up text into several messages, the 
 the short attachment-text idle window settles, then sends one prompt with all files and text chunks together.
 Telegram-authored Rich Messages require no additional configuration: readable block text becomes the prompt, and
 embedded rich photo blocks use these same attachment limits and buffering rules.
-
-Attachment policy belongs at top-level `attachments`; old `telegram.attachments` compatibility has been removed.
 
 ```json
 {
@@ -281,8 +279,7 @@ silently or turns an unknown transfer type into `local`.
 `defaultPrompt` is the fallback profile for Telegram-created sessions. It chooses the default OpenCodez server and the
 prompt metadata the bot can know before the first prompt: agent and model.
 
-`chatTemplates` are named launch profiles for `/new` and `/reset [profile] [server]`; the key is retained for config
-compatibility and does not refer to the removed OpenCodez Template prompt kind. The built-in defaults are `d4flash`,
+`promptProfiles` are named launch profiles for `/new` and `/reset [profile] [server]`. The built-in defaults are `d4flash`,
 `d4pro`, `luna`, `terra`, `solm`, `solh`, `sol`, and `solmax`. The four Sol profiles share the same model/System
 configuration and select `medium`, `high`, `xhigh`, and `max` variants respectively. Runtime config is merged with those
 defaults, so you can add a profile or override an existing profile without copying every default. `/reset` without
@@ -296,8 +293,7 @@ When two or more servers are configured, Telegram topic names are rendered as `<
 installations retain plain names. The base title is stored separately from the managed suffix so `/reset solh dima` can
 rename `trash (nuc)` to `trash (dima)` without suffix accumulation or changing the user-owned base. `/new`, web
 autocreation, backend title synchronization, and manual Telegram renames use the same formatter, which recognizes every
-configured server suffix and reserves space inside the 128-character Telegram title limit. Existing bindings are
-migrated lazily on reset/title synchronization.
+configured server suffix and reserves space inside the 128-character Telegram title limit.
 
 Each profile can define:
 
@@ -311,7 +307,7 @@ Example:
 
 ```json
 {
-  "chatTemplates": {
+  "promptProfiles": {
     "sol": {
       "agent": "build",
       "model": { "providerID": "openai", "modelID": "gpt-5.6-sol", "variant": "xhigh" },
@@ -488,12 +484,10 @@ server/session/user-message identifiers, the observed assistant identifier and f
 time; it never stores prompt or answer text. Each rewind link contains only Telegram chat/topic/message ids plus
 OpenCodez server/session/user-message ids and status; it deliberately excludes prompt text and attachment contents.
 Topic title/icon metadata is synchronized across every retained binding for the same Telegram topic and its pending
-reset record; state load repairs older divergent copies from the newest metadata timestamp. `/reset` writes its
+reset record. `/reset` writes its
 old-disabled-binding and same-topic-pending transition in one state update, including the current visible topic title
 with user-owned title semantics, so a service restart cannot leave only half of that transition persisted or return
-title ownership to the new session. State load also migrates legacy pending or active bindings in topics with a
-historical `topic-reset` binding to user-owned title semantics, making the correction effective for sessions created
-before the policy existed. Question records contain request and session ids, Telegram message location, displayed
+title ownership to the new session. Question records contain request and session ids, Telegram message location, displayed
 options, status, and notified recipients. All mirrored message ids are retained inside each retained session bucket so
 reconcile cannot replay forgotten history; only old whole-session buckets are pruned. It should not contain full prompt
 queue text. The `/q` queue, multipart prompt buffer, attachment buffer, and active run trackers are memory-only and are
@@ -501,22 +495,15 @@ cleared or disappear on service restart by design; idle and recent reconcile che
 tracker.
 
 `telegram.contextTurnsByUser` is runtime-managed state for `/set_context`; it maps an allowed Telegram user id to a
-numeric default from 1 to 10. State load migrates the short-lived legacy `contextPairsByUser` key without losing an
-already selected default. `/context` assembles completed or interruption-ledger-marked turns on demand from OpenCodez,
+numeric default from 1 to 10. `/context` assembles completed or interruption-ledger-marked turns on demand from OpenCodez,
 including visible progress notes for interrupted turns, and never stores prompt, progress, or final answer text in
 `state.json`. Its Rich Message chunk size, 240,000-character total ceiling, and default of three turns are fixed
 conservative behavior rather than runtime config knobs.
 
 The mirror-marker references above are one logical part of durable state but are physically stored in the sibling append
-journal `<statePath>.mirror-markers.ndjson`; the high-frequency marker maps inside `state.json` stay empty. Startup
-atomically imports legacy JSON markers, compacts the journal to retained session buckets, and only then removes their
-duplicate JSON representation, so an interrupted migration or normal restart cannot silently lose dedupe history. New
-markers append tens of bytes and duplicate updates are no-ops; historical assistant markers skipped during catch-up are
-appended in one binding-level batch instead of rewriting the complete state file per message.
-
-Do not roll the runtime back to a pre-journal release without first rehydrating its legacy JSON marker maps from the
-journal; old binaries do not know how to read the sibling file and could replay mirrored history. Normal forward deploys
-and restarts on journal-aware releases need no operator action.
+journal `<statePath>.mirror-markers.ndjson`; marker maps are not written to `state.json`. Startup loads the compact journal
+before reconciliation. New markers append tens of bytes and duplicate updates are no-ops; historical assistant markers
+skipped during catch-up are appended in one binding-level batch instead of rewriting the complete state file per message.
 
 Reconcile avoids repeated full-history reads by paging backward to its durable high-water cursor or window boundary. The
 common path requests five messages first; only a burst that does not reach the cursor continues with 20-message fallback
@@ -583,7 +570,7 @@ npm start
 ```
 
 Before sharing the bot with a friend, the important knobs are usually `telegram.chatId`, `telegram.allowedUserIds`,
-`telegram.allowChatBootstrap`, `defaultPrompt.serverID`, `chatTemplates`, `attachments`, `artifactUploads`,
+`telegram.allowChatBootstrap`, `defaultPrompt.serverID`, `promptProfiles`, `attachments`, `artifactUploads`,
 final-notification recipients, artifact gateway address/token env, and web base URLs.
 
 When changing the config shape, update `config.example.json`, `src/config.mjs`, and the relevant docs together. Keep

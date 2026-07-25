@@ -42,18 +42,16 @@ export class StateStore {
       this.data.seenSessions ||= []
       this.data.telegram ||= {}
       this.data.telegram.mirrorMode = normalizeMirrorMode(this.data.telegram.mirrorMode)
-      const migratedContextPreferences = migrateContextTurnsByUser(this.data.telegram)
+      this.data.telegram.contextTurnsByUser = normalizeContextTurnsByUser(this.data.telegram.contextTurnsByUser)
       this.data.telegram.artifactsTopic ||= null
       this.data.telegram.soundsTopic ||= null
       this.data.runtime ||= {}
       this.data.updates = normalizeUpdatesState(this.data.updates)
-      const legacyMirrorMarkers = hasMirrorMarkers(this.data)
       await this.loadMirrorMarkerJournal()
-      const migratedResetTitles = migrateResetTitleOwnership(this.data)
       const reconciledTopicMetadata = reconcileTopicMetadata(this.data)
       const pruned = pruneState(this.data)
       await this.compactMirrorMarkerJournal()
-      if (legacyMirrorMarkers || migratedContextPreferences || migratedResetTitles || reconciledTopicMetadata || pruned) await this.save()
+      if (reconciledTopicMetadata || pruned) await this.save()
     } catch (error) {
       if (error.code !== "ENOENT") throw error
       this.data = defaultState()
@@ -68,11 +66,9 @@ export class StateStore {
   async save() {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true })
     const temp = `${this.filePath}.${process.pid}.tmp`
-    const persisted = {
-      ...this.data,
-      mirroredAssistantBySession: {},
-      mirroredUserBySession: {},
-    }
+    const persisted = { ...this.data }
+    delete persisted.mirroredAssistantBySession
+    delete persisted.mirroredUserBySession
     await fs.writeFile(temp, JSON.stringify(persisted, null, 2) + "\n", { mode: 0o600 })
     await fs.rename(temp, this.filePath)
   }
@@ -88,9 +84,8 @@ export class StateStore {
     for (const line of text.split("\n")) {
       if (!line) continue
       const value = JSON.parse(line)
-      const marker = Array.isArray(value)
-        ? { kind: value[0] === "u" ? "user" : "assistant", serverID: value[1], sessionID: value[2], messageID: value[3] }
-        : value
+      if (!Array.isArray(value) || value.length !== 4 || !["a", "u"].includes(value[0])) throw new Error("Invalid mirror marker record")
+      const marker = { kind: value[0] === "u" ? "user" : "assistant", serverID: value[1], sessionID: value[2], messageID: value[3] }
       const target = marker.kind === "user" ? this.data.mirroredUserBySession : this.data.mirroredAssistantBySession
       addMirroredMessage(target, marker.serverID, marker.sessionID, marker.messageID)
     }
@@ -518,8 +513,8 @@ export class StateStore {
         titleSource: profile?.titleSource || "user",
         serverID: profile?.serverID || current.serverID,
         directory: Object.hasOwn(profile || {}, "directory") ? profile.directory : current.directory,
-        chatTemplateName: profile?.chatTemplateName || current.chatTemplateName,
-        chatTemplate: profile?.chatTemplate || current.chatTemplate,
+        promptProfileName: profile?.promptProfileName || current.promptProfileName,
+        promptProfile: profile?.promptProfile || current.promptProfile,
         createdAt: now,
       })
       data.pendingTopics[String(current.topicId ?? 0)] = pending
@@ -532,8 +527,8 @@ export class StateStore {
     return this.update((data) => {
       const pending = data.pendingTopics[String(topicId ?? 0)]
       if (!pending) return null
-      if (Object.hasOwn(profile, "chatTemplateName")) pending.chatTemplateName = profile.chatTemplateName
-      if (Object.hasOwn(profile, "chatTemplate")) pending.chatTemplate = profile.chatTemplate
+      if (Object.hasOwn(profile, "promptProfileName")) pending.promptProfileName = profile.promptProfileName
+      if (Object.hasOwn(profile, "promptProfile")) pending.promptProfile = profile.promptProfile
       if (profile.serverID) pending.serverID = profile.serverID
       if (Object.hasOwn(profile, "directory")) {
         if (profile.directory === undefined) delete pending.directory
@@ -715,8 +710,7 @@ export class StateStore {
   finalNotificationSent(userID, serverID, sessionID, assistantMessageID) {
     const sent = this.data.finalNotifications?.sentMessages || []
     const key = finalNotificationKey(userID, serverID, sessionID, assistantMessageID)
-    const legacyPrefix = legacyFinalNotificationPrefix(serverID, sessionID, assistantMessageID)
-    return sent.includes(key) || sent.some((item) => item.startsWith(legacyPrefix))
+    return sent.includes(key)
   }
 
   async markFinalNotificationSent(userID, serverID, sessionID, assistantMessageID, maxItems = 1000) {
@@ -883,26 +877,12 @@ function normalizeContextTurnsByUser(value) {
   }).map(([userID, count]) => [userID, Number(count)]))
 }
 
-function migrateContextTurnsByUser(telegram) {
-  const source = telegram.contextTurnsByUser || telegram.contextPairsByUser
-  const normalized = normalizeContextTurnsByUser(source)
-  const changed = JSON.stringify(telegram.contextTurnsByUser || {}) !== JSON.stringify(normalized)
-    || Object.hasOwn(telegram, "contextPairsByUser")
-  telegram.contextTurnsByUser = normalized
-  delete telegram.contextPairsByUser
-  return changed
-}
-
 function sessionKey(serverID, sessionID) {
   return `${serverID}:${sessionID}`
 }
 
 function finalNotificationKey(userID, serverID, sessionID, assistantMessageID) {
   return `${userID}:${serverID}:${sessionID}:${assistantMessageID || "unknown"}`
-}
-
-function legacyFinalNotificationPrefix(serverID, sessionID, assistantMessageID) {
-  return `${serverID}:${sessionID}:${assistantMessageID || "unknown"}:`
 }
 
 function sessionMirrorKey(serverID, sessionID) {
@@ -920,10 +900,6 @@ function addMirroredMessage(bySession, serverID, sessionID, messageID) {
   if (bySession[key].includes(messageID)) return false
   bySession[key].push(messageID)
   return true
-}
-
-function hasMirrorMarkers(data) {
-  return Object.keys(data.mirroredAssistantBySession || {}).length > 0 || Object.keys(data.mirroredUserBySession || {}).length > 0
 }
 
 function mirrorMarkerLines(bySession, kind) {
@@ -1181,35 +1157,6 @@ function reconcileTopicMetadata(data) {
         }) || changed
     }
   }
-  return changed
-}
-
-function migrateResetTitleOwnership(data) {
-  const resetTopics = new Set(
-    data.bindings
-      .filter((binding) => binding.disabled && binding.disabledReason === "topic-reset")
-      .map((binding) => bindingTopicKey(binding)),
-  )
-  let changed = false
-
-  for (const binding of data.bindings) {
-    if (binding.disabled || !resetTopics.has(bindingTopicKey(binding)) || binding.titleSource === "user") continue
-    binding.titleSource = "user"
-    binding.titleUpdatedAt = new Date().toISOString()
-    changed = true
-  }
-
-  for (const [topicId, pending] of Object.entries(data.pendingTopics || {})) {
-    const key = `${String(pending.chatId ?? data.telegram?.chatId ?? "")}:${Number(topicId || 0)}`
-    if (!resetTopics.has(key)) continue
-    const topicTitle = pending.topicTitle || pending.title || "New session"
-    if (pending.titleSource === "user" && pending.title === topicTitle && pending.topicTitle === topicTitle) continue
-    pending.titleSource = "user"
-    pending.title = topicTitle
-    pending.topicTitle = topicTitle
-    changed = true
-  }
-
   return changed
 }
 

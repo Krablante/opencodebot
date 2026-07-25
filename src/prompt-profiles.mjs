@@ -1,9 +1,8 @@
-export function parseNewTopicArgs(args, { servers, defaultServerID, chatTemplates }) {
+export function parseNewTopicArgs(args, { servers, defaultServerID, promptProfiles }) {
   const parts = tokenizeNewTopicArgs(args)
-  const templates = chatTemplates || {}
+  const profiles = promptProfiles || {}
   const serverID = parts[0] && servers.has(parts[0]) ? parts.shift() : defaultServerID
-  if (parts[0] === "gpt55p") throw new Error(t("profiles.removed"))
-  const chatTemplateName = parts[0] && templates[parts[0]] ? parts.shift() : ""
+  const promptProfileName = parts[0] && profiles[parts[0]] ? parts.shift() : ""
   let directory = ""
   const titleParts = []
   for (const part of parts) {
@@ -15,54 +14,51 @@ export function parseNewTopicArgs(args, { servers, defaultServerID, chatTemplate
     titleParts.push(part)
   }
   const customTitle = titleParts.join(" ")
-  const title = customTitle || chatTemplateName || `OpenCodez ${serverID}`
+  const title = customTitle || promptProfileName || `OpenCodez ${serverID}`
   const titleSource = customTitle ? "user" : "auto"
-  return { serverID, title, titleSource, chatTemplateName, chatTemplate: chatTemplateName ? templates[chatTemplateName] : null, directory }
+  return { serverID, title, titleSource, promptProfileName, promptProfile: promptProfileName ? profiles[promptProfileName] : null, directory }
 }
 
-export function parseResetProfileArg(args, { chatTemplates }) {
+export function parseResetProfileArg(args, { promptProfiles }) {
   const input = String(args || "").trim()
   if (!input) return null
   const parts = input.split(/\s+/)
   if (parts.length !== 1) throw new Error(t("profiles.resetUsageOne"))
   const profile = parts[0]
-  if (profile === "gpt55p") throw new Error(t("profiles.removed"))
-  const templates = chatTemplates || {}
-  if (!templates[profile]) {
-    const available = Object.keys(templates).sort().join(", ") || "none"
+  const profiles = promptProfiles || {}
+  if (!profiles[profile]) {
+    const available = Object.keys(profiles).sort().join(", ") || "none"
     throw new Error(t("profiles.unknown", { profile, available }))
   }
-  return { chatTemplateName: profile, chatTemplate: templates[profile] }
+  return { promptProfileName: profile, promptProfile: profiles[profile] }
 }
 
-export function parseResetArgs(args, { chatTemplates, servers }) {
-  const templates = chatTemplates || {}
+export function parseResetArgs(args, { promptProfiles, servers }) {
+  const profiles = promptProfiles || {}
   const serverIds = new Set(servers instanceof Map ? servers.keys() : (servers || []).map((server) => server.id))
   const tokens = String(args || "").trim().split(/\s+/).filter(Boolean)
-  if (!tokens.length) return { chatTemplateName: null, chatTemplate: null, serverID: null }
+  if (!tokens.length) return { promptProfileName: null, promptProfile: null, serverID: null }
   if (tokens.length > 2) throw new Error(t("profiles.resetUsage"))
 
   if (tokens.length === 1) {
     const [token] = tokens
-    if (token === "gpt55p") throw new Error(t("profiles.removed"))
-    const profileMatch = Boolean(templates[token])
+    const profileMatch = Boolean(profiles[token])
     const serverMatch = serverIds.has(token)
     if (profileMatch && serverMatch) throw new Error(t("profiles.ambiguous", { token }))
-    if (profileMatch) return { chatTemplateName: token, chatTemplate: templates[token], serverID: null }
-    if (serverMatch) return { chatTemplateName: null, chatTemplate: null, serverID: token }
+    if (profileMatch) return { promptProfileName: token, promptProfile: profiles[token], serverID: null }
+    if (serverMatch) return { promptProfileName: null, promptProfile: null, serverID: token }
     throw new Error(t("profiles.unknownTarget", { token }))
   }
 
   const [profileName, serverID] = tokens
-  if (profileName === "gpt55p") throw new Error(t("profiles.removed"))
-  if (!templates[profileName]) throw new Error(t("profiles.unknownChat", { profile: profileName }))
+  if (!profiles[profileName]) throw new Error(t("profiles.unknown", { profile: profileName, available: Object.keys(profiles).sort().join(", ") || "none" }))
   if (!serverIds.has(serverID)) throw new Error(t("profiles.unknownServer", { server: serverID }))
-  return { chatTemplateName: profileName, chatTemplate: templates[profileName], serverID }
+  return { promptProfileName: profileName, promptProfile: profiles[profileName], serverID }
 }
 
-export async function applyChatTemplate(opencode, serverID, sessionID, chatTemplate, options = {}) {
-  if (chatTemplate?.model) await opencode.switchSessionModel(serverID, sessionID, chatTemplate.model, options)
-  if (chatTemplate?.opencodezSystem) await opencode.selectSystemPrompt(serverID, sessionID, chatTemplate.opencodezSystem, options)
+export async function applyPromptProfile(opencode, serverID, sessionID, promptProfile, options = {}) {
+  if (promptProfile?.model) await opencode.switchSessionModel(serverID, sessionID, promptProfile.model, options)
+  if (promptProfile?.opencodezSystem) await opencode.selectSystemPrompt(serverID, sessionID, promptProfile.opencodezSystem, options)
 }
 
 function tokenizeNewTopicArgs(args) {
