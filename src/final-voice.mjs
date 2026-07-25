@@ -1,5 +1,7 @@
 import { logErrorEvent, logInfo, logWarn } from "./logger.mjs"
 import { t } from "./i18n/index.mjs"
+import { messageText, topicId } from "./telegram.mjs"
+import { normalizeTelegramRichMessage } from "./telegram-rich-message.mjs"
 
 const FINAL_VOICE_STATE_LIMIT = 512
 const TELEGRAM_TEXT_LIMIT = 3900
@@ -52,6 +54,7 @@ export class FinalVoiceModule {
       topicId: details.telegramTopicID,
       replyToMessageId: details.telegramFinalMessageID,
       serverID: details.serverID,
+      topicTitle: details.telegramTopicTitle,
       settings,
     })
   }
@@ -218,8 +221,9 @@ export class FinalVoiceModule {
   async handleSpeak(message) {
     if (!this.config.enabled) return this.reply(message, t("finalVoice.deploymentDisabled"))
     const source = message.reply_to_message
-    const text = String(source?.text || source?.caption || "").trim()
-    if (!source?.message_id || !text) return this.reply(message, t("finalVoice.speakReplyRequired"))
+    const richContent = normalizeTelegramRichMessage(source?.rich_message)
+    const text = String((source ? messageText(source, richContent) : "") || message.quote?.text || "").trim()
+    if (!text) return this.reply(message, t("finalVoice.speakReplyRequired"))
     const settings = this.settings()
     const readiness = this.readiness(settings.profile)
     if (!readiness.ready) return this.reply(message, t("finalVoice.notReady", { reason: readiness.reason }))
@@ -227,15 +231,17 @@ export class FinalVoiceModule {
     if (this.wasSent(key) || this.inFlight.has(key)) return this.reply(message, t("finalVoice.alreadyQueued"))
     if (this.pending.length >= this.config.queue.maxPending) return this.reply(message, t("finalVoice.queueFull"))
     const status = await this.reply(message, t("finalVoice.preparing"))
-    const binding = this.bindingFor(message.chat.id, message.message_thread_id)
+    const currentTopicId = topicId(message)
+    const binding = this.bindingFor(message.chat.id, currentTopicId)
     const queued = this.enqueueJob({
       key,
       kind: "manual",
       input: text,
       chatId: message.chat.id,
-      topicId: message.message_thread_id,
-      replyToMessageId: source.message_id,
+      topicId: currentTopicId,
+      replyToMessageId: source?.message_id || message.message_id,
       serverID: binding?.serverID,
+      topicTitle: binding?.topicTitle || binding?.title || message.external_reply?.chat?.title || message.chat?.title,
       settings,
       statusMessageId: status?.message_id,
     })
@@ -403,9 +409,11 @@ export class FinalVoiceModule {
     const template = job.settings.introTemplate
     if (!template) return summary
     const binding = this.bindingFor(job.chatId, job.topicId)
+    const topicName = job.topicTitle || binding?.topicTitle || binding?.title || "топика Оупенкод"
+    const serverID = job.serverID || binding?.serverID || "основном сервере"
     const intro = template
-      .replaceAll("{topicname}", binding?.topicTitle || "топика Оупенкод")
-      .replaceAll("{server}", binding?.serverID || job.serverID || "основном сервере")
+      .replaceAll("{topicname}", topicName)
+      .replaceAll("{server}", serverID)
       .trim()
     return intro ? `${intro}\n\n${summary}` : summary
   }
@@ -456,9 +464,7 @@ export class FinalVoiceModule {
   }
 
   bindingFor(chatId, topicId) {
-    return Object.values(this.state.data.bindings || {}).find((binding) => (
-      String(binding.chatId) === String(chatId) && String(binding.topicId) === String(topicId)
-    ))
+    return this.state.findBindingByTopic(chatId, topicId) || this.state.findAnyBindingByTopic(chatId, topicId)
   }
 
   store() {

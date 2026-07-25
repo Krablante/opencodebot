@@ -49,6 +49,7 @@ const renderer = new MirrorRenderer({
       sessionID: binding.sessionID,
       telegramChatID: binding.chatId,
       telegramTopicID: binding.topicId,
+      telegramTopicTitle: binding.topicTitle || binding.title,
       telegramFinalMessageID: details.messageId,
     })
     await notifyFinalAnswerReady(binding, details)

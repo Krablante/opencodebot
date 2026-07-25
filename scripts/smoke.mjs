@@ -169,14 +169,19 @@ async function smokeFinalVoiceFlow() {
         },
         sent: [],
       }
+      data.bindings.push(
+        { chatId: -1001, topicId: 77, topicTitle: "Старый топик", title: "Старый", serverID: "old", sessionID: "old-session", disabled: true },
+        { chatId: -1001, topicId: 77, topicTitle: null, title: "Ручной топик", serverID: "dima", sessionID: "active-session" },
+      )
     })
     let resolveVoice
-    const voiceSent = new Promise((resolve) => { resolveVoice = resolve })
+    let voiceSent = new Promise((resolve) => { resolveVoice = resolve })
+    let nextVoiceMessageId = 901
     const replies = []
     const telegram = {
       sendVoice: async (payload) => {
         resolveVoice(payload)
-        return { message_id: 901 }
+        return { message_id: nextVoiceMessageId++ }
       },
       deleteMessage: async () => {},
       editMessageText: async () => {},
@@ -207,7 +212,11 @@ async function smokeFinalVoiceFlow() {
             },
           },
         },
-        defaults: { enabled: true, minFinalChars: 0, introTemplate: "" },
+        defaults: {
+          enabled: true,
+          minFinalChars: 0,
+          introTemplate: "Пришло новое сообщение из топика, {topicname}, на сервере, {server}.",
+        },
       }, { DEEPSEEK_API_KEY: "temporary-test-key" }),
       state,
       telegram,
@@ -223,6 +232,7 @@ async function smokeFinalVoiceFlow() {
       finalText: "Полный финальный ответ.",
       telegramChatID: -1001,
       telegramTopicID: 77,
+      telegramTopicTitle: "Автоматический топик",
       telegramFinalMessageID: 88,
     }), true)
     const sent = await Promise.race([voiceSent, wait(2_000).then(() => { throw new Error("Final Voice smoke timed out") })])
@@ -237,10 +247,39 @@ async function smokeFinalVoiceFlow() {
     assert.equal(requests[1].url, "/audio/speech")
     assert.equal(requests[1].body.voice, "xenia")
     assert.equal(requests[1].body.response_format, "opus")
+    assert.equal(requests[1].body.input, "Пришло новое сообщение из топика, Автоматический топик, на сервере, nuc.\n\nКороткое итоговое сообщение.")
     await wait(25)
     assert.equal(state.data.finalVoice.sent[0].telegramMessageId, 901)
     const commandMessage = { chat: { id: -1001 }, message_id: 100, message_thread_id: 77 }
     const handlers = finalVoice.commandHandlers()
+    voiceSent = new Promise((resolve) => { resolveVoice = resolve })
+    await handlers.speak({
+      chat: { id: -1001, title: "Fallback chat" },
+      message_id: 601,
+      message_thread_id: 77,
+      reply_to_message: {
+        message_id: 600,
+        rich_message: {
+          blocks: [{ type: "paragraph", text: { type: "plain", text: "Ручной Rich Message" } }],
+        },
+      },
+    })
+    const manualSent = await Promise.race([voiceSent, wait(2_000).then(() => { throw new Error("Manual Final Voice smoke timed out") })])
+    assert.equal(manualSent.replyToMessageId, 600)
+    assert.equal(requests[2].body.messages[1].content, "Ручной Rich Message")
+    assert.equal(requests[3].body.input, "Пришло новое сообщение из топика, Ручной топик, на сервере, dima.\n\nКороткое итоговое сообщение.")
+    assert.doesNotMatch(requests[2].body.messages[1].content, /Пришло новое сообщение/)
+    voiceSent = new Promise((resolve) => { resolveVoice = resolve })
+    await handlers.speak({
+      chat: { id: -1001, title: "Fallback chat" },
+      message_id: 602,
+      message_thread_id: 77,
+      quote: { text: "Текст внешней цитаты" },
+    })
+    const quotedSent = await Promise.race([voiceSent, wait(2_000).then(() => { throw new Error("Quoted Final Voice smoke timed out") })])
+    assert.equal(quotedSent.replyToMessageId, 602)
+    assert.equal(requests[4].body.messages[1].content, "Текст внешней цитаты")
+    assert.equal(requests[5].body.input, "Пришло новое сообщение из топика, Ручной топик, на сервере, dima.\n\nКороткое итоговое сообщение.")
     await handlers.tts(commandMessage, "off")
     assert.equal(finalVoice.settings().enabled, false)
     const anotherTopic = { chat: { id: -1001 }, message_id: 101, message_thread_id: 999 }

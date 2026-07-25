@@ -72,7 +72,7 @@ The compact interface is:
 /tts minlength [number]      set the automatic-final threshold
 /tts intro [text|off|reset]  configure the spoken intro
 /tts help                    show the complete command help
-/speak                       reply to a text message for one manual voice
+/speak                       reply to text, a Rich Message, or quoted text for one manual voice
 ```
 
 Legacy commands remain accepted: `/озвучка`, `/промпт`, `/промпт_сброс`, `/голос`, `/движок`, `/минимум`, `/шаги`, `/стартовый`, `/озвучь`, `/статус`, `/помощь`, and their English aliases from the previous service.
@@ -98,7 +98,14 @@ Automatic jobs are skipped when:
 - the same assistant message has already been queued or sent;
 - the bounded queue is full.
 
-Manual `/speak` jobs ignore the global automatic gate and minimum length, but still require the deployment gate and configured providers.
+Manual `/speak` jobs accept ordinary reply text, captions, Telegram Rich Message text, and `quote.text` from external
+replies. They ignore the global automatic gate and minimum length, but still require the deployment gate and configured
+providers. When the original message cannot be replied to in the current chat, the voice reply targets the `/speak`
+command message instead.
+
+The configured intro template is rendered only after summary generation and prepended to the TTS input. `{topicname}`
+and `{server}` come from the exact automatic-final binding or the current active binding for manual `/speak`; they are
+never sent to the summary provider. Disabled historical bindings are not used for intro metadata.
 
 The queue is intentionally in-memory. A restart drops incomplete voice work, while existing renderer markers prevent old finals from being replayed. Successful Telegram deliveries are recorded in a bounded persistent marker list. This provides clean at-most-once behavior without a second job database.
 
