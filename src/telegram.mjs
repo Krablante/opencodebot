@@ -156,6 +156,24 @@ export class TelegramClient {
     return this.sendMultipartFile("sendDocument", "document", { chatId, topicId, file, caption, captionFormat })
   }
 
+  async sendVoice({ chatId, topicId, replyToMessageId, bytes, filename = "voice.ogg", contentType = "audio/ogg" }) {
+    return this.requestMultipart("sendVoice", () => {
+      const form = new FormData()
+      form.append("chat_id", String(chatId))
+      if (topicId) form.append("message_thread_id", String(topicId))
+      if (replyToMessageId) form.append("reply_to_message_id", String(replyToMessageId))
+      form.append("voice", new Blob([bytes], { type: contentType }), filename)
+      return form
+    }, {
+      chatId,
+      topicId,
+      replyToMessageId,
+      filename,
+      bytes: bytes?.length,
+      contentType,
+    })
+  }
+
   async sendMultipartFile(method, fileField, { chatId, topicId, file, caption, captionFormat }) {
     const localPath = this.localTelegramFilePath(file)
     if (localPath) {

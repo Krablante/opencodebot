@@ -29,6 +29,8 @@ export const telegramBotCommands = [
   { command: "notify_on", description: "Enable final-answer DMs" },
   { command: "notify_off", description: "Disable final-answer DMs" },
   { command: "notify_status", description: "Show final-answer DM status" },
+  { command: "tts", description: "Configure final-answer voice replies" },
+  { command: "speak", description: "Voice a replied message summary" },
   { command: "update", description: "Check for opencodebot updates" },
   { command: "debug_on", description: "Enable global final-DM diagnostics" },
   { command: "debug_off", description: "Disable global final-DM diagnostics" },
@@ -51,6 +53,7 @@ export function createTelegramCommandHandlers({
   discardAttachmentBatch = async () => 0,
   detachBinding = () => {},
   speech,
+  finalVoice,
   questionManager,
   updateManager,
 }) {
@@ -86,6 +89,7 @@ export function createTelegramCommandHandlers({
     debug_off: (message) => handleDebugMode(message, false),
     debug_status: handleDebugStatus,
     mode: handleMirrorMode,
+    ...(finalVoice?.commandHandlers?.() || {}),
   }
 
   return {
@@ -931,6 +935,9 @@ export function createTelegramCommandHandlers({
       "<code>/sounds_off</code> / <code>/sounds_status</code> - manage the dedicated inbox and show speech status.",
       "<code>/notify_on</code> / <code>/notify_off</code> - toggle final-answer DMs for configured recipients.",
       "<code>/notify_status</code> - show configured final-answer DM status.",
+      "<code>/tts</code> / <code>/tts status</code> - toggle or inspect final-answer voice replies for this topic.",
+      "<code>/speak</code> - reply to a text message to voice its summary.",
+      "<code>/tts help</code> - show all voice, prompt, engine, and intro commands.",
       "<code>/debug_on</code> / <code>/debug_off</code> - toggle global final-DM run diagnostics.",
       "<code>/debug_status</code> - show global diagnostics status.",
       "<code>/mode [full|economy]</code> - show or set the global mirror mode.",

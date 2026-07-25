@@ -17,8 +17,10 @@ import {
 import { AttachmentBuffer, extractTelegramFiles } from "../src/attachments.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "../src/commands.mjs"
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
+import { normalizeFinalVoiceConfig } from "../src/config/final-voice.mjs"
 import { normalizeUpdatesConfig } from "../src/config/updates.mjs"
 import { createFinalNotifier, finalNotificationMarkdown, finalNotificationTopicSource, formatDebugDiagnosticsText, formatDuration, formatTokenCount, runDiagnosticsBeforeAssistant, toolSummaryBeforeAssistant, turnMetadataBeforeAssistant, turnTokenUsageBeforeAssistant } from "../src/final-notifications.mjs"
+import { FinalVoiceModule } from "../src/final-voice.mjs"
 import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { bindPendingTopicSession } from "../src/prompt-routing.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
@@ -34,7 +36,7 @@ import { OpenRouterSpeechClient, audioFormat } from "../src/speech/openrouter-cl
 import { StateStore } from "../src/state.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
 import { normalizeTelegramRichMessage } from "../src/telegram-rich-message.mjs"
-import { createTelegramPolling } from "../src/telegram-polling.mjs"
+import { createTelegramPolling, parseCommand } from "../src/telegram-polling.mjs"
 import { createTopicLifecycle } from "../src/topic-lifecycle.mjs"
 import { createUpdateManager } from "../src/update-manager.mjs"
 import { classifyChangedPaths, scheduledCheckDue, summarizeUpdateCommits, zonedScheduleParts } from "../src/update-shared.mjs"
@@ -64,6 +66,7 @@ async function smokeLocalInvariants() {
   await smokeSpeechTopicRouting()
   await smokeSpeechModelMenu()
   await smokeSpeechTranscriptMessages()
+  await smokeFinalVoiceFlow()
   await smokeOpenCodeAbortClient()
   await smokeQueuedAttachmentPayload()
   await smokeQueuedMediaGroupAttachmentPayload()
@@ -100,6 +103,111 @@ async function smokeLocalInvariants() {
   await smokeIncompleteRunNotice()
   await smokePeriodicIncompleteRunGrace()
   await smokePeriodicReconcileDoesNotPostponeIncompleteWarning()
+}
+
+async function smokeFinalVoiceFlow() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-final-voice-smoke-"))
+  const requests = []
+  const opus = Buffer.concat([Buffer.from("OggS"), Buffer.alloc(24), Buffer.from("OpusHead"), Buffer.alloc(8)])
+  const server = createServer(async (request, response) => {
+    let body = ""
+    for await (const chunk of request) body += chunk
+    requests.push({ url: request.url, body: JSON.parse(body) })
+    if (request.url === "/chat/completions") {
+      response.writeHead(200, { "content-type": "application/json" })
+      response.end(JSON.stringify({ choices: [{ message: { content: "Короткое итоговое сообщение." } }] }))
+      return
+    }
+    if (request.url === "/audio/speech") {
+      response.writeHead(200, { "content-type": "audio/ogg" })
+      response.end(opus)
+      return
+    }
+    response.writeHead(404).end()
+  })
+  const { url, close } = await listen(server)
+  try {
+    const state = new StateStore(path.join(root, "state.json"))
+    await state.load()
+    let resolveVoice
+    const voiceSent = new Promise((resolve) => { resolveVoice = resolve })
+    const replies = []
+    const telegram = {
+      sendVoice: async (payload) => {
+        resolveVoice(payload)
+        return { message_id: 901 }
+      },
+      deleteMessage: async () => {},
+      editMessageText: async () => {},
+      replyMessage: async (payload) => {
+        replies.push(payload.text)
+        return { message_id: 902 }
+      },
+    }
+    const finalVoice = new FinalVoiceModule({
+      config: normalizeFinalVoiceConfig({
+        enabled: true,
+        summary: {
+          baseURL: url,
+          apiKeyEnv: "DEEPSEEK_API_KEY",
+          model: "deepseek-v4-flash",
+          defaultPrompt: "Сделай короткое суммари.",
+          requestBody: { max_tokens: 393216, thinking: { type: "enabled" }, reasoning_effort: "max" },
+        },
+        tts: {
+          defaultProfile: "silero",
+          profiles: {
+            silero: {
+              baseURL: url,
+              model: "silero-ru-v5.5",
+              voices: ["xenia", "eugene"],
+              defaultVoice: "xenia",
+              responseFormat: "opus",
+            },
+          },
+        },
+        topicDefaults: { enabled: true, minFinalChars: 0, introTemplate: "" },
+      }, { DEEPSEEK_API_KEY: "temporary-test-key" }),
+      state,
+      telegram,
+    })
+    await finalVoice.start()
+    assert.equal(finalVoice.enqueueAutomatic({
+      serverID: "nuc",
+      sessionID: "session-1",
+      assistantMessageID: "assistant-1",
+      finalText: "Полный финальный ответ.",
+      telegramChatID: -1001,
+      telegramTopicID: 77,
+      telegramFinalMessageID: 88,
+    }), true)
+    const sent = await Promise.race([voiceSent, wait(2_000).then(() => { throw new Error("Final Voice smoke timed out") })])
+    assert.equal(sent.replyToMessageId, 88)
+    assert.equal(sent.topicId, 77)
+    assert.deepEqual(sent.bytes, opus)
+    assert.equal(requests[0].url, "/chat/completions")
+    assert.equal(requests[0].body.model, "deepseek-v4-flash")
+    assert.equal(requests[0].body.reasoning_effort, "max")
+    assert.equal(requests[0].body.messages[1].content, "Полный финальный ответ.")
+    assert.equal(requests[1].url, "/audio/speech")
+    assert.equal(requests[1].body.voice, "xenia")
+    assert.equal(requests[1].body.response_format, "opus")
+    await wait(25)
+    assert.equal(state.data.finalVoice.sent[0].telegramMessageId, 901)
+    const commandMessage = { chat: { id: -1001 }, message_id: 100, message_thread_id: 77 }
+    const handlers = finalVoice.commandHandlers()
+    await handlers.tts(commandMessage, "off")
+    assert.equal(finalVoice.topicSettings(-1001, 77).enabled, false)
+    await handlers.озвучка(commandMessage, "")
+    assert.equal(finalVoice.topicSettings(-1001, 77).enabled, true)
+    await handlers.status(commandMessage)
+    assert.match(replies.at(-1), /Reasoning: max/)
+    assert.deepEqual(parseCommand("/озвучка включить"), { name: "озвучка", args: "включить" })
+    finalVoice.stop()
+  } finally {
+    await close()
+    await rm(root, { recursive: true, force: true })
+  }
 }
 
 function smokeIncomingRichMessages() {

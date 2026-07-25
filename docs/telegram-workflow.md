@@ -57,6 +57,8 @@ title synchronization after `/reset`.
 /notify_on                       enable final-answer DMs for configured recipients
 /notify_off                      disable final-answer DMs for configured recipients
 /notify_status                   show configured final-answer DM status
+/tts [on|off|status|...]         configure final-answer voice replies for this topic
+/speak                           reply to text to voice a one-off summary
 /update                          check GitHub now and offer an opencodebot-only update
 /debug_on                        enable global final-DM diagnostics
 /debug_off                       disable global final-DM diagnostics
@@ -70,6 +72,10 @@ title synchronization after `/reset`.
 The bot syncs this slash-command menu on startup through Bot API `setMyCommands` for default, private-chat, group-chat,
 administrator, configured-chat, and configured-member scopes, so the same commands should appear in Telegram's command
 suggestions.
+
+`/tts` is the compact Final Voice interface; legacy Russian and English voice commands from the previous service are
+also accepted when typed manually. `/speak` works only as a reply to a text message. See [Final Voice](final-voice.md)
+for provider configuration, all command forms, topic state, queue behavior, and safe cutover.
 
 `/artifacts_here` marks the current forum topic as the only artifact target for agent uploads. If another topic later
 runs `/artifacts_here`, the new topic replaces the old one. Artifact topics do not mirror OpenCodez sessions. Ordinary

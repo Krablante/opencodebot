@@ -342,6 +342,8 @@ single-server deployments keep plain names.
   prompts, rich messages, tools, user-prompt pins, final notifications, and reconcile.
 - [Config And Runtime](docs/config-runtime.md) covers config loading, token handling, chat profiles, mirror settings,
   attachments, and state.
+- [Final Voice](docs/final-voice.md) covers optional final-answer summary and TTS voice replies, commands, provider
+  contracts, queue behavior, and safe cutover.
 - [Artifact Gateway](docs/artifact-gateway.md) covers `/artifacts_here`, the LAN gateway, user-dropped artifact uploads,
   the OpenCodez plugin, and the bundled skill.
 - [Docker](docs/docker.md) covers the recommended Compose deployment path.

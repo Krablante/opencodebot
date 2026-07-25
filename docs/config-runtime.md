@@ -224,6 +224,16 @@ let the selected provider auto-detect the audio language. A model entry may over
 }
 ```
 
+## Final Voice
+
+`finalVoice` is the optional outbound counterpart to inbound speech transcription. It summarizes a completed OpenCode
+answer, synthesizes the summary through an OpenAI-compatible `/v1/audio/speech` provider, and sends the result as a
+Telegram voice reply. It is disabled by default and uses topic-local state rather than a second database.
+
+Keep summary and TTS credentials in `token.env`, never in JSON. Provider endpoints, models, voice allowlists, size limits,
+and timeouts remain operator-controlled in config and cannot be changed from Telegram. See
+[Final Voice](final-voice.md) for the complete configuration, commands, runtime behavior, and deployment sequence.
+
 ## OpenCodez
 
 `opencode.baseUrl` is the local/default API origin used when a server-specific URL is not involved.

@@ -6,6 +6,7 @@ import { createBackendRequester } from "./backend-backoff.mjs"
 import { parseNewTopicArgs } from "./chat-templates.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "./commands.mjs"
 import { createFinalNotifier } from "./final-notifications.mjs"
+import { FinalVoiceModule } from "./final-voice.mjs"
 import { OpenCodeClient } from "./opencode.mjs"
 import { createPromptRouter } from "./prompt-routing.mjs"
 import { createQuestionManager } from "./questions.mjs"
@@ -33,12 +34,23 @@ const opencode = new OpenCodeClient(config)
 const finalNotifier = createFinalNotifier({ config, state, telegram, opencode })
 const notifyFinalAnswerReady = finalNotifier.notifyFinalAnswerReady
 let promptRouter
+let finalVoice
 const renderer = new MirrorRenderer({
   telegram,
   state,
   config,
   onMirrorMessage: (...args) => promptRouter.clearPromptFeedback(...args),
-  onFinalMessage: notifyFinalAnswerReady,
+  onFinalMessage: async (binding, details) => {
+    finalVoice?.enqueueAutomatic({
+      ...details,
+      serverID: binding.serverID,
+      sessionID: binding.sessionID,
+      telegramChatID: binding.chatId,
+      telegramTopicID: binding.topicId,
+      telegramFinalMessageID: details.messageId,
+    })
+    await notifyFinalAnswerReady(binding, details)
+  },
   onFinalAssistantMirrored: async (binding, assistantMessageID) => {
     await state.markAssistantMirrored(binding.serverID, binding.sessionID, assistantMessageID)
     await promptRouter.promptQueue.markTerminalMirrored(binding)
@@ -74,6 +86,7 @@ const backendRequester = createBackendRequester()
 const skippedBackendRequest = backendRequester.skipped
 const backendRequest = backendRequester.request
 const speech = new SpeechModule({ config: config.speech, telegram, state, uploadDir: config.paths.uploadsDir, attachmentSettings: config.attachments })
+finalVoice = new FinalVoiceModule({ config: config.finalVoice, state, telegram, signal: abort.signal })
 const questionManager = createQuestionManager({
   config,
   state,
@@ -121,6 +134,7 @@ const commandHandlers = createTelegramCommandHandlers({
   discardAttachmentBatch: promptRouter.discardAttachmentBatch,
   detachBinding: sessionReconciler.detachBinding,
   speech,
+  finalVoice,
   questionManager,
   updateManager,
 })
@@ -150,6 +164,7 @@ process.once("SIGINT", () => requestShutdown("SIGINT"))
 process.once("SIGTERM", () => requestShutdown("SIGTERM"))
 
 await telegram.deleteWebhook()
+await finalVoice.start()
 await telegramPolling.syncCommandMenu()
 await updateManager.start()
 await cleanupUploads(config.paths.uploadsDir, config.attachments.cleanupAfterMs).catch(logError)
@@ -206,6 +221,7 @@ function requestShutdown(signalName) {
   shutdownRequested = true
   console.info(`[opencodebot] received ${signalName}, shutting down`)
   updateManager.stop()
+  finalVoice.stop()
   abort.abort()
   setTimeout(() => {
     console.info("[opencodebot] shutdown grace elapsed, exiting")

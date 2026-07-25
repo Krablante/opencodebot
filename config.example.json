@@ -54,6 +54,50 @@
       { "id": "groq/whisper-large-v3-turbo", "apiProvider": "groq", "apiModel": "whisper-large-v3-turbo", "label": "Whisper V3 Turbo", "price": "Free tier · $0.04/hour paid" }
     ]
   },
+  "finalVoice": {
+    "enabled": false,
+    "summary": {
+      "baseURL": "https://api.deepseek.com",
+      "apiKeyEnv": "DEEPSEEK_API_KEY",
+      "model": "deepseek-v4-flash",
+      "timeoutMs": 900000,
+      "maxInputChars": 120000,
+      "maxOutputChars": 3000,
+      "maxResponseBytes": 4194304,
+      "requestBody": {
+        "max_tokens": 393216,
+        "thinking": { "type": "enabled" },
+        "reasoning_effort": "max",
+        "response_format": { "type": "text" }
+      }
+    },
+    "tts": {
+      "defaultProfile": "silero",
+      "profiles": {
+        "silero": {
+          "label": "Silero TTS v5.5 RU",
+          "baseURL": "http://silero-tts-bridge:8000/v1",
+          "apiKeyEnv": "SILERO_TTS_API_KEY",
+          "model": "silero-ru-v5.5",
+          "voices": ["xenia", "eugene"],
+          "defaultVoice": "xenia",
+          "responseFormat": "opus",
+          "speed": 1,
+          "timeoutMs": 900000,
+          "maxResponseBytes": 20971520
+        }
+      }
+    },
+    "queue": {
+      "concurrency": 1,
+      "maxPending": 8
+    },
+    "topicDefaults": {
+      "enabled": false,
+      "minFinalChars": 300,
+      "introTemplate": "Пришло новое сообщение из топика, {topicname}, на сервере, {server}."
+    }
+  },
   "artifactUploads": {
     "enabled": true,
     "root": "~/trash",

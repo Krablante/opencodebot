@@ -71,7 +71,7 @@ export class MirrorRenderer {
     const markdown = prepareRichMarkdown(output)
     const sent = await this.sendAssistantMarkdown(binding, markdown, output)
     await this.notifyMirrorMessage(binding, sent)
-    if (final) await this.notifyFinalMessage(binding, { assistantMessageID, messageId: sent.message_id })
+    if (final) await this.notifyFinalMessage(binding, { assistantMessageID, messageId: sent.message_id, finalText: text })
     return sent
   }
 
@@ -336,8 +336,13 @@ export class MirrorRenderer {
       session.pendingFinalAssistantIds.add(assistantMessageID)
       return false
     }
+    const finalText = [...session.texts.values()]
+      .filter((block) => block.assistantMessageID === assistantMessageID)
+      .map((block) => block.text)
+      .filter(Boolean)
+      .join("\n\n")
     await this.markFinalAssistantMessage(binding, session, assistantMessageID, messageId)
-    await this.notifyFinalMessage(binding, { assistantMessageID, messageId })
+    await this.notifyFinalMessage(binding, { assistantMessageID, messageId, finalText })
     await this.onFinalAssistantMirrored?.(binding, assistantMessageID)
     this.sessions.delete(this.key(binding))
     return true

@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url"
 import { defaultArtifacts, normalizeArtifactUploads, normalizeArtifacts, normalizeAttachments } from "./config/artifacts.mjs"
 import { normalizeChatTemplates } from "./config/chat-templates.mjs"
 import { loadEnvFile, pickToken, pickValue, readFirstNumber, readNumberList, uniqueNumbers } from "./config/common.mjs"
+import { normalizeFinalVoiceConfig } from "./config/final-voice.mjs"
 import { readServers } from "./config/servers.mjs"
 import { normalizeSpeechConfig } from "./config/speech.mjs"
 import { normalizeTelegramBotApi } from "./config/telegram.mjs"
@@ -78,6 +79,7 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
     artifactUploads: normalizeArtifactUploads(config.artifactUploads, config.opencode?.defaultServerId || config.defaultPrompt?.serverID),
     attachments: normalizeAttachments(attachmentConfig, telegramBotApi),
     speech: normalizeSpeechConfig(config.speech, mergedEnv),
+    finalVoice: normalizeFinalVoiceConfig(config.finalVoice, mergedEnv),
     updates: normalizeUpdatesConfig(config.updates, { statePath, env: mergedEnv }),
     chatTemplates: normalizeChatTemplates(config.chatTemplates),
     web: config.web || {},

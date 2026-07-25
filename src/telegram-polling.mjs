@@ -216,8 +216,8 @@ export function createTelegramPolling({
   return { poll, syncCommandMenu }
 }
 
-function parseCommand(text) {
-  const match = text.match(/^\/(\w+)(?:@\w+)?(?:\s+([\s\S]*))?$/)
+export function parseCommand(text) {
+  const match = text.match(/^\/([^\s@]+)(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/u)
   if (!match) return { name: "", args: "" }
   return { name: match[1], args: match[2] || "" }
 }
