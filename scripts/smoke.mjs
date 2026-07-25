@@ -129,6 +129,14 @@ async function smokeFinalVoiceFlow() {
   try {
     const state = new StateStore(path.join(root, "state.json"))
     await state.load()
+    await state.update((data) => {
+      data.finalVoice = {
+        topics: {
+          "-1001:77": { enabled: true, prompt: "Мигрированный общий промпт." },
+        },
+        sent: [],
+      }
+    })
     let resolveVoice
     const voiceSent = new Promise((resolve) => { resolveVoice = resolve })
     const replies = []
@@ -166,12 +174,15 @@ async function smokeFinalVoiceFlow() {
             },
           },
         },
-        topicDefaults: { enabled: true, minFinalChars: 0, introTemplate: "" },
+        defaults: { enabled: true, minFinalChars: 0, introTemplate: "" },
       }, { DEEPSEEK_API_KEY: "temporary-test-key" }),
       state,
       telegram,
     })
     await finalVoice.start()
+    assert.equal(state.data.finalVoice.settings.enabled, true)
+    assert.equal(state.data.finalVoice.settings.prompt, "Мигрированный общий промпт.")
+    assert.equal(Object.hasOwn(state.data.finalVoice, "topics"), false)
     assert.equal(finalVoice.enqueueAutomatic({
       serverID: "nuc",
       sessionID: "session-1",
@@ -188,6 +199,7 @@ async function smokeFinalVoiceFlow() {
     assert.equal(requests[0].url, "/chat/completions")
     assert.equal(requests[0].body.model, "deepseek-v4-flash")
     assert.equal(requests[0].body.reasoning_effort, "max")
+    assert.equal(requests[0].body.messages[0].content, "Мигрированный общий промпт.")
     assert.equal(requests[0].body.messages[1].content, "Полный финальный ответ.")
     assert.equal(requests[1].url, "/audio/speech")
     assert.equal(requests[1].body.voice, "xenia")
@@ -197,9 +209,10 @@ async function smokeFinalVoiceFlow() {
     const commandMessage = { chat: { id: -1001 }, message_id: 100, message_thread_id: 77 }
     const handlers = finalVoice.commandHandlers()
     await handlers.tts(commandMessage, "off")
-    assert.equal(finalVoice.topicSettings(-1001, 77).enabled, false)
-    await handlers.озвучка(commandMessage, "")
-    assert.equal(finalVoice.topicSettings(-1001, 77).enabled, true)
+    assert.equal(finalVoice.settings().enabled, false)
+    const anotherTopic = { chat: { id: -1001 }, message_id: 101, message_thread_id: 999 }
+    await handlers.озвучка(anotherTopic, "")
+    assert.equal(finalVoice.settings().enabled, true)
     await handlers.status(commandMessage)
     assert.match(replies.at(-1), /Reasoning: max/)
     assert.deepEqual(parseCommand("/озвучка включить"), { name: "озвучка", args: "включить" })

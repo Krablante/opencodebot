@@ -92,7 +92,7 @@
       "concurrency": 1,
       "maxPending": 8
     },
-    "topicDefaults": {
+    "defaults": {
       "enabled": false,
       "minFinalChars": 300,
       "introTemplate": "Пришло новое сообщение из топика, {topicname}, на сервере, {server}."

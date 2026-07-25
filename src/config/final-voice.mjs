@@ -36,6 +36,11 @@ const DEFAULT_INTRO = "Пришло новое сообщение из топи�
 export function normalizeFinalVoiceConfig(input = {}, env = process.env) {
   const summaryInput = isObject(input.summary) ? input.summary : {}
   const ttsInput = isObject(input.tts) ? input.tts : {}
+  const defaultsInput = isObject(input.defaults)
+    ? input.defaults
+    : isObject(input.topicDefaults)
+      ? input.topicDefaults
+      : {}
   const profiles = normalizeProfiles(ttsInput.profiles, env)
   const defaultProfile = profiles[ttsInput.defaultProfile]
     ? String(ttsInput.defaultProfile)
@@ -66,11 +71,11 @@ export function normalizeFinalVoiceConfig(input = {}, env = process.env) {
       concurrency: Math.min(numberAtLeast(input.queue?.concurrency, 1, 1), 4),
       maxPending: Math.min(numberAtLeast(input.queue?.maxPending, 8, 1), 100),
     },
-    topicDefaults: {
-      enabled: input.topicDefaults?.enabled === true,
-      minFinalChars: Math.min(numberAtLeast(input.topicDefaults?.minFinalChars, 300, 0), 100_000),
-      introTemplate: typeof input.topicDefaults?.introTemplate === "string"
-        ? input.topicDefaults.introTemplate.trim()
+    defaults: {
+      enabled: defaultsInput.enabled === true,
+      minFinalChars: Math.min(numberAtLeast(defaultsInput.minFinalChars, 300, 0), 100_000),
+      introTemplate: typeof defaultsInput.introTemplate === "string"
+        ? defaultsInput.introTemplate.trim()
         : DEFAULT_INTRO,
     },
   }

@@ -40,7 +40,7 @@ export class FinalVoiceModule {
     if (!this.config.enabled || this.stopping) return false
     const finalText = String(details.finalText || "").trim()
     if (!finalText) return false
-    const settings = this.topicSettings(details.telegramChatID, details.telegramTopicID)
+    const settings = this.settings()
     if (!settings.enabled || finalText.length < settings.minFinalChars) return false
     const key = `final:${details.serverID}:${details.sessionID}:${details.assistantMessageID}`
     return this.enqueueJob({
@@ -84,7 +84,7 @@ export class FinalVoiceModule {
   helpSummary() {
     return [
       "Final Voice:",
-      "/tts — toggle automatic voice for this topic",
+      "/tts — toggle automatic voice globally",
       "/tts status — current configuration",
       "/tts help — all voice commands",
       "/speak — reply to a message and voice its summary",
@@ -95,11 +95,11 @@ export class FinalVoiceModule {
     return [
       "🎙️ Final Voice",
       "",
-      "/tts — включить или выключить автоозвучку в этом топике",
+      "/tts — включить или выключить автоозвучку глобально",
       "/tts on|off — включить или выключить явно",
       "/tts status — показать состояние",
       "/tts prompt — показать промпт",
-      "/tts prompt <текст> — изменить промпт топика",
+      "/tts prompt <текст> — изменить общий промпт",
       "/tts prompt reset — вернуть промпт по умолчанию",
       "/tts voice [имя] — показать или выбрать голос",
       "/tts engine [имя] — показать или выбрать TTS-профиль",
@@ -114,9 +114,9 @@ export class FinalVoiceModule {
   async handleTTS(message, args) {
     const tokens = splitArgs(args)
     const action = String(tokens.shift() || "").toLowerCase()
-    if (!action) return this.setTopicEnabled(message, !this.topicSettingsForMessage(message).enabled)
-    if (["on", "enable", "вкл", "включить"].includes(action)) return this.setTopicEnabled(message, true)
-    if (["off", "disable", "выкл", "выключить"].includes(action)) return this.setTopicEnabled(message, false)
+    if (!action) return this.setGlobalEnabled(message, !this.settings().enabled)
+    if (["on", "enable", "вкл", "включить"].includes(action)) return this.setGlobalEnabled(message, true)
+    if (["off", "disable", "выкл", "выключить"].includes(action)) return this.setGlobalEnabled(message, false)
     if (["status", "статус"].includes(action)) return this.sendStatus(message)
     if (["help", "помощь"].includes(action)) return this.reply(message, this.helpText())
     if (["prompt", "промпт"].includes(action)) return this.handlePrompt(message, tokens.join(" "))
@@ -128,25 +128,25 @@ export class FinalVoiceModule {
     return this.reply(message, "Неизвестная подкоманда. Используйте /tts help.")
   }
 
-  async setTopicEnabled(message, enabled) {
+  async setGlobalEnabled(message, enabled) {
     if (enabled && !this.config.enabled) {
       return this.reply(message, "Final Voice выключен оператором в конфигурации deployment.")
     }
-    const readiness = this.readiness(this.topicSettingsForMessage(message).profile)
+    const readiness = this.readiness(this.settings().profile)
     if (enabled && !readiness.ready) {
       return this.reply(message, `Final Voice пока не готов: ${readiness.reason}.`)
     }
-    await this.patchTopic(message.chat.id, message.message_thread_id, { enabled })
+    await this.patchSettings({ enabled })
     return this.reply(message, enabled
-      ? "🔊 Автоозвучка включена для этого топика."
-      : "🔇 Автоозвучка выключена для этого топика.")
+      ? "🔊 Автоозвучка включена глобально."
+      : "🔇 Автоозвучка выключена глобально.")
   }
 
   async sendStatus(message) {
-    const settings = this.topicSettingsForMessage(message)
+    const settings = this.settings()
     const profile = this.config.tts.profiles[settings.profile]
     const readiness = this.readiness(settings.profile)
-    const promptMode = settings.promptOverride ? "свой для топика" : "по умолчанию"
+    const promptMode = settings.promptOverride ? "настроен глобально" : "по умолчанию"
     const intro = settings.introTemplate ? "включено" : "выключено"
     const reasoning = this.config.summary.requestBody?.reasoning_effort || "не задан"
     const lines = [
@@ -154,7 +154,7 @@ export class FinalVoiceModule {
       "",
       `Deployment: ${this.config.enabled ? "включён" : "выключен"}`,
       `Готовность: ${readiness.ready ? "готов" : `не готов — ${readiness.reason}`}`,
-      `Этот топик: ${settings.enabled ? "автоозвучка включена" : "автоозвучка выключена"}`,
+      `Автоозвучка: ${settings.enabled ? "включена глобально" : "выключена глобально"}`,
       `Summary: ${this.config.summary.model}`,
       `Reasoning: ${reasoning}`,
       `TTS-профиль: ${settings.profile}${profile?.label ? ` — ${profile.label}` : ""}`,
@@ -172,71 +172,71 @@ export class FinalVoiceModule {
   async handlePrompt(message, args) {
     const value = String(args || "").trim()
     if (!value) {
-      const settings = this.topicSettingsForMessage(message)
-      const label = settings.promptOverride ? "Промпт этого топика" : "Промпт по умолчанию"
+      const settings = this.settings()
+      const label = settings.promptOverride ? "Общий промпт" : "Промпт по умолчанию"
       return this.reply(message, `${label}:\n\n${clampText(settings.prompt, 3400)}`)
     }
     if (["reset", "сброс"].includes(value.toLowerCase())) return this.resetPrompt(message)
     if (value.length > 12_000) return this.reply(message, "Промпт слишком длинный. Максимум — двенадцать тысяч символов.")
-    await this.patchTopic(message.chat.id, message.message_thread_id, { prompt: value })
-    return this.reply(message, "✅ Промпт этого топика обновлён.")
+    await this.patchSettings({ prompt: value })
+    return this.reply(message, "✅ Общий промпт обновлён для всех топиков.")
   }
 
   async resetPrompt(message) {
-    await this.patchTopic(message.chat.id, message.message_thread_id, { prompt: null })
-    return this.reply(message, "✅ Используется промпт по умолчанию.")
+    await this.patchSettings({ prompt: null })
+    return this.reply(message, "✅ Для всех топиков используется промпт по умолчанию.")
   }
 
   async handleVoice(message, args) {
-    const settings = this.topicSettingsForMessage(message)
+    const settings = this.settings()
     const profile = this.config.tts.profiles[settings.profile]
     if (!profile) return this.reply(message, "Текущий TTS-профиль не найден в конфигурации.")
     const requested = String(args || "").trim().toLowerCase()
     if (!requested) return this.reply(message, `Доступные голоса: ${profile.voices.join(", ")}\nСейчас: ${settings.voice}`)
     const voice = profile.voices.find((item) => item.toLowerCase() === requested)
     if (!voice) return this.reply(message, `Неизвестный голос. Доступны: ${profile.voices.join(", ")}`)
-    await this.patchTopic(message.chat.id, message.message_thread_id, { voice })
-    return this.reply(message, `✅ Выбран голос ${voice}.`)
+    await this.patchSettings({ voice })
+    return this.reply(message, `✅ Голос ${voice} выбран глобально.`)
   }
 
   async handleEngine(message, args) {
-    const settings = this.topicSettingsForMessage(message)
+    const settings = this.settings()
     const requested = String(args || "").trim().toLowerCase()
     const profileIDs = Object.keys(this.config.tts.profiles)
     if (!requested) return this.reply(message, `Доступные TTS-профили: ${profileIDs.join(", ")}\nСейчас: ${settings.profile}`)
     const profile = this.config.tts.profiles[requested]
     if (!profile) return this.reply(message, `Профиль не настроен. Доступны: ${profileIDs.join(", ")}`)
-    await this.patchTopic(message.chat.id, message.message_thread_id, { profile: requested, voice: profile.defaultVoice })
-    return this.reply(message, `✅ Выбран TTS-профиль ${requested}, голос ${profile.defaultVoice}.`)
+    await this.patchSettings({ profile: requested, voice: profile.defaultVoice })
+    return this.reply(message, `✅ TTS-профиль ${requested} и голос ${profile.defaultVoice} выбраны глобально.`)
   }
 
   async handleMinLength(message, args) {
     const value = String(args || "").trim()
-    if (!value) return this.reply(message, `Сейчас: ${this.topicSettingsForMessage(message).minFinalChars} символов.`)
+    if (!value) return this.reply(message, `Сейчас глобально: ${this.settings().minFinalChars} символов.`)
     if (!/^\d+$/.test(value)) return this.reply(message, "Укажите целое число от ста до ста тысяч.")
     const minFinalChars = Number(value)
     if (minFinalChars < 100 || minFinalChars > 100_000) return this.reply(message, "Допустимый диапазон: от ста до ста тысяч символов.")
-    await this.patchTopic(message.chat.id, message.message_thread_id, { minFinalChars })
-    return this.reply(message, `✅ Минимальная длина финала: ${minFinalChars} символов.`)
+    await this.patchSettings({ minFinalChars })
+    return this.reply(message, `✅ Глобальная минимальная длина финала: ${minFinalChars} символов.`)
   }
 
   async handleIntro(message, args) {
     const value = String(args || "").trim()
-    const settings = this.topicSettingsForMessage(message)
+    const settings = this.settings()
     if (!value) return this.reply(message, settings.introTemplate
       ? `Текущее вступление:\n${settings.introTemplate}`
       : "Вступительная фраза выключена.")
     if (["off", "выкл", "выключить"].includes(value.toLowerCase())) {
-      await this.patchTopic(message.chat.id, message.message_thread_id, { introTemplate: "" })
-      return this.reply(message, "✅ Вступительная фраза выключена.")
+      await this.patchSettings({ introTemplate: "" })
+      return this.reply(message, "✅ Вступительная фраза выключена глобально.")
     }
     if (["reset", "сброс"].includes(value.toLowerCase())) {
-      await this.patchTopic(message.chat.id, message.message_thread_id, { introTemplate: null })
-      return this.reply(message, "✅ Восстановлено вступление по умолчанию.")
+      await this.patchSettings({ introTemplate: null })
+      return this.reply(message, "✅ Для всех топиков восстановлено вступление по умолчанию.")
     }
     if (value.length > 1_000) return this.reply(message, "Вступление слишком длинное. Максимум — тысяча символов.")
-    await this.patchTopic(message.chat.id, message.message_thread_id, { introTemplate: value })
-    return this.reply(message, "✅ Вступительная фраза обновлена.")
+    await this.patchSettings({ introTemplate: value })
+    return this.reply(message, "✅ Общая вступительная фраза обновлена для всех топиков.")
   }
 
   async handleSteps(message) {
@@ -248,7 +248,7 @@ export class FinalVoiceModule {
     const source = message.reply_to_message
     const text = String(source?.text || source?.caption || "").trim()
     if (!source?.message_id || !text) return this.reply(message, "Ответьте командой /speak или /озвучь на текстовое сообщение.")
-    const settings = this.topicSettingsForMessage(message)
+    const settings = this.settings()
     const readiness = this.readiness(settings.profile)
     if (!readiness.ready) return this.reply(message, `Final Voice пока не готов: ${readiness.reason}.`)
     const key = `manual:${message.chat.id}:${message.message_id}`
@@ -450,13 +450,8 @@ export class FinalVoiceModule {
     return Boolean(this.config.summary.baseURL && this.config.summary.model && this.config.summary.apiKey)
   }
 
-  topicSettingsForMessage(message) {
-    return this.topicSettings(message.chat.id, message.message_thread_id)
-  }
-
-  topicSettings(chatId, topicId) {
-    const key = topicKey(chatId, topicId)
-    const override = this.store().topics[key] || {}
+  settings() {
+    const override = this.store().settings
     const profileID = this.config.tts.profiles[override.profile]
       ? override.profile
       : this.config.tts.defaultProfile
@@ -464,29 +459,27 @@ export class FinalVoiceModule {
     const voice = profile?.voices.includes(override.voice) ? override.voice : profile?.defaultVoice
     const promptOverride = typeof override.prompt === "string" && override.prompt.trim() ? override.prompt.trim() : null
     const introTemplate = override.introTemplate === null || override.introTemplate === undefined
-      ? this.config.topicDefaults.introTemplate
+      ? this.config.defaults.introTemplate
       : String(override.introTemplate)
     return {
-      enabled: typeof override.enabled === "boolean" ? override.enabled : this.config.topicDefaults.enabled,
+      enabled: typeof override.enabled === "boolean" ? override.enabled : this.config.defaults.enabled,
       profile: profileID,
       voice,
-      minFinalChars: Number.isInteger(override.minFinalChars) ? override.minFinalChars : this.config.topicDefaults.minFinalChars,
+      minFinalChars: Number.isInteger(override.minFinalChars) ? override.minFinalChars : this.config.defaults.minFinalChars,
       promptOverride,
       prompt: promptOverride || this.config.summary.defaultPrompt,
       introTemplate,
     }
   }
 
-  async patchTopic(chatId, topicId, patch) {
-    const key = topicKey(chatId, topicId)
+  async patchSettings(patch) {
     await this.state.update((data) => {
       data.finalVoice = normalizeFinalVoiceState(data.finalVoice)
-      const current = data.finalVoice.topics[key] || {}
-      const next = { ...current, ...patch }
+      const next = { ...data.finalVoice.settings, ...patch }
       for (const [field, value] of Object.entries(next)) {
         if (value === null || value === undefined) delete next[field]
       }
-      data.finalVoice.topics[key] = next
+      data.finalVoice.settings = next
     })
   }
 
@@ -528,17 +521,30 @@ export class FinalVoiceModule {
 
 function normalizeFinalVoiceState(value) {
   return {
-    topics: value?.topics && typeof value.topics === "object" && !Array.isArray(value.topics) ? value.topics : {},
+    settings: isObject(value?.settings) ? value.settings : migrateTopicSettings(value?.topics),
     sent: Array.isArray(value?.sent) ? value.sent.filter((item) => item?.key).slice(-FINAL_VOICE_STATE_LIMIT) : [],
   }
 }
 
 function isFinalVoiceState(value) {
-  return value && typeof value.topics === "object" && !Array.isArray(value.topics) && Array.isArray(value.sent)
+  return value && isObject(value.settings) && Array.isArray(value.sent) && !Object.hasOwn(value, "topics")
 }
 
-function topicKey(chatId, topicId) {
-  return `${chatId}:${topicId || 0}`
+function migrateTopicSettings(topics) {
+  if (!isObject(topics)) return {}
+  const overrides = Object.values(topics).filter(isObject)
+  const settings = {}
+  if (overrides.some((item) => item.enabled === true)) settings.enabled = true
+  else if (overrides.some((item) => item.enabled === false)) settings.enabled = false
+  for (const field of ["prompt", "profile", "voice", "minFinalChars", "introTemplate"]) {
+    const source = overrides.find((item) => Object.hasOwn(item, field))
+    if (source) settings[field] = source[field]
+  }
+  return settings
+}
+
+function isObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
 }
 
 function splitArgs(value) {

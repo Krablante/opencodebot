@@ -16,7 +16,7 @@ OpenCode final answer
 
 OpenCodeBot owns:
 
-- topic settings and commands;
+- global settings and commands;
 - summary prompt and provider credentials;
 - bounded background work and deduplication;
 - the Telegram bot token and final-message reply routing.
@@ -61,7 +61,7 @@ When `finalVoice.enabled` is false:
 The compact interface is:
 
 ```text
-/tts                         toggle automatic voice in this topic
+/tts                         toggle automatic voice globally
 /tts on|off                  explicitly enable or disable it
 /tts status                  show readiness and effective settings
 /tts prompt                  show the effective prompt
@@ -79,7 +79,9 @@ Legacy commands remain accepted: `/озвучка`, `/промпт`, `/пром�
 
 Telegram Bot API command-menu names permit only lowercase English letters, digits, and underscores. Therefore the menu advertises `/tts` and `/speak`; Cyrillic aliases work when typed manually.
 
-Settings are stored per Telegram `chat_id:topic_id` in the existing atomic `state.json`. A session `/reset` does not reset voice preferences. New topics default to automatic voice off.
+All Final Voice settings are global and stored once in the existing atomic `state.json`: automatic on/off, prompt, TTS profile, voice, minimum final length, and intro. Changing any of them from one topic immediately affects every topic. Telegram topic data is used only to route the resulting voice reply. A session `/reset` does not reset Final Voice settings.
+
+On first startup after upgrading from the earlier topic-local format, OpenCodeBot migrates the enabled state and existing overrides into the single global settings object and removes the obsolete topic map. Existing prompts are preserved.
 
 The legacy `/steps` command remains understandable but reports that the current OpenAI-compatible Silero profile does not use a synthesis-step parameter. Supertonic is not bundled or emulated.
 
@@ -90,13 +92,13 @@ The renderer calls Final Voice only after the final RichMessage has been success
 Automatic jobs are skipped when:
 
 - the deployment gate is off;
-- the topic gate is off;
+- global automatic voice is off;
 - final text is below `minFinalChars`;
 - a provider is unconfigured;
 - the same assistant message has already been queued or sent;
 - the bounded queue is full.
 
-Manual `/speak` jobs ignore the topic automatic gate and minimum length, but still require the deployment gate and configured providers.
+Manual `/speak` jobs ignore the global automatic gate and minimum length, but still require the deployment gate and configured providers.
 
 The queue is intentionally in-memory. A restart drops incomplete voice work, while existing renderer markers prevent old finals from being replayed. Successful Telegram deliveries are recorded in a bounded persistent marker list. This provides clean at-most-once behavior without a second job database.
 
@@ -130,9 +132,9 @@ Recommended deployment order:
 2. Deploy and verify the private TTS endpoint.
 3. Add runtime secrets and provider URLs.
 4. Set the deployment gate to true.
-5. Disable the previous Telegram/MTProto sender before enabling `/tts on` in any topic.
+5. Disable the previous Telegram/MTProto sender before enabling `/tts on` globally.
 6. Test one final answer and verify exactly one voice reply.
-7. Enable further topics as needed.
+7. Verify final answers from more than one topic use the same settings.
 
 Do not run the old automatic sender and Final Voice simultaneously: both can react to the same final answer and produce duplicates.
 
@@ -147,4 +149,4 @@ curl -fsS http://TTS_HOST:8000/healthz
 
 ## Rollback
 
-Turn off topic voice with `/tts off`, or set the deployment gate to false and restart OpenCodeBot. Text behavior is unaffected. The previous service can then be re-enabled if it was preserved for rollback, but the two automatic senders must not overlap.
+Turn off voice globally with `/tts off`, or set the deployment gate to false and restart OpenCodeBot. Text behavior is unaffected. The previous service can then be re-enabled if it was preserved for rollback, but the two automatic senders must not overlap.

@@ -228,7 +228,9 @@ let the selected provider auto-detect the audio language. A model entry may over
 
 `finalVoice` is the optional outbound counterpart to inbound speech transcription. It summarizes a completed OpenCode
 answer, synthesizes the summary through an OpenAI-compatible `/v1/audio/speech` provider, and sends the result as a
-Telegram voice reply. It is disabled by default and uses topic-local state rather than a second database.
+Telegram voice reply. It is disabled by default and keeps one global settings object in the existing state rather than a
+second database. Commands issued in any topic update the same automatic gate, prompt, TTS profile, voice, minimum length,
+and intro for every topic.
 
 Keep summary and TTS credentials in `token.env`, never in JSON. Provider endpoints, models, voice allowlists, size limits,
 and timeouts remain operator-controlled in config and cannot be changed from Telegram. See
