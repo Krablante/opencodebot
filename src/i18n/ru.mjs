@@ -455,7 +455,6 @@ export const ru = {
   "artifacts.unknownServer": ({ requestedHtml, available }) => `Неизвестный сервер загрузки артефактов: <code>${requestedHtml}</code>.${available}`,
   "artifacts.available": ({ serversHtml }) => ` Доступные серверы: <code>${serversHtml}</code>.`,
   "artifacts.saved": ({ serverHtml, body }) => `✅ Сохранено на <code>${serverHtml}</code>:\n<blockquote>${body}</blockquote>`,
-  "final.ready": "🏁 Финальный ответ готов",
   "final.server": ({ server }) => `🖥️ Сервер: ${server}`,
   "final.trimmed": "Контекст уведомления был слишком длинным и сокращён. Полный контекст доступен в топике.",
   "final.tools": ({ value }) => `🔧 Инструменты: ${value}`,

@@ -80,7 +80,6 @@ async function sendFinalNotificationMessage({ telegram, userId, text, fallbackTe
 
 export function finalNotificationMarkdown({ topicSource, serverID, promptText, completedTodos = [], tools = [], patchedFiles = [], durationMs, modelID, variant, tokenUsage, debugDiagnostics }) {
   const lines = [
-    `*${t("final.ready")}*`,
     finalNotificationTopicMarkdown(topicSource),
     t("final.server", { server: escapeMarkdownV2(serverID) }),
   ]
@@ -102,7 +101,6 @@ export function finalNotificationMarkdown({ topicSource, serverID, promptText, c
 
 function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos = [], tools = [], patchedFiles = [], durationMs, modelID, variant, tokenUsage, debugDiagnostics }) {
   const lines = [
-    t("final.ready"),
     finalNotificationTopicHtml(topicSource),
     t("final.server", { server: `<code>${escapeHtml(serverID)}</code>` }),
   ]
@@ -121,7 +119,6 @@ function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos =
 
 function finalNotificationCompactHtml({ topicSource, serverID, tools = [], patchedFiles = [], durationMs, modelID, variant, tokenUsage, debugDiagnostics }) {
   const lines = [
-    t("final.ready"),
     finalNotificationTopicHtml(topicSource),
     t("final.server", { server: `<code>${escapeHtml(serverID)}</code>` }),
   ]

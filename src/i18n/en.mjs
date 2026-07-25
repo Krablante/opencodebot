@@ -455,7 +455,6 @@ export const en = {
   "artifacts.unknownServer": ({ requestedHtml, available }) => `Unknown artifact upload server: <code>${requestedHtml}</code>.${available}`,
   "artifacts.available": ({ serversHtml }) => ` Available servers: <code>${serversHtml}</code>.`,
   "artifacts.saved": ({ serverHtml, body }) => `✅ Saved to <code>${serverHtml}</code>:\n<blockquote>${body}</blockquote>`,
-  "final.ready": "🏁 Final answer is ready",
   "final.server": ({ server }) => `🖥️ Server: ${server}`,
   "final.trimmed": "Notification context was too long and was trimmed. Open the topic for full context.",
   "final.tools": ({ value }) => `🔧 Tools: ${value}`,
