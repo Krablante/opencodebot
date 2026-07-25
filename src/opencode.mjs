@@ -104,8 +104,12 @@ export class OpenCodeClient {
   }
 
   async sessionStatus(serverID, sessionID, options = {}) {
-    const statuses = await this.request(this.server(serverID), "/session/status", options)
+    const statuses = await this.sessionStatuses(serverID, options)
     return statuses?.[sessionID] || { type: "idle" }
+  }
+
+  async sessionStatuses(serverID, options = {}) {
+    return this.request(this.server(serverID), "/session/status", options)
   }
 
   async summarizeSession(serverID, sessionID, { directory = "", model, timeoutMs = 15 * 60_000 } = {}) {

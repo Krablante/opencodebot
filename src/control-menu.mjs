@@ -7,17 +7,22 @@ const INPUT_TTL_MS = 5 * 60 * 1000
 const LINK_MESSAGE_TTL_MS = 30 * 1000
 const MAX_VISIBLE_SESSIONS = 12
 const MIN_LENGTH_OPTIONS = [0, 200, 300, 500, 1000, 2000]
+const SESSION_STATUS_TIMEOUT_MS = 3000
 
 export class ControlMenu {
-  constructor({ config, state, telegram, promptQueue, finalVoice, createSession, refreshCommandMenu }) {
+  constructor({ config, state, telegram, opencode, promptQueue, finalVoice, createSession, refreshCommandMenu }) {
     this.config = config
     this.state = state
     this.telegram = telegram
+    this.opencode = opencode
     this.promptQueue = promptQueue
     this.finalVoice = finalVoice
     this.createSession = createSession
     this.refreshCommandMenu = refreshCommandMenu
     this.pendingInputs = new Map()
+    this.currentPage = "home"
+    this.currentActor = null
+    this.statusRefreshTimer = null
   }
 
   async start() {
@@ -262,9 +267,10 @@ export class ControlMenu {
   }
 
   async ensureMenu(page = "home", actor) {
+    this.rememberPage(page, actor)
     const existing = this.state.controlMenuMessage()
     if (existing && String(existing.chatId) === String(this.chatId())) {
-      const rendered = this.render(page, actor)
+      const rendered = await this.render(page, actor)
       try {
         const edited = await this.telegram.editMessageText({
           chatId: existing.chatId,
@@ -280,7 +286,7 @@ export class ControlMenu {
       }
     }
 
-    const rendered = this.render(page, actor)
+    const rendered = await this.render(page, actor)
     const sent = await this.telegram.sendMessage({
       chatId: this.chatId(),
       topicId: 0,
@@ -295,9 +301,10 @@ export class ControlMenu {
   }
 
   async editMenu(page, actor) {
+    this.rememberPage(page, actor)
     const current = this.state.controlMenuMessage()
     if (!current) return this.ensureMenu(page, actor)
-    const rendered = this.render(page, actor)
+    const rendered = await this.render(page, actor)
     try {
       return await this.telegram.editMessageText({
         chatId: current.chatId,
@@ -315,8 +322,9 @@ export class ControlMenu {
     }
   }
 
-  render(page, actor) {
-    if (page === "sessions") return this.renderSessions()
+  async render(page, actor) {
+    const sessionSnapshot = ["home", "sessions"].includes(page) ? await this.sessionStatusSnapshot() : null
+    if (page === "sessions") return this.renderSessions(sessionSnapshot)
     if (page === "new") return this.renderNew()
     if (page === "voice") return this.renderVoice()
     if (page === "voice-advanced") return this.renderVoiceAdvanced()
@@ -325,13 +333,13 @@ export class ControlMenu {
     if (page === "personal") return this.renderPersonal(actor)
     if (page === "system") return this.renderSystem()
     if (page === "help") return this.renderHelp()
-    return this.renderHome()
+    return this.renderHome(sessionSnapshot)
   }
 
-  renderHome() {
+  renderHome(sessionSnapshot) {
     const bindings = this.activeBindings()
     const queued = bindings.reduce((total, binding) => total + this.promptQueue.status(binding).length, 0)
-    const busy = bindings.filter((binding) => this.promptQueue.isBusy(binding)).length
+    const busy = bindings.filter((binding) => this.sessionIsBusy(binding, sessionSnapshot)).length
     const settings = this.finalVoice.settings()
     const voiceEnabled = this.finalVoice.config.enabled && settings.enabled
     const mirrorEnabled = this.state.mirrorEnabled(this.config)
@@ -354,14 +362,14 @@ export class ControlMenu {
     ])
   }
 
-  renderSessions() {
+  renderSessions(sessionSnapshot) {
     const bindings = this.activeBindings()
     const visible = bindings.slice(0, MAX_VISIBLE_SESSIONS)
     const lines = [t("controlMenu.sessions.title"), ""]
     if (!visible.length) lines.push(t("controlMenu.sessions.empty"))
     for (const binding of visible) {
       const queued = this.promptQueue.status(binding).length
-      const status = this.promptQueue.isBusy(binding)
+      const status = this.sessionIsBusy(binding, sessionSnapshot)
         ? t("controlMenu.sessions.busy")
         : queued
           ? t("controlMenu.sessions.queued", { count: queued })
@@ -526,6 +534,45 @@ export class ControlMenu {
         bindingActivity(right) - bindingActivity(left)
         || bindingTitle(left).localeCompare(bindingTitle(right), getLanguage())
       ))
+  }
+
+  async sessionStatusSnapshot() {
+    const serverIDs = [...new Set(this.activeBindings().map((binding) => binding.serverID).filter(Boolean))]
+    const statuses = new Map()
+    const failedServers = new Set()
+    await Promise.all(serverIDs.map(async (serverID) => {
+      try {
+        const result = await this.opencode.sessionStatuses(serverID, { timeoutMs: SESSION_STATUS_TIMEOUT_MS })
+        for (const [sessionID, status] of Object.entries(result || {})) statuses.set(`${serverID}:${sessionID}`, status)
+      } catch (error) {
+        failedServers.add(serverID)
+        logWarn("control_menu.session_status.failed", { serverID, error: error.message })
+      }
+    }))
+    return { statuses, failedServers }
+  }
+
+  sessionIsBusy(binding, snapshot) {
+    if (!snapshot || snapshot.failedServers.has(binding.serverID)) return this.promptQueue.isBusy(binding)
+    const status = snapshot.statuses.get(`${binding.serverID}:${binding.sessionID}`)
+    return status ? status.type !== "idle" : false
+  }
+
+  scheduleStatusRefresh() {
+    if (!["home", "sessions"].includes(this.currentPage)) return
+    clearTimeout(this.statusRefreshTimer)
+    this.statusRefreshTimer = setTimeout(() => {
+      if (!["home", "sessions"].includes(this.currentPage)) return
+      this.editMenu(this.currentPage, this.currentActor).catch((error) => {
+        logErrorEvent("control_menu.status_refresh.failed", error, { page: this.currentPage })
+      })
+    }, 500)
+    this.statusRefreshTimer.unref?.()
+  }
+
+  rememberPage(page, actor) {
+    this.currentPage = page
+    this.currentActor = actor || null
   }
 
   voiceProfiles() {

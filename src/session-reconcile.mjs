@@ -24,6 +24,7 @@ export function createSessionReconciler({
   maybeExtendBindingActivity,
   logError,
   shouldStop,
+  onSessionStatusChange = () => {},
   incompleteRunGraceMs = 1500,
   initialMessagePageSize = 5,
   messagePageSize = 20,
@@ -199,10 +200,12 @@ export function createSessionReconciler({
             await handleSessionIdle(server, binding)
             manualCompactions.delete(key)
           }
+          onSessionStatusChange(binding, properties.status)
           break
         case "session.idle":
           await handleSessionIdle(server, binding)
           manualCompactions.delete(key)
+          onSessionStatusChange(binding, { type: "idle" })
           break
         case "session.next.step.failed":
           clearRunCheck(binding)

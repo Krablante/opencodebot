@@ -61,6 +61,7 @@ const renderer = new MirrorRenderer({
   },
 })
 let sessionReconciler
+let controlMenu
 promptRouter = createPromptRouter({
   config,
   state,
@@ -126,12 +127,14 @@ sessionReconciler = createSessionReconciler({
   clearPromptFeedback,
   logError,
   shouldStop: () => shutdownRequested,
+  onSessionStatusChange: () => controlMenu?.scheduleStatusRefresh(),
 })
 let refreshCommandMenu = async () => {}
-const controlMenu = new ControlMenu({
+controlMenu = new ControlMenu({
   config,
   state,
   telegram,
+  opencode,
   promptQueue,
   finalVoice,
   createSession: createPendingTopic,
