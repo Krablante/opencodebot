@@ -3,6 +3,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 
 import { escapeHtml } from "./telegram.mjs"
+import { t } from "./i18n/index.mjs"
 import { classifyChangedPaths, isGitRevision, scheduledCheckDue, shortRevision, summarizeUpdateCommits } from "./update-shared.mjs"
 
 const GITHUB_API_VERSION = "2026-03-10"
@@ -54,14 +55,14 @@ class UpdateManager {
 
   async checkNow({ chatId, topicId = 0 }) {
     if (!this.config.updates.enabled) {
-      await this.telegram.sendMessage({ chatId, topicId, text: "⏸️ <b>Update checks are disabled.</b>" })
+      await this.telegram.sendMessage({ chatId, topicId, text: t("updates.disabled") })
       return
     }
     if (!isGitRevision(this.config.updates.currentRevision)) {
       await this.telegram.sendMessage({
         chatId,
         topicId,
-        text: "⚠️ <b>Update check is not ready yet.</b>\nThe running image has no Git revision metadata. Rebuild opencodebot once with the current deployment workflow.",
+        text: t("updates.notReady"),
       })
       return
     }
@@ -69,7 +70,7 @@ class UpdateManager {
     const waiting = await this.telegram.sendMessage({
       chatId,
       topicId,
-      text: "🔎 <b>Checking GitHub for opencodebot updates…</b>",
+      text: t("updates.checking"),
     })
     try {
       const result = await this.checkRemote()
@@ -96,7 +97,7 @@ class UpdateManager {
       await this.telegram.editMessageText({
         chatId,
         messageId: waiting.message_id,
-        text: `❌ <b>Could not check for updates.</b>\n${escapeHtml(friendlyError(error))}`,
+        text: t("updates.checkFailed", { errorHtml: escapeHtml(friendlyError(error)) }),
         replyMarkup: EMPTY_KEYBOARD,
       })
     }
@@ -112,14 +113,14 @@ class UpdateManager {
     if (!offer) {
       await this.telegram.answerCallbackQuery({
         callbackQueryId: query.id,
-        text: "This update offer has expired. Run /update again.",
+        text: t("updates.offerExpired"),
         showAlert: true,
       })
       return true
     }
 
     if (action === "later") {
-      await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: "Deferred until the next daily check." })
+      await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("updates.deferredCallback") })
       const localDate = scheduledCheckDue({
         now: this.now(),
         timeZone: this.config.updates.timeZone,
@@ -134,7 +135,7 @@ class UpdateManager {
       await this.telegram.editMessageText({
         chatId,
         messageId,
-        text: `⏸️ <b>Update deferred</b>\n\n<code>${shortRevision(offer.baseSha)}</code> → <code>${shortRevision(targetSha)}</code>\nI’ll check again tomorrow at ${escapeHtml(this.config.updates.checkAt)} ${escapeHtml(this.config.updates.timeZone)}.`,
+        text: t("updates.deferred", { from: shortRevision(offer.baseSha), to: shortRevision(targetSha), checkAt: escapeHtml(this.config.updates.checkAt), timeZone: escapeHtml(this.config.updates.timeZone) }),
         replyMarkup: EMPTY_KEYBOARD,
       })
       return true
@@ -143,30 +144,30 @@ class UpdateManager {
     if (offer.components?.controlPlane?.length) {
       await this.telegram.answerCallbackQuery({
         callbackQueryId: query.id,
-        text: "This update changes deployment control-plane files and must be installed manually.",
+        text: t("updates.controlPlane"),
         showAlert: true,
       })
       return true
     }
 
     if (this.state.data.updates.activeRun) {
-      await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: "An update is already running.", showAlert: true })
+      await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("updates.alreadyRunning"), showAlert: true })
       return true
     }
     if (this.config.updates.currentRevision !== offer.baseSha) {
-      await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: "The running version changed. Run /update again.", showAlert: true })
+      await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("updates.versionChanged"), showAlert: true })
       return true
     }
     if (!(await fileExists(this.runnerInfoPath))) {
       await this.telegram.answerCallbackQuery({
         callbackQueryId: query.id,
-        text: "The host update runner is not installed.",
+        text: t("updates.runnerMissing"),
         showAlert: true,
       })
       return true
     }
 
-    await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: "Update queued. The bot will restart when ready." })
+    await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("updates.queued") })
     const run = {
       id: randomUUID(),
       baseSha: offer.baseSha,
@@ -199,7 +200,7 @@ class UpdateManager {
       await this.telegram.editMessageText({
         chatId,
         messageId,
-        text: `❌ <b>Could not queue the update.</b>\n${escapeHtml(friendlyError(error))}`,
+        text: t("updates.queueFailed", { errorHtml: escapeHtml(friendlyError(error)) }),
         replyMarkup: EMPTY_KEYBOARD,
       })
       return true
@@ -378,7 +379,7 @@ class UpdateManager {
       await fs.rm(this.processingPath, { force: true })
       await this.finishRun(run, {
         stage: "failed",
-        error: "The host update runner stopped reporting progress for over 35 minutes. The stale update lock was cleared; run /update to retry.",
+        error: t("updates.staleRunner"),
         serviceMayHaveChanged: ["restarting", "verifying", "rolling_back"].includes(status?.stage),
       })
       return
@@ -419,17 +420,17 @@ function offerKeyboard(result) {
   if (result.components?.controlPlane?.length) {
     return {
       inline_keyboard: [
-        [{ text: "View all changes ↗", url: result.compareUrl }],
-        [{ text: "Not now", callback_data: `upd:later:${result.targetSha}` }],
+        [{ text: t("updates.viewChanges"), url: result.compareUrl }],
+        [{ text: t("updates.notNow"), callback_data: `upd:later:${result.targetSha}` }],
       ],
     }
   }
   return {
     inline_keyboard: [
-      [{ text: "View all changes ↗", url: result.compareUrl }],
+      [{ text: t("updates.viewChanges"), url: result.compareUrl }],
       [
-        { text: "Update & restart", callback_data: `upd:apply:${result.targetSha}` },
-        { text: "Not now", callback_data: `upd:later:${result.targetSha}` },
+        { text: t("updates.apply"), callback_data: `upd:apply:${result.targetSha}` },
+        { text: t("updates.notNow"), callback_data: `upd:later:${result.targetSha}` },
       ],
     ],
   }
@@ -437,79 +438,70 @@ function offerKeyboard(result) {
 
 function formatOfferMessage(result) {
   const lines = [
-    "🆕 <b>opencodebot update available</b>",
+    t("updates.offerTitle"),
     "",
-    `<code>${shortRevision(result.baseSha)}</code> → <code>${shortRevision(result.targetSha)}</code> · ${result.commitCount} ${result.commitCount === 1 ? "commit" : "commits"}`,
+    `<code>${shortRevision(result.baseSha)}</code> → <code>${shortRevision(result.targetSha)}</code> · ${t("updates.commits", { count: result.commitCount })}`,
   ]
   appendSummary(lines, result.summary)
   appendCompanionNotice(lines, result.components, false)
   if (result.components?.controlPlane?.length) appendManualUpdateNotice(lines, result.components.controlPlane)
-  else lines.push("", "Only opencodebot will be rebuilt and restarted.")
+  else lines.push("", t("updates.onlyBot"))
   return lines.join("\n")
 }
 
 function formatCurrentMessage(result, updates) {
   return [
-    "✅ <b>opencodebot is up to date</b>",
+    t("updates.currentTitle"),
     "",
-    `Version: <code>${shortRevision(result.currentSha)}</code>`,
-    `Next automatic check: ${escapeHtml(updates.checkAt)} ${escapeHtml(updates.timeZone)}`,
+    t("updates.version", { revision: shortRevision(result.currentSha) }),
+    t("updates.nextCheck", { checkAt: escapeHtml(updates.checkAt), timeZone: escapeHtml(updates.timeZone) }),
   ].join("\n")
 }
 
 function formatBlockedMessage(result) {
   return [
-    "⚠️ <b>Automatic update is blocked</b>",
+    t("updates.blockedTitle"),
     "",
-    `GitHub reports the deployed revision as <code>${escapeHtml(result.status)}</code> relative to the configured branch.`,
-    "The bot was not changed. Inspect the repository manually.",
+    t("updates.blockedStatus", { statusHtml: escapeHtml(result.status) }),
+    t("updates.blockedHelp"),
   ].join("\n")
 }
 
 function formatProgressMessage(run, status) {
-  const labels = {
-    queued: "Waiting for the host update runner…",
-    preparing: "Verifying the repository and target revision…",
-    installing: "Installing locked dependencies…",
-    checking: "Running local checks and smoke tests…",
-    building: "Building the new opencodebot image…",
-    restarting: "Restarting opencodebot…",
-    verifying: "Running live health checks…",
-    rolling_back: "Restoring the previous bot image…",
-  }
+  const stageKey = `updates.stage.${status.stage}`
   return [
-    "⏳ <b>Updating opencodebot</b>",
+    t("updates.progressTitle"),
     "",
     `<code>${shortRevision(run.baseSha)}</code> → <code>${shortRevision(run.targetSha)}</code>`,
-    escapeHtml(labels[status.stage] || "Working…"),
+    escapeHtml(Object.hasOwn({ queued: 1, preparing: 1, installing: 1, checking: 1, building: 1, restarting: 1, verifying: 1, rolling_back: 1 }, status.stage) ? t(stageKey) : t("updates.stage.working")),
     "",
-    "OpenCodez will not be changed or restarted.",
+    t("updates.opencodeUntouched"),
   ].join("\n")
 }
 
 function formatSuccessMessage(run, status) {
   const lines = [
-    "✅ <b>opencodebot updated</b>",
+    t("updates.successTitle"),
     "",
     `<code>${shortRevision(run.baseSha)}</code> → <code>${shortRevision(run.targetSha)}</code>`,
   ]
-  if (status.durationMs) lines.push(`Completed in ${formatDuration(status.durationMs)}.`)
+  if (status.durationMs) lines.push(t("updates.completedIn", { duration: formatDuration(status.durationMs) }))
   appendSummary(lines, run.summary)
   appendCompanionNotice(lines, status.components, true)
-  lines.push("", "OpenCodez was not changed or restarted.")
+  lines.push("", t("updates.opencodeWasUntouched"))
   return lines.join("\n")
 }
 
 function formatFailureMessage(run, status) {
   const lines = [
-    "❌ <b>opencodebot update failed</b>",
+    t("updates.failureTitle"),
     "",
     `<code>${shortRevision(run.baseSha)}</code> → <code>${shortRevision(run.targetSha)}</code>`,
-    escapeHtml(status.error || "The host update runner reported an unknown error."),
+    escapeHtml(status.error || t("updates.unknownRunnerError")),
   ]
-  if (status.rolledBack) lines.push("", "The previous bot image was restored.")
-  else if (status.serviceMayHaveChanged) lines.push("", "The replacement started but rollback did not complete. Inspect the live service.")
-  else lines.push("", "The running bot was left unchanged.")
+  if (status.rolledBack) lines.push("", t("updates.rolledBack"))
+  else if (status.serviceMayHaveChanged) lines.push("", t("updates.rollbackIncomplete"))
+  else lines.push("", t("updates.botUnchanged"))
   return lines.join("\n")
 }
 
@@ -519,9 +511,9 @@ function appendSummary(lines, summary) {
     lines.push("", `${section.icon} <b>${escapeHtml(section.title)}</b>`)
     for (const item of section.items) lines.push(`• ${escapeHtml(item)}`)
   }
-  if (summary.maintenanceCount) lines.push("", `⚙️ Technical maintenance: ${summary.maintenanceCount}`)
-  if (summary.omittedCount) lines.push(`…and ${summary.omittedCount} more user-facing changes.`)
-  if (summary.unlistedCommitCount) lines.push(`…and ${summary.unlistedCommitCount} more commits in the full comparison.`)
+  if (summary.maintenanceCount) lines.push("", t("updates.maintenance", { count: summary.maintenanceCount }))
+  if (summary.omittedCount) lines.push(t("updates.omittedChanges", { count: summary.omittedCount }))
+  if (summary.unlistedCommitCount) lines.push(t("updates.omittedCommits", { count: summary.unlistedCommitCount }))
 }
 
 function appendCompanionNotice(lines, components, completed) {
@@ -529,11 +521,11 @@ function appendCompanionNotice(lines, components, completed) {
   if (components?.plugin) names.push("OpenCodez artifact plugin")
   if (components?.skill) names.push("telegram-artifact-send skill")
   if (!names.length) return
-  lines.push("", "⚠️ <b>Companion source changes detected</b>")
+  lines.push("", t("updates.companionTitle"))
   for (const name of names) lines.push(`• ${escapeHtml(name)}`)
   lines.push(completed
-    ? "Their installed OpenCodez copies were not updated. Apply them manually when convenient."
-    : "Their installed OpenCodez copies will not be updated automatically.")
+    ? t("updates.companionCompleted")
+    : t("updates.companionPending"))
 }
 
 function appendManualUpdateNotice(lines, paths) {
@@ -542,10 +534,10 @@ function appendManualUpdateNotice(lines, paths) {
   const commands = ["git pull"]
   if (installerChanged) commands.push("npm run update-runner:install")
   commands.push(composeChanged ? "npm run deploy:all" : "npm run deploy:bot")
-  lines.push("", "🛡 <b>Manual update required</b>")
-  lines.push("This range changes deployment control-plane files, so one-click update is disabled to preserve reliable rollback.")
+  lines.push("", t("updates.manualTitle"))
+  lines.push(t("updates.manualReason"))
   for (const changedPath of paths) lines.push(`• <code>${escapeHtml(changedPath)}</code>`)
-  lines.push("", "Run on the opencodebot host:", `<code>${escapeHtml(commands.join(" && "))}</code>`)
+  lines.push("", t("updates.runOnHost"), `<code>${escapeHtml(commands.join(" && "))}</code>`)
 }
 
 function runIsStale(run, status, now) {
@@ -555,12 +547,12 @@ function runIsStale(run, status, now) {
 
 function formatDuration(durationMs) {
   const seconds = Math.max(1, Math.round(Number(durationMs) / 1000))
-  if (seconds < 60) return `${seconds}s`
-  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+  if (seconds < 60) return t("common.duration.seconds", { value: seconds })
+  return t("common.duration.minutes", { minutes: Math.floor(seconds / 60), seconds: seconds % 60 })
 }
 
 function friendlyError(error) {
-  const message = String(error?.message || error || "Unknown error")
+  const message = String(error?.message || error || t("updates.unknownError"))
   return (process.env.HOME ? message.replaceAll(process.env.HOME, "~") : message).slice(0, 500)
 }
 

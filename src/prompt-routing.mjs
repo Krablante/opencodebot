@@ -8,6 +8,7 @@ import { PromptQueue } from "./prompt-queue.mjs"
 import { promptHash } from "./state.mjs"
 import { escapeHtml, topicId } from "./telegram.mjs"
 import { prepareSavedFilesForServer } from "./upload-transfer.mjs"
+import { t } from "./i18n/index.mjs"
 
 export async function bindPendingTopicSession({ state, opencode, pending, message, text = "", files = [] }) {
   const directory = pending.directory || opencode.defaultNewSessionDirectory(pending.serverID)
@@ -86,7 +87,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
 
   async function handleAttachmentMessage(message, promptKey, files, caption) {
     if (config.attachments.enabled === false) {
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Attachments are disabled for this bot." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("prompt.attachmentsDisabled") })
       return
     }
     const context = promptContext(message)
@@ -95,16 +96,16 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       return
     }
     if (!context) {
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "No OpenCodez session is bound to this topic. Create one with /new, then send files here." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("prompt.noBindingFiles") })
       return
     }
     const queued = parseQueueCaption(caption)
     if (queued && !context.binding) {
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "No bound OpenCodez session is active yet, so attachments cannot be queued here. Create one with /new first." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("prompt.queueBeforeBinding") })
       return
     }
     if (queued && !queued.text) {
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Usage: <code>/q prompt text</code> as the file caption." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("prompt.queueCaptionUsage") })
       return
     }
     try {
@@ -118,7 +119,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: topicId(message),
-        text: `Could not attach file. <code>${escapeHtml(error.message)}</code>`,
+        text: t("prompt.attachFailed", { errorHtml: escapeHtml(error.message) }),
       })
     }
   }
@@ -131,7 +132,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       return
     }
     if (!context) {
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "No OpenCodez session is bound to this topic. Create one with /new first." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("prompt.noBinding") })
       return
     }
     await attachmentBuffer.addText(promptKey, context, text)
@@ -141,7 +142,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     await telegram.sendMessage({
       chatId: context.message.chat.id,
       topicId: topicId(context.message),
-      text: `Attachment batch expired: no prompt text arrived within ${formatDuration(config.attachments.promptIdleMs)} (${files.length} file${files.length === 1 ? "" : "s"}).`,
+      text: t("prompt.batchExpired", { duration: formatDuration(config.attachments.promptIdleMs), count: files.length }),
     })
   }
 
@@ -172,13 +173,13 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     })
     if (!origin) return {}
     if (String(topicId(message) ?? "") !== String(topicId(replied) ?? "")) {
-      return { error: "Revert unavailable · other topic" }
+      return { error: t("prompt.rewind.otherTopic") }
     }
     if (origin.status !== "active") {
-      return { error: "Revert unavailable · branch already replaced" }
+      return { error: t("prompt.rewind.replaced") }
     }
     if (!binding || origin.serverID !== binding.serverID || origin.sessionID !== binding.sessionID) {
-      return { error: "Revert unavailable · old session" }
+      return { error: t("prompt.rewind.oldSession") }
     }
     return { origin }
   }
@@ -234,7 +235,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       currentOrigin.sessionID !== binding.sessionID
     ) {
       await cleanupFiles(files)
-      await sendRewindError(message, "Revert unavailable · session changed")
+      await sendRewindError(message, t("prompt.rewind.sessionChanged"))
       return
     }
     await sendPromptFeedback({ binding, text: rewindFeedbackStartingText(), kind: "rewind" })
@@ -318,7 +319,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
   }
 
   async function reportPromptFeedbackError(binding, error) {
-    const text = `🔴 Prompt was not accepted\n🧯 ${escapeHtml(error.message)}`
+    const text = t("prompt.notAccepted", { errorHtml: escapeHtml(error.message) })
     const updated = await updatePromptFeedback(binding, text).catch(() => false)
     if (!updated) await sendPromptFeedback({ binding, text, kind: "error" })
   }
@@ -382,27 +383,27 @@ function promptFeedbackKey(binding) {
 }
 
 function promptFeedbackStartingText() {
-  return "🟡 Prompt received\n🚀 Sending it to OpenCodez"
+  return t("prompt.feedback.starting")
 }
 
 function promptFeedbackAcceptedText() {
-  return "🟢 Accepted by OpenCodez\n🧠 Waiting for the first events"
+  return t("prompt.feedback.accepted")
 }
 
 function rewindFeedbackStartingText() {
-  return "🟡 Reverting…"
+  return t("prompt.feedback.reverting")
 }
 
 function rewindFeedbackRevertedText() {
-  return "🟢 Reverted"
+  return t("prompt.feedback.reverted")
 }
 
 function rewindFeedbackFailedText() {
-  return "🔴 Revert failed"
+  return t("prompt.feedback.revertFailed")
 }
 
 function rewindFeedbackReplacementNotSentText() {
-  return "🟠 Reverted · replacement not sent"
+  return t("prompt.feedback.replacementNotSent")
 }
 
 function parseQueueCaption(caption) {
@@ -414,8 +415,8 @@ function parseQueueCaption(caption) {
 }
 
 function queueAttachmentFeedback(result, fileCount) {
-  const files = `${fileCount} file${fileCount === 1 ? "" : "s"}`
-  if (result.status === "sent") return `No active run; sent immediately with ${files}.`
-  if (result.status === "queued") return `Queued prompt #${result.position} with ${files}.`
-  return `Could not queue attachment prompt with ${files}.`
+  const files = t("prompt.files", { count: fileCount })
+  if (result.status === "sent") return t("prompt.attachmentSent", { files })
+  if (result.status === "queued") return t("prompt.attachmentQueued", { position: result.position, files })
+  return t("prompt.attachmentQueueFailed", { files })
 }

@@ -822,6 +822,7 @@ export function promptHash(text) {
 function defaultState() {
   return {
     version: 1,
+    ui: {},
     telegram: { mirrorMode: "full", contextTurnsByUser: {}, artifactsTopic: null, soundsTopic: null },
     bindings: [],
     pendingTopics: {},

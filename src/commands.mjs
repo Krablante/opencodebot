@@ -3,7 +3,8 @@ import { escapeHtml, topicId } from "./telegram.mjs"
 import { parseResetArgs } from "./chat-templates.mjs"
 import { managedTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
 import { formatArtifactUploadHelp } from "./artifact-uploads.mjs"
-import { logErrorEvent, logInfo } from "./logger.mjs"
+import { logErrorEvent, logInfo, logWarn } from "./logger.mjs"
+import { getLanguage, normalizeLanguage, setLanguage, t } from "./i18n/index.mjs"
 import { resolveSessionProfile } from "./opencode.mjs"
 import {
   buildCollapsedContextMessages,
@@ -13,34 +14,42 @@ import {
   parseContextTurnCount,
 } from "./context-export.mjs"
 
-export const telegramBotCommands = [
-  { command: "new", description: "Create a new OpenCodez session topic" },
-  { command: "reset", description: "Start fresh; optionally change profile/server" },
-  { command: "session", description: "Show topic, session, and special topic status" },
-  { command: "artifacts_here", description: "Use this topic for agent artifact uploads" },
-  { command: "sounds_here", description: "Use this topic as the speech inbox" },
-  { command: "sounds_off", description: "Disable the dedicated speech inbox" },
-  { command: "sounds_status", description: "Show speech transcription status" },
-  { command: "q", description: "Queue prompts for the current session" },
-  { command: "kill", description: "Stop the current run and clear queued prompts" },
-  { command: "compact", description: "Compact the current session context" },
-  { command: "context", description: "Copy recent completed turns" },
-  { command: "set_context", description: "Set default context turn count" },
-  { command: "notify_on", description: "Enable final-answer DMs" },
-  { command: "notify_off", description: "Disable final-answer DMs" },
-  { command: "notify_status", description: "Show final-answer DM status" },
-  { command: "tts", description: "Configure final-answer voice replies" },
-  { command: "speak", description: "Voice a replied message summary" },
-  { command: "update", description: "Check for opencodebot updates" },
-  { command: "debug_on", description: "Enable global final-DM diagnostics" },
-  { command: "debug_off", description: "Disable global final-DM diagnostics" },
-  { command: "debug_status", description: "Show global diagnostics status" },
-  { command: "mode", description: "Show or set full/economy mirror mode" },
-  { command: "mirror_on", description: "Enable web-to-Telegram mirroring" },
-  { command: "mirror_off", description: "Disable web-to-Telegram mirroring" },
-  { command: "help", description: "Show commands and chat profiles" },
-  { command: "start", description: "Show help" },
+const commandDefinitions = [
+  ["new", "new"],
+  ["reset", "reset"],
+  ["session", "session"],
+  ["artifacts_here", "artifacts_here"],
+  ["sounds_here", "sounds_here"],
+  ["sounds_off", "sounds_off"],
+  ["sounds_status", "sounds_status"],
+  ["q", "q"],
+  ["kill", "kill"],
+  ["compact", "compact"],
+  ["context", "context"],
+  ["set_context", "set_context"],
+  ["notify_on", "notify_on"],
+  ["notify_off", "notify_off"],
+  ["notify_status", "notify_status"],
+  ["tts", "tts"],
+  ["speak", "speak"],
+  ["lang", "lang"],
+  ["update", "update"],
+  ["debug_on", "debug_on"],
+  ["debug_off", "debug_off"],
+  ["debug_status", "debug_status"],
+  ["mode", "mode"],
+  ["mirror_on", "mirror_on"],
+  ["mirror_off", "mirror_off"],
+  ["help", "help"],
+  ["start", "start"],
 ]
+
+export function telegramBotCommands() {
+  return commandDefinitions.map(([command, descriptionKey]) => ({
+    command,
+    description: t(`command.description.${descriptionKey}`),
+  }))
+}
 
 export function createTelegramCommandHandlers({
   config,
@@ -56,16 +65,17 @@ export function createTelegramCommandHandlers({
   finalVoice,
   questionManager,
   updateManager,
+  refreshCommandMenu = async () => {},
 }) {
   const compactOperations = new Map()
   const handlers = {
     mirror_on: async (message) => {
       await state.setMirrorEnabled(true)
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Mirror enabled." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("commands.mirror.enabled") })
     },
     mirror_off: async (message) => {
       await state.setMirrorEnabled(false)
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Mirror disabled." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("commands.mirror.disabled") })
     },
     artifacts_here: handleArtifactsHere,
     sounds_here: handleSoundsHere,
@@ -88,6 +98,7 @@ export function createTelegramCommandHandlers({
     debug_on: (message) => handleDebugMode(message, true),
     debug_off: (message) => handleDebugMode(message, false),
     debug_status: handleDebugStatus,
+    lang: handleLanguage,
     mode: handleMirrorMode,
     ...(finalVoice?.commandHandlers?.() || {}),
   }
@@ -112,13 +123,43 @@ export function createTelegramCommandHandlers({
     await updateManager.checkNow({ chatId: message.chat.id, topicId: topicId(message) })
   }
 
+  async function handleLanguage(message, args) {
+    const requested = String(args || "").trim()
+    if (!requested) {
+      await telegram.sendMessage({
+        chatId: message.chat.id,
+        topicId: topicId(message),
+        text: t("language.current", { language: t("language.name") }),
+      })
+      return
+    }
+    const normalized = normalizeLanguage(requested)
+    if (!normalized) {
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("language.invalid") })
+      return
+    }
+    await setLanguage(normalized)
+    let menuRefreshFailed = false
+    try {
+      await refreshCommandMenu()
+    } catch (error) {
+      menuRefreshFailed = true
+      logWarn("telegram.commands.language_refresh_failed", { language: getLanguage(), error: error?.message })
+    }
+    await telegram.sendMessage({
+      chatId: message.chat.id,
+      topicId: topicId(message),
+      text: menuRefreshFailed ? `${t("language.changed")}\n\n${t("language.menuRefreshFailed")}` : t("language.changed"),
+    })
+  }
+
   async function handleMirrorMode(message, args) {
     const requested = String(args || "").trim().toLowerCase()
     if (requested && requested !== "status" && requested !== "full" && requested !== "economy") {
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: topicId(message),
-        text: "Usage: <code>/mode</code>, <code>/mode full</code>, or <code>/mode economy</code>",
+        text: t("commands.mode.usage"),
       })
       return
     }
@@ -126,7 +167,7 @@ export function createTelegramCommandHandlers({
     await telegram.sendMessage({
       chatId: message.chat.id,
       topicId: topicId(message),
-      text: `🎛️ Mode: <b>${escapeHtml(mode.toUpperCase())}</b>\nScope: all mirrored topics`,
+      text: t("commands.mode.status", { mode: escapeHtml(mode.toUpperCase()) }),
     })
   }
 
@@ -140,7 +181,7 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: topicId(message),
-        text: `Usage: <code>/set_context N</code> where N is 1–${MAX_CONTEXT_TURNS}.`,
+        text: t("commands.context.setUsage", { max: MAX_CONTEXT_TURNS }),
       })
       return
     }
@@ -149,7 +190,7 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: topicId(message),
-        text: `📋 <b>Context default:</b> ${current} ${turnLabel(current)}\nUse <code>/set_context N</code> to change it.`,
+        text: t("commands.context.current", { turns: current, max: MAX_CONTEXT_TURNS }),
       })
       return
     }
@@ -157,7 +198,7 @@ export function createTelegramCommandHandlers({
     await telegram.sendMessage({
       chatId: message.chat.id,
       topicId: topicId(message),
-      text: `✅ <b>Context default saved:</b> ${count} ${turnLabel(count)}\n<code>/context</code> now uses this value; <code>/context N</code> overrides it once.`,
+      text: t("commands.context.saved", { turns: count }),
     })
   }
 
@@ -168,7 +209,7 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: "This topic is not bound to an active OpenCodez session.",
+        text: t("commands.context.noBinding"),
       })
       return
     }
@@ -179,7 +220,7 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: `Usage: <code>/context [N]</code> where N is 1–${MAX_CONTEXT_TURNS}.`,
+        text: t("commands.context.usage", { max: MAX_CONTEXT_TURNS }),
       })
       return
     }
@@ -196,7 +237,7 @@ export function createTelegramCommandHandlers({
         await telegram.sendMessage({
           chatId: message.chat.id,
           topicId: currentTopicId,
-          text: "📋 No completed or interrupted turns are available yet. The active unfinished turn is intentionally omitted.",
+          text: t("commands.context.empty"),
         })
         return
       }
@@ -255,7 +296,7 @@ export function createTelegramCommandHandlers({
   async function handleQueueCommand(message, args) {
     const binding = state.findBindingByTopic(message.chat.id, topicId(message))
     if (!binding) {
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "No OpenCodez session is bound to this topic. Use /new to create a topic, or run /q inside an existing OpenCodez topic." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("commands.queue.noBinding") })
       return
     }
 
@@ -266,7 +307,7 @@ export function createTelegramCommandHandlers({
     }
 
     if (/^delete\b/i.test(input) && !/^delete\s+\d+$/i.test(input)) {
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Usage: <code>/q delete &lt;number&gt;</code>" })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("commands.queue.deleteUsage") })
       return
     }
 
@@ -274,8 +315,8 @@ export function createTelegramCommandHandlers({
     if (deleteMatch) {
       const removed = promptQueue.delete(binding, Number(deleteMatch[1]))
       const text = removed
-        ? `Deleted queued prompt #${removed.index}: <code>${escapeHtml(removed.summary)}</code>`
-        : `No queued prompt #${escapeHtml(deleteMatch[1])}.`
+        ? t("commands.queue.deleted", { index: removed.index, summaryHtml: escapeHtml(removed.summary) })
+        : t("commands.queue.missing", { indexHtml: escapeHtml(deleteMatch[1]) })
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text })
       return
     }
@@ -285,7 +326,7 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: topicId(message),
-        text: `Queued prompt #${result.position}: <code>${escapeHtml(summarizeWords(input, 10))}</code>`,
+        text: t("commands.queue.queued", { position: result.position, summaryHtml: escapeHtml(summarizeWords(input, 10)) }),
       })
     }
   }
@@ -294,11 +335,11 @@ export function createTelegramCommandHandlers({
     const currentTopicId = topicId(message)
     const binding = state.findBindingByTopic(message.chat.id, currentTopicId)
     if (!binding) {
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: "No OpenCodez session is bound to this topic. Use /new to create a topic, or run /kill inside an existing OpenCodez topic." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: t("commands.kill.noBinding") })
       return
     }
     if (!opencode?.abortSession) {
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: "OpenCodez abort API is not available." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: t("commands.kill.unavailable") })
       return
     }
 
@@ -314,16 +355,12 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: `Failed to stop the current OpenCodez run.\n<code>${escapeHtml(error.message)}</code>`,
+        text: t("commands.kill.failed", { errorHtml: escapeHtml(error.message) }),
       })
       return
     }
     const cleared = promptQueue.clear(binding, "Killed by /kill")
-    const lines = [
-      wasBusy ? "Stop signal sent to the current OpenCodez run." : "Stop signal sent to OpenCodez.",
-      cleared.length ? `Cleared ${cleared.length} queued prompt(s).` : "No queued prompts were pending.",
-    ]
-    await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: lines.join("\n") })
+    await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: t("commands.kill.result", { wasBusy, cleared: cleared.length }) })
   }
 
   async function handleCompactCommand(message) {
@@ -333,19 +370,19 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: "No OpenCodez session is bound to this topic. Run /compact inside an existing session topic.",
+        text: t("commands.compact.noBinding"),
       })
       return
     }
     if (!opencode?.summarizeSession) {
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: "OpenCodez compaction API is not available." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: t("commands.compact.unavailable") })
       return
     }
     if (compactOperations.has(compactOperationKey(binding))) {
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: "⏳ Context compaction is already running in this topic. Wait for it to finish, or use /kill to stop it.",
+        text: t("commands.compact.alreadyRunning"),
       })
       return
     }
@@ -363,7 +400,7 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: `Could not inspect the OpenCodez session before compaction.\n<code>${escapeHtml(error.message)}</code>`,
+        text: t("commands.compact.inspectFailed", { errorHtml: escapeHtml(error.message) }),
       })
       return
     }
@@ -371,12 +408,12 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: "⏳ OpenCodez is still working on this session. Wait for it to become idle, or use /kill before /compact.",
+        text: t("commands.compact.busy"),
       })
       return
     }
     if (!messages.some((entry) => entry?.info?.summary !== true && ["user", "assistant"].includes(entry?.info?.role))) {
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: "Nothing to compact yet. Send at least one prompt first." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: t("commands.compact.nothing") })
       return
     }
 
@@ -385,7 +422,7 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: "Could not determine the current OpenCodez model. Send one prompt in this topic and retry /compact.",
+        text: t("commands.compact.noModel"),
       })
       return
     }
@@ -393,7 +430,7 @@ export function createTelegramCommandHandlers({
     const feedback = await telegram.sendMessage({
       chatId: message.chat.id,
       topicId: currentTopicId,
-      text: "🗜️ <b>Compacting context…</b>\nNew prompts will wait in this topic’s queue.",
+      text: t("commands.compact.starting"),
     })
     const operation = { cancelled: false }
     compactOperations.set(compactOperationKey(binding), operation)
@@ -407,18 +444,18 @@ export function createTelegramCommandHandlers({
     try {
       await opencode.summarizeSession(binding.serverID, binding.sessionID, { directory: binding.directory, model })
       if (operation.cancelled) {
-        await updateCompactFeedback({ message, feedback, text: "🛑 <b>Context compaction stopped.</b>\nThe session remains available." })
+        await updateCompactFeedback({ message, feedback, text: t("commands.compact.stopped") })
         return
       }
       await updateCompactFeedback({
         message,
         feedback,
-        text: "✅ <b>Context compacted.</b>\nThe next prompt will use the condensed session history.",
+        text: t("commands.compact.completed"),
       })
       logInfo("compact.completed", { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId })
     } catch (error) {
       if (operation.cancelled) {
-        await updateCompactFeedback({ message, feedback, text: "🛑 <b>Context compaction stopped.</b>\nThe session remains available." })
+        await updateCompactFeedback({ message, feedback, text: t("commands.compact.stopped") })
         return
       }
       await releaseCompactQueueAfterFailure(binding)
@@ -426,7 +463,7 @@ export function createTelegramCommandHandlers({
       await updateCompactFeedback({
         message,
         feedback,
-        text: `❌ <b>Context compaction failed.</b>\n<code>${escapeHtml(error.message)}</code>\nThe session is still available.`,
+        text: t("commands.compact.failed", { errorHtml: escapeHtml(error.message) }),
       })
     } finally {
       if (compactOperations.get(compactOperationKey(binding)) === operation) compactOperations.delete(compactOperationKey(binding))
@@ -463,14 +500,14 @@ export function createTelegramCommandHandlers({
   async function handleResetCommand(message, args, promptKey) {
     const currentTopicId = topicId(message)
     if (!currentTopicId) {
-      await telegram.sendMessage({ chatId: message.chat.id, text: "Run /reset inside an active OpenCodez session topic." })
+      await telegram.sendMessage({ chatId: message.chat.id, text: t("commands.reset.topicRequired") })
       return
     }
     if (state.isArtifactsTopic(message.chat.id, currentTopicId) || state.isSoundsTopic(message.chat.id, currentTopicId)) {
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: "This special-purpose topic cannot be reset into an OpenCodez session topic.",
+        text: t("commands.reset.specialTopic"),
       })
       return
     }
@@ -482,7 +519,7 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: escapeHtml(error.message),
+        text: t("commands.reset.invalid", { errorHtml: escapeHtml(error.message) }),
       })
       return
     }
@@ -494,7 +531,7 @@ export function createTelegramCommandHandlers({
         await telegram.sendMessage({
           chatId: message.chat.id,
           topicId: currentTopicId,
-          text: "No active OpenCodez session is bound here. Use /new to create a session topic.",
+          text: t("commands.reset.noBinding"),
         })
         return
       }
@@ -521,9 +558,9 @@ export function createTelegramCommandHandlers({
       const discardedMultipart = pending ? multipartPrompts.discardKey?.(promptKey) || false : false
       const discardedAttachments = pending ? await discardAttachmentBatch(promptKey) : 0
       const discarded = [
-        discardedMultipart ? "unfinished multipart prompt" : null,
+        discardedMultipart ? t("commands.reset.discardedMultipart") : null,
         discardedAttachments
-          ? `${discardedAttachments} buffered attachment${discardedAttachments === 1 ? "" : "s"}`
+          ? t("commands.reset.discardedAttachments", { count: discardedAttachments })
           : null,
       ].filter(Boolean)
       let topicRenameWarning = null
@@ -531,28 +568,27 @@ export function createTelegramCommandHandlers({
         try {
           await telegram.editForumTopic({ chatId: message.chat.id, topicId: currentTopicId, name: updated.topicTitle })
         } catch (error) {
-          topicRenameWarning = `⚠️ Topic rename failed: ${escapeHtml(error.message)}`
+          topicRenameWarning = t("commands.reset.renameFailed", { errorHtml: escapeHtml(error.message) })
         }
       }
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: [
-          "🟡 <b>This topic is already waiting for its first prompt</b>",
-          `🧠 Profile: <code>${escapeHtml(updated.chatTemplateName || "current")}</code>`,
-          serverChanged
-            ? `🔀 Server: <code>${escapeHtml(previousServerID)}</code> → <code>${escapeHtml(updated.serverID)}</code>`
-            : `🖥️ Server: <code>${escapeHtml(updated.serverID)}</code>`,
-          `📁 Directory: ${updated.directory ? `<code>${escapeHtml(updated.directory)}</code>` : "<i>server default</i>"}`,
-          `💬 Topic: ${escapeHtml(updated.topicTitle)}`,
-          discarded.length ? `🧹 Discarded: ${escapeHtml(discarded.join(", "))}` : null,
-          topicRenameWarning,
-        ].filter(Boolean).join("\n"),
+        text: t("commands.reset.pendingStatus", {
+          profileHtml: escapeHtml(updated.chatTemplateName || t("common.current")),
+          serverLine: serverChanged
+            ? t("commands.reset.serverChanged", { previousHtml: escapeHtml(previousServerID), nextHtml: escapeHtml(updated.serverID) })
+            : t("commands.reset.server", { serverHtml: escapeHtml(updated.serverID) }),
+          directoryHtml: updated.directory ? `<code>${escapeHtml(updated.directory)}</code>` : `<i>${t("common.serverDefault")}</i>`,
+          topicHtml: escapeHtml(updated.topicTitle),
+          discardedHtml: discarded.length ? escapeHtml(discarded.join(", ")) : null,
+          warning: topicRenameWarning,
+        }),
       })
       return
     }
     if (!opencode?.abortSession) {
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: "OpenCodez abort API is not available." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: t("commands.reset.abortUnavailable") })
       return
     }
 
@@ -564,7 +600,7 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: `⚠️ <b>Reset needs a profile</b>\n${escapeHtml(error.message)}`,
+        text: t("commands.reset.profileRequired", { errorHtml: escapeHtml(error.message) }),
       })
       return
     }
@@ -581,7 +617,7 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: `Reset failed while stopping the current OpenCodez session.\n<code>${escapeHtml(error.message)}</code>`,
+        text: t("commands.reset.stopFailed", { errorHtml: escapeHtml(error.message) }),
       })
       return
     }
@@ -603,7 +639,7 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: "The topic binding changed while it was being reset. Check /session before retrying.",
+        text: t("commands.reset.bindingChanged"),
       })
       return
     }
@@ -614,36 +650,30 @@ export function createTelegramCommandHandlers({
       try {
         await telegram.editForumTopic({ chatId: message.chat.id, topicId: currentTopicId, name: titleFields.topicTitle })
       } catch (error) {
-        topicRenameWarning = `⚠️ Topic rename failed: ${escapeHtml(error.message)}`
+        topicRenameWarning = t("commands.reset.renameFailed", { errorHtml: escapeHtml(error.message) })
       }
     }
 
     const discarded = []
-    if (cleared.length) discarded.push(`${cleared.length} queued prompt${cleared.length === 1 ? "" : "s"}`)
-    if (discardedMultipart) discarded.push("an unfinished multipart prompt")
+    if (cleared.length) discarded.push(t("commands.reset.discardedPrompts", { count: cleared.length }))
+    if (discardedMultipart) discarded.push(t("commands.reset.discardedMultipart"))
     if (discardedAttachments) {
-      discarded.push(`${discardedAttachments} buffered attachment${discardedAttachments === 1 ? "" : "s"}`)
+      discarded.push(t("commands.reset.discardedAttachments", { count: discardedAttachments }))
     }
     await telegram.sendMessage({
       chatId: message.chat.id,
       topicId: currentTopicId,
-      text: [
-        "🆕 <b>Fresh session ready</b>",
-        "",
-        `🧠 Profile: <code>${escapeHtml(reset.pending.chatTemplateName || "current")}</code>`,
-        serverChanged
-          ? `🔀 Server: <code>${escapeHtml(binding.serverID)}</code> → <code>${escapeHtml(reset.pending.serverID)}</code>`
-          : `🖥️ Server: <code>${escapeHtml(reset.pending.serverID)}</code>`,
-        `📁 Directory: ${reset.pending.directory ? `<code>${escapeHtml(reset.pending.directory)}</code>` : "<i>server default</i>"}`,
-        `💬 Topic: ${escapeHtml(reset.pending.topicTitle)}`,
-        "",
-        `♻️ Preserved: <code>${escapeHtml(binding.sessionID)}</code>`,
-        discarded.length ? `🧹 Discarded: ${escapeHtml(discarded.join(", "))}` : null,
-        "✍️ Send the first prompt to create the new session.",
-        topicRenameWarning,
-      ]
-        .filter(Boolean)
-        .join("\n"),
+      text: t("commands.reset.freshReady", {
+        profileHtml: escapeHtml(reset.pending.chatTemplateName || t("common.current")),
+        serverLine: serverChanged
+          ? t("commands.reset.serverChanged", { previousHtml: escapeHtml(binding.serverID), nextHtml: escapeHtml(reset.pending.serverID) })
+          : t("commands.reset.server", { serverHtml: escapeHtml(reset.pending.serverID) }),
+        directoryHtml: reset.pending.directory ? `<code>${escapeHtml(reset.pending.directory)}</code>` : `<i>${t("common.serverDefault")}</i>`,
+        topicHtml: escapeHtml(reset.pending.topicTitle),
+        sessionHtml: escapeHtml(binding.sessionID),
+        discardedHtml: discarded.length ? escapeHtml(discarded.join(", ")) : null,
+        warning: topicRenameWarning,
+      }),
     })
   }
 
@@ -655,7 +685,7 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
-        text: `❌ Cannot switch to <code>${escapeHtml(serverID)}</code>: ${escapeHtml(error.message)}`,
+        text: t("commands.reset.switchFailed", { serverHtml: escapeHtml(serverID), errorHtml: escapeHtml(error.message) }),
       })
       return false
     }
@@ -663,7 +693,7 @@ export function createTelegramCommandHandlers({
 
   async function handleSoundsHere(message) {
     if (!speech?.enabled()) {
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Speech transcription is disabled in config." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("commands.speech.disabled") })
       return
     }
     await speech.setCurrentTopic(message)
@@ -676,39 +706,45 @@ export function createTelegramCommandHandlers({
       chatId: message.chat.id,
       topicId: topicId(message),
       text: cleared
-        ? "Dedicated voice/audio inbox disabled for this topic. Voice messages in ordinary topics are still transcribed."
-        : "This topic is not the dedicated voice/audio inbox.",
+        ? t("commands.speech.inboxDisabled")
+        : t("commands.speech.notInbox"),
     })
   }
 
   async function handleSoundsStatus(message) {
     const status = speech?.status?.() || { enabled: false, configured: false, topic: null, queueDepth: 0, active: 0 }
-    const providers = status.providers?.map((provider) => `${escapeHtml(provider.label)}: ${provider.configured ? "configured" : `missing <code>${escapeHtml(provider.apiKeyEnv)}</code>`}`)
+    const providers = status.providers?.map((provider) => provider.configured
+      ? t("commands.speech.providerConfigured", { label: escapeHtml(provider.label) })
+      : t("commands.speech.providerMissing", { label: escapeHtml(provider.label), envHtml: escapeHtml(provider.apiKeyEnv) }))
     await telegram.sendMessage({
       chatId: message.chat.id,
       topicId: topicId(message),
-      text: [
-        "<b>Voice transcription</b>",
-        `enabled: ${status.enabled ? "yes" : "no"}`,
-        providers?.length ? `providers: ${providers.join("; ")}` : `api_key: ${status.configured ? "configured" : status.apiKeyEnv ? `missing <code>${escapeHtml(status.apiKeyEnv)}</code>` : "not configured"}`,
-        status.model ? `model: <code>${escapeHtml(status.modelLabel || status.model)}</code>${status.modelProvider ? ` · ${escapeHtml(status.modelProvider)}` : ""}` : null,
-        status.language ? `language: <code>${escapeHtml(status.language)}</code>` : null,
-        "voice_messages: all non-artifact topics when enabled",
-        status.topic ? `dedicated_topic_id: <code>${escapeHtml(String(status.topic.topicId || 0))}</code>` : "dedicated_topic_id: none",
-        `active: <code>${escapeHtml(String(status.active || 0))}</code>`,
-        `queue: <code>${escapeHtml(String(status.queueDepth || 0))}</code>`,
-      ].filter(Boolean).join("\n"),
+      text: t("commands.speech.status", {
+        enabled: t(status.enabled ? "common.yes" : "common.no"),
+        providers: providers?.length
+          ? providers.join("; ")
+          : status.configured
+            ? t("common.configured")
+            : status.apiKeyEnv
+              ? t("commands.speech.providerMissing", { label: t("commands.speech.apiKey"), envHtml: escapeHtml(status.apiKeyEnv) })
+              : t("common.notConfigured"),
+        modelLine: status.model ? t("commands.speech.modelLine", { modelHtml: escapeHtml(status.modelLabel || status.model), provider: status.modelProvider ? escapeHtml(status.modelProvider) : "" }) : null,
+        languageLine: status.language ? t("commands.speech.languageLine", { languageHtml: escapeHtml(status.language) }) : null,
+        topicIdHtml: status.topic ? `<code>${escapeHtml(String(status.topic.topicId || 0))}</code>` : null,
+        activeHtml: escapeHtml(String(status.active || 0)),
+        queueHtml: escapeHtml(String(status.queueDepth || 0)),
+      }),
     })
   }
 
   async function handleNotifyOn(message) {
     if (config.finalNotifications?.enabled === false) {
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Final DM notifications are disabled in config." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("commands.notifications.disabledConfig") })
       return
     }
     const userIds = configuredFinalNotificationUserIds()
     if (!userIds.length) {
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "No final notification userIds are configured." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("commands.notifications.noRecipients") })
       return
     }
     const enabled = []
@@ -717,7 +753,7 @@ export function createTelegramCommandHandlers({
       try {
         await telegram.sendMessage({
           chatId: userID,
-          text: "🔔 Final answer notifications enabled\n🏁 I will DM you when a mirrored topic gets its final answer\n🔗 The DM includes the source topic, an Open topic button, and context quotes",
+          text: t("commands.notifications.dmEnabled"),
         })
         await state.enableFinalNotificationsFor(userID)
         enabled.push(userID)
@@ -729,22 +765,20 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: topicId(message),
-        text: [
-          enabled.length ? `🔔 Enabled for ${enabled.length} configured recipient(s).` : "🔴 No configured recipients were enabled.",
-          "Some configured recipients cannot receive DMs yet:",
-          ...failed.map((item) => `<code>${escapeHtml(item.userID)}</code>: <code>${escapeHtml(item.error.message)}</code>`),
-          "Open a private chat with this bot from that account, press Start or send /start, then run /notify_on again.",
-        ].join("\n"),
+        text: t("commands.notifications.failed", {
+          enabled: enabled.length,
+          failures: failed.map((item) => `<code>${escapeHtml(item.userID)}</code>: <code>${escapeHtml(item.error.message)}</code>`),
+        }),
       })
       return
     }
-    await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: `🔔 Final DM notifications enabled for ${enabled.length} configured recipient(s).` })
+    await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("commands.notifications.enabled", { count: enabled.length }) })
   }
 
   async function handleNotifyOff(message) {
     const userIds = configuredFinalNotificationUserIds()
     for (const userID of userIds) await state.disableFinalNotificationsFor(userID)
-    await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: `🔕 Final DM notifications disabled for ${userIds.length} configured recipient(s).` })
+    await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("commands.notifications.disabled", { count: userIds.length }) })
   }
 
   async function handleNotifyStatus(message) {
@@ -753,11 +787,11 @@ export function createTelegramCommandHandlers({
     await telegram.sendMessage({
       chatId: message.chat.id,
       topicId: topicId(message),
-      text: [
-        config.finalNotifications?.enabled === false ? "🔕 Final DM notifications are disabled in config." : "🔔 Final DM notifications config",
-        `Configured recipients: <code>${escapeHtml(String(userIds.length))}</code>`,
-        `Enabled recipients: <code>${escapeHtml(String(enabled.length))}</code>`,
-      ].join("\n"),
+      text: t("commands.notifications.status", {
+        disabled: config.finalNotifications?.enabled === false,
+        configured: escapeHtml(String(userIds.length)),
+        enabled: escapeHtml(String(enabled.length)),
+      }),
     })
   }
 
@@ -767,9 +801,7 @@ export function createTelegramCommandHandlers({
     await telegram.sendMessage({
       chatId: message.chat.id,
       topicId: currentTopicId || undefined,
-      text: enabled
-        ? "🐛 Global debug diagnostics enabled. Every final DM will end with an expandable run-diagnostics block."
-        : "Global debug diagnostics disabled.",
+      text: enabled ? t("commands.debug.enabled") : t("commands.debug.disabled"),
     })
   }
 
@@ -779,7 +811,7 @@ export function createTelegramCommandHandlers({
     await telegram.sendMessage({
       chatId: message.chat.id,
       topicId: currentTopicId || undefined,
-      text: `🐛 Global debug diagnostics: <code>${enabled ? "enabled" : "disabled"}</code>.`,
+      text: t("commands.debug.status", { enabled: t(enabled ? "common.enabled" : "common.disabled") }),
     })
   }
 
@@ -790,7 +822,7 @@ export function createTelegramCommandHandlers({
   async function handleArtifactsHere(message) {
     const currentTopicId = topicId(message)
     if (!currentTopicId) {
-      await telegram.sendMessage({ chatId: message.chat.id, text: "Run /artifacts_here inside a Telegram forum topic." })
+      await telegram.sendMessage({ chatId: message.chat.id, text: t("commands.artifacts.topicRequired") })
       return
     }
     const existing = state.findBindingByTopic(message.chat.id, currentTopicId)
@@ -803,17 +835,13 @@ export function createTelegramCommandHandlers({
     await telegram.sendMessage({
       chatId: message.chat.id,
       topicId: currentTopicId,
-      text: [
-        "Artifacts topic configured.",
-        "This is now the only agent artifact target; any previous artifacts topic was forgotten.",
-        "Web/session mirroring is disabled for this topic.",
-        `Target: <code>${escapeHtml(String(target.chatId))}</code> / <code>${escapeHtml(String(target.topicId))}</code>`,
-        "",
-        formatArtifactUploadHelp({
+      text: t("commands.artifacts.configured", {
+        targetHtml: `<code>${escapeHtml(String(target.chatId))}</code> / <code>${escapeHtml(String(target.topicId))}</code>`,
+        help: formatArtifactUploadHelp({
           defaultServerId: config.artifactUploads?.defaultServerId,
           availableServerIds: Array.from(opencode.servers.keys()).sort(),
         }),
-      ].join("\n"),
+      }),
     })
   }
 
@@ -840,9 +868,9 @@ export function createTelegramCommandHandlers({
     }
     const sessionUrl = sessionWebUrl(server, storedBinding?.sessionID, session)
     const lines = [
-      "🧭 <b>Session</b>",
+      t("commands.session.title"),
       "",
-      "💬 <b>Telegram</b>",
+      t("commands.session.telegram"),
       `chat_id: <code>${escapeHtml(String(message.chat.id))}</code>`,
       `topic_id: <code>${escapeHtml(String(currentTopicId || 0))}</code>`,
       `message_id: <code>${escapeHtml(String(message.message_id))}</code>`,
@@ -850,58 +878,58 @@ export function createTelegramCommandHandlers({
     ]
     if (pending) {
       lines.push(
-        "🔗 <b>Binding</b>",
-        "status: 🟡 waiting for first prompt",
-        `server: <code>${escapeHtml(pending.serverID || "")}</code>`,
-        pending.chatTemplateName ? `profile: <code>${escapeHtml(pending.chatTemplateName)}</code>` : "profile: server default",
+        t("commands.session.binding"),
+        t("commands.session.waiting"),
+        t("commands.session.server", { valueHtml: escapeHtml(pending.serverID || "") }),
+        pending.chatTemplateName ? t("commands.session.profile", { valueHtml: escapeHtml(pending.chatTemplateName) }) : t("commands.session.profileDefault"),
         previousBinding?.sessionID
-          ? `previous session: <code>${escapeHtml(previousBinding.sessionID)}</code> (preserved in OpenCodez)`
+          ? t("commands.session.previous", { valueHtml: escapeHtml(previousBinding.sessionID) })
           : null,
-        pending.title ? `title: <code>${escapeHtml(pending.title)}</code>` : null,
+        pending.title ? t("commands.session.titleLine", { valueHtml: escapeHtml(pending.title) }) : null,
         "",
       )
     } else if (storedBinding) {
       lines.push(
-        "🔗 <b>Binding</b>",
-        `status: ${activeBinding ? "🟢 active" : "⚪ disabled"}`,
-        `server: <code>${escapeHtml(storedBinding.serverID || "")}</code>`,
-        `session: <code>${escapeHtml(storedBinding.sessionID || "")}</code>`,
-        storedBinding.disabledReason ? `reason: <code>${escapeHtml(storedBinding.disabledReason)}</code>` : null,
-        storedBinding.title ? `title: <code>${escapeHtml(storedBinding.title)}</code>` : null,
+        t("commands.session.binding"),
+        t(activeBinding ? "commands.session.statusActive" : "commands.session.statusDisabled"),
+        t("commands.session.server", { valueHtml: escapeHtml(storedBinding.serverID || "") }),
+        t("commands.session.session", { valueHtml: escapeHtml(storedBinding.sessionID || "") }),
+        storedBinding.disabledReason ? t("commands.session.reason", { valueHtml: escapeHtml(storedBinding.disabledReason) }) : null,
+        storedBinding.title ? t("commands.session.titleLine", { valueHtml: escapeHtml(storedBinding.title) }) : null,
         "",
       )
     } else {
-      lines.push("🔗 <b>Binding</b>", "status: ⚪ no OpenCodez session bound", "")
+      lines.push(t("commands.session.binding"), t("commands.session.statusNone"), "")
     }
     if (storedBinding) {
       const directory = session?.directory || storedBinding.directory
       lines.push(
-        "🖥 <b>OpenCodez</b>",
-        server?.url ? `server_url: <code>${escapeHtml(server.url)}</code>` : "server_url: unavailable",
-        directory ? `directory: <code>${escapeHtml(directory)}</code>` : null,
-        session?.agent || storedBinding.agent ? `agent: <code>${escapeHtml(session?.agent || storedBinding.agent)}</code>` : null,
+        t("commands.session.opencode"),
+        server?.url ? t("commands.session.serverUrl", { valueHtml: escapeHtml(server.url) }) : t("commands.session.serverUrlUnavailable"),
+        directory ? t("commands.session.directory", { valueHtml: escapeHtml(directory) }) : null,
+        session?.agent || storedBinding.agent ? t("commands.session.agent", { valueHtml: escapeHtml(session?.agent || storedBinding.agent) }) : null,
         modelLine(session?.model || storedBinding.model),
-        sessionUrl ? `url: <code>${escapeHtml(sessionUrl)}</code>` : "url: unavailable",
-        sessionError ? `lookup_error: <code>${escapeHtml(sessionError)}</code>` : null,
+        sessionUrl ? t("commands.session.url", { valueHtml: escapeHtml(sessionUrl) }) : t("commands.session.urlUnavailable"),
+        sessionError ? t("commands.session.lookupError", { valueHtml: escapeHtml(sessionError) }) : null,
         "",
       )
     }
     lines.push(
-      "📦 <b>Artifacts</b>",
-      `this_topic: ${thisIsArtifactsTopic ? "🟢 yes" : "⚪ no"}`,
-      artifactsTopic ? `current_topic_id: <code>${escapeHtml(String(artifactsTopic.topicId || 0))}</code>` : "current_topic_id: none",
-      artifactsTopic?.title ? `current_title: <code>${escapeHtml(artifactsTopic.title)}</code>` : null,
+      t("commands.session.artifacts"),
+      t("commands.session.thisTopic", { yes: thisIsArtifactsTopic }),
+      t("commands.session.currentTopic", { valueHtml: artifactsTopic ? `<code>${escapeHtml(String(artifactsTopic.topicId || 0))}</code>` : null }),
+      artifactsTopic?.title ? t("commands.session.currentTitle", { valueHtml: escapeHtml(artifactsTopic.title) }) : null,
       "",
-      "🎙 <b>Sounds</b>",
-      `this_topic: ${thisIsSoundsTopic ? "🟢 yes" : "⚪ no"}`,
-      soundsTopic ? `current_topic_id: <code>${escapeHtml(String(soundsTopic.topicId || 0))}</code>` : "current_topic_id: none",
-      soundsTopic?.title ? `current_title: <code>${escapeHtml(soundsTopic.title)}</code>` : null,
+      t("commands.session.sounds"),
+      t("commands.session.thisTopic", { yes: thisIsSoundsTopic }),
+      t("commands.session.currentTopic", { valueHtml: soundsTopic ? `<code>${escapeHtml(String(soundsTopic.topicId || 0))}</code>` : null }),
+      soundsTopic?.title ? t("commands.session.currentTitle", { valueHtml: escapeHtml(soundsTopic.title) }) : null,
     )
     await telegram.sendMessage({
       chatId: message.chat.id,
       topicId: currentTopicId,
       text: lines.filter(Boolean).join("\n"),
-      replyMarkup: sessionUrl ? { inline_keyboard: [[{ text: "Open session", url: sessionUrl }]] } : undefined,
+      replyMarkup: sessionUrl ? { inline_keyboard: [[{ text: t("commands.session.openButton"), url: sessionUrl }]] } : undefined,
     })
   }
 
@@ -915,47 +943,17 @@ export function createTelegramCommandHandlers({
 
   function helpText() {
     const profiles = Object.keys(config.chatTemplates || {}).join(", ") || "none"
-    return [
-      "<b>OpenCodez Bot</b>",
-      "",
-      "<code>/new [server] [profile] [dir:&lt;path&gt;] [title]</code> - create a topic and wait for the first prompt.",
-      "<code>/reset [profile] [server]</code> - preserve the old session and start fresh here, optionally changing profile and/or server.",
-      "<code>/session</code> - show current topic, binding, session URL, and special topic status.",
-      "<code>/q &lt;prompt&gt;</code> - queue a prompt for this topic/session.",
-      "<code>/q status</code> - show queued prompts.",
-      "<code>/q delete &lt;number&gt;</code> - remove a queued prompt.",
-      "<code>/kill</code> - stop the current run and clear queued prompts.",
-      "<code>/compact</code> - compact this topic’s OpenCodez context; prompts sent while it runs are queued.",
-      `<code>/context [N]</code> - send the latest 1–${MAX_CONTEXT_TURNS} completed or interrupted turns as collapsed copyable context.`,
-      `<code>/set_context N</code> - set your personal /context default from 1–${MAX_CONTEXT_TURNS}.`,
-      "<code>/artifacts_here</code> - make this topic the artifact target and file dropbox.",
-      "Drop files there with an optional server id caption; no caption uses the default server.",
-      "When speech is enabled, voice messages in ordinary topics become copyable transcript replies; send the transcript as text to use it as a prompt.",
-      "<code>/sounds_here</code> - use this topic as the dedicated voice/audio inbox with the model menu.",
-      "<code>/sounds_off</code> / <code>/sounds_status</code> - manage the dedicated inbox and show speech status.",
-      "<code>/notify_on</code> / <code>/notify_off</code> - toggle final-answer DMs for configured recipients.",
-      "<code>/notify_status</code> - show configured final-answer DM status.",
-      "<code>/tts</code> / <code>/tts status</code> - toggle or inspect global final-answer voice replies.",
-      "<code>/speak</code> - reply to a text message to voice its summary.",
-      "<code>/tts help</code> - show all voice, prompt, engine, and intro commands.",
-      "<code>/debug_on</code> / <code>/debug_off</code> - toggle global final-DM run diagnostics.",
-      "<code>/debug_status</code> - show global diagnostics status.",
-      "<code>/mode [full|economy]</code> - show or set the global mirror mode.",
-      "<code>/mirror_on</code> / <code>/mirror_off</code> - toggle web-to-Telegram mirroring.",
-      "",
-      `Profiles: <code>${escapeHtml(profiles)}</code>`,
-      "Files: send files/photos with a caption, or send files first and prompt text next.",
-    ].join("\n")
+    return t("commands.help.body", { maxContextTurns: MAX_CONTEXT_TURNS, profilesHtml: escapeHtml(profiles) })
   }
 
   async function sendQueueStatus(message, binding) {
     const items = promptQueue.status(binding)
     if (!items.length) {
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Queue is empty." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("commands.queue.empty") })
       return
     }
     const lines = items.map((item) => `${item.index}. <code>${escapeHtml(item.summary)}</code>`)
-    await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: `Queued prompts:\n${lines.join("\n")}` })
+    await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("commands.queue.status", { lines }) })
   }
 }
 
@@ -991,17 +989,13 @@ function modelLine(model) {
   const id = model.modelID || model.id || ""
   const variant = model.variant ? ` ${model.variant}` : ""
   const value = `${provider}${id}${variant}`.trim()
-  return value ? `model: <code>${escapeHtml(value)}</code>` : null
-}
-
-function turnLabel(count) {
-  return count === 1 ? "turn" : "turns"
+  return value ? t("commands.session.model", { valueHtml: escapeHtml(value) }) : null
 }
 
 function contextExportErrorText(error, count) {
   if (error.code !== "CONTEXT_TOO_LARGE") {
-    return "❌ <b>Could not send the collapsed context.</b>\nNo plain-text fallback was posted. Try again or request fewer turns."
+    return t("commands.context.collapsedFailed")
   }
-  if (count === 1) return "⚠️ <b>The latest context turn alone exceeds the safe export limit.</b>"
-  return `⚠️ <b>Context is too large for a safe collapsed export.</b>\nTry <code>/context ${count - 1}</code>.`
+  if (count === 1) return t("commands.context.latestTooLarge")
+  return t("commands.context.tooLargeCollapsed", { nextCount: count - 1 })
 }

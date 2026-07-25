@@ -7,6 +7,7 @@ import { parseNewTopicArgs } from "./chat-templates.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "./commands.mjs"
 import { createFinalNotifier } from "./final-notifications.mjs"
 import { FinalVoiceModule } from "./final-voice.mjs"
+import { configureI18n, t } from "./i18n/index.mjs"
 import { OpenCodeClient } from "./opencode.mjs"
 import { createPromptRouter } from "./prompt-routing.mjs"
 import { createQuestionManager } from "./questions.mjs"
@@ -26,6 +27,7 @@ assertRuntimeConfig(config)
 
 const state = new StateStore(config.paths.statePath)
 await state.load()
+configureI18n({ state, defaultLanguage: config.ui.defaultLanguage })
 if (config.telegram.chatId && !state.chatId) await state.setChatId(config.telegram.chatId)
 
 const telegram = new TelegramClient(config.telegram.token, config.telegram.botApi)
@@ -123,6 +125,7 @@ sessionReconciler = createSessionReconciler({
   logError,
   shouldStop: () => shutdownRequested,
 })
+let refreshCommandMenu = async () => {}
 const commandHandlers = createTelegramCommandHandlers({
   config,
   state,
@@ -137,6 +140,7 @@ const commandHandlers = createTelegramCommandHandlers({
   finalVoice,
   questionManager,
   updateManager,
+  refreshCommandMenu: () => refreshCommandMenu(),
 })
 const telegramPolling = createTelegramPolling({
   config,
@@ -159,6 +163,7 @@ const telegramPolling = createTelegramPolling({
   flushPromptKey: (key) => multipartPrompts.flushKey(key),
   logError,
 })
+refreshCommandMenu = telegramPolling.syncCommandMenu
 
 process.once("SIGINT", () => requestShutdown("SIGINT"))
 process.once("SIGTERM", () => requestShutdown("SIGTERM"))
@@ -203,12 +208,12 @@ async function createPendingTopic(message, args) {
   const titleFields = managedTopicTitle(title, serverID, opencode.servers)
   const topic = await telegram.createForumTopic({ chatId, name: titleFields.topicTitle, iconCustomEmojiId: topicIcon?.customEmojiId })
   await state.addPendingTopic(topic.message_thread_id, { serverID, ...titleFields, topicIconCustomEmojiId: topic.icon_custom_emoji_id || topicIcon?.customEmojiId, topicIconEmoji: topicIcon?.emoji, title: titleFields.topicBaseTitle, titleSource, chatTemplateName, chatTemplate, directory })
-  const suffix = chatTemplateName ? ` using <code>${escapeHtml(chatTemplateName)}</code>` : ""
-  const directoryLine = directory ? `\nDirectory: <code>${escapeHtml(directory)}</code>` : ""
+  const suffix = chatTemplateName ? t("topic.profileSuffix", { profileHtml: escapeHtml(chatTemplateName) }) : ""
+  const directoryLine = directory ? t("topic.directoryLine", { directoryHtml: escapeHtml(directory) }) : ""
   await telegram.sendMessage({
     chatId,
     topicId: topic.message_thread_id,
-    text: `New OpenCodez topic for <code>${escapeHtml(serverID)}</code>${suffix}.${directoryLine}\nSend the first prompt here.`,
+    text: t("topic.created", { serverHtml: escapeHtml(serverID), suffix, directoryLine }),
   })
 }
 

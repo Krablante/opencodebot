@@ -236,6 +236,13 @@ Keep summary and TTS credentials in `token.env`, never in JSON. Provider endpoin
 and timeouts remain operator-controlled in config and cannot be changed from Telegram. See
 [Final Voice](final-voice.md) for the complete configuration, commands, runtime behavior, and deployment sequence.
 
+## Interface Language
+
+`ui.defaultLanguage` selects the fallback global interface language for state that has no saved `/lang` choice. Commands
+remain English in both languages. `/lang eng` and `/lang ru` persist one global override under `ui.language` in state and
+refresh Telegram command-menu descriptions without restarting the bot. See [Interface Language](interface-language.md)
+for scope, catalog structure, exclusions, and operations.
+
 ## OpenCodez
 
 `opencode.baseUrl` is the local/default API origin used when a server-specific URL is not involved.

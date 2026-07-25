@@ -344,6 +344,8 @@ single-server deployments keep plain names.
   attachments, and state.
 - [Final Voice](docs/final-voice.md) covers optional final-answer summary and TTS voice replies, commands, provider
   contracts, queue behavior, and safe cutover.
+- [Interface Language](docs/interface-language.md) covers the global `/lang eng|ru` switch, localization boundaries,
+  persistent state, command-menu synchronization, and catalog maintenance.
 - [Artifact Gateway](docs/artifact-gateway.md) covers `/artifacts_here`, the LAN gateway, user-dropped artifact uploads,
   the OpenCodez plugin, and the bundled skill.
 - [Docker](docs/docker.md) covers the recommended Compose deployment path.

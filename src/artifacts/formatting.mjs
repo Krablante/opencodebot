@@ -1,6 +1,7 @@
 import path from "node:path"
 
 import { escapeHtml } from "../telegram.mjs"
+import { t } from "../i18n/index.mjs"
 
 export function artifactFileCaptionHtml(caption, captionPaths) {
   const lines = [escapeHtml(caption)]
@@ -32,7 +33,7 @@ export function safeContentType(value) {
 export function clampText(text, maxChars) {
   const value = String(text || "")
   if (value.length <= maxChars) return value
-  return `${value.slice(0, Math.max(0, maxChars - 35)).trimEnd()}\n\n[trimmed for Telegram message limit]`
+  return `${value.slice(0, Math.max(0, maxChars - 35)).trimEnd()}\n\n${t("artifacts.trimmedMessage")}`
 }
 
 function displayPathInfo(value) {
@@ -90,5 +91,5 @@ function cleanDirectoryDisplay(directory, flavor) {
 function clampTelegramCaptionHtml(value, maxChars = 950) {
   const text = String(value || "")
   if (text.length <= maxChars) return text
-  return `${text.slice(0, Math.max(0, maxChars - 34)).trimEnd()}\n...truncated artifact caption...`
+  return `${text.slice(0, Math.max(0, maxChars - 34)).trimEnd()}\n${t("artifacts.trimmedCaption")}`
 }

@@ -64,6 +64,11 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
       allowedUserIds,
       botApi: telegramBotApi,
     },
+    ui: {
+      defaultLanguage: ["ru", "rus", "russian"].includes(String(config.ui?.defaultLanguage || "").trim().toLowerCase())
+        ? "ru"
+        : "en",
+    },
     opencode: {
       ...normalizeOpencode(config.opencode),
       password: openCodePassword,

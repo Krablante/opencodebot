@@ -2,6 +2,7 @@ import { logErrorEvent, logInfo } from "./logger.mjs"
 import { isAllowedMessage, messageText, topicId } from "./telegram.mjs"
 import { formatArtifactUploadHelp } from "./artifact-uploads.mjs"
 import { normalizeTelegramRichMessage } from "./telegram-rich-message.mjs"
+import { t } from "./i18n/index.mjs"
 
 export function createTelegramPolling({
   config,
@@ -25,15 +26,16 @@ export function createTelegramPolling({
   logError,
 }) {
   async function syncCommandMenu() {
+    const menuCommands = typeof commands === "function" ? commands() : commands
     const scopes = telegramCommandScopes()
     for (const scope of scopes) {
       try {
-        await telegram.setMyCommands(commands, scope ? { scope } : {})
+        await telegram.setMyCommands(menuCommands, scope ? { scope } : {})
       } catch (error) {
         logErrorEvent("telegram.commands.sync_failed", error, { scope: JSON.stringify(scope) })
       }
     }
-    logInfo("telegram.commands.synced", { count: commands.length, scopes: scopes.map((scope) => scope?.type || "default") })
+    logInfo("telegram.commands.synced", { count: menuCommands.length, scopes: scopes.map((scope) => scope?.type || "default") })
   }
 
   function telegramCommandScopes() {
@@ -78,11 +80,11 @@ export function createTelegramPolling({
     const configuredChatId = state.chatId || config.telegram.chatId
     if (configuredChatId && String(configuredChatId) !== String(message.chat?.id)) return
     if (!isAllowedMessage({ from: query.from }, config)) {
-      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: "Not allowed", showAlert: true }).catch(() => {})
+      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("polling.notAllowed"), showAlert: true }).catch(() => {})
       return
     }
     if (await commandHandlers.handleCallback?.(query)) return
-    await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: "Unknown action", showAlert: true }).catch(() => {})
+    await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("polling.unknownAction"), showAlert: true }).catch(() => {})
   }
 
   async function handleTelegramMessage(message) {
@@ -106,7 +108,7 @@ export function createTelegramPolling({
 
     if (!configuredChatId && config.telegram.allowChatBootstrap) {
       await state.setChatId(message.chat.id)
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "OpenCodez mirror chat connected." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("polling.chatConnected") })
     }
 
     const artifactsTopic = state.isArtifactsTopic(message.chat.id, topicId(message))
@@ -125,7 +127,7 @@ export function createTelegramPolling({
         const command = parseCommand(text)
         if (artifactTopicCommandAllowed(command.name) && await commandHandlers.handle(message, command, promptKey)) return
         if (text.startsWith("/")) {
-          await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "This topic is reserved for artifacts and file dropbox uploads. Use another topic for OpenCodez sessions." })
+          await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("polling.artifactsReserved") })
           return
         }
       }
@@ -144,7 +146,7 @@ export function createTelegramPolling({
         const command = parseCommand(text)
         if (soundsTopicCommandAllowed(command.name) && await commandHandlers.handle(message, command, promptKey)) return
         if (text.startsWith("/")) {
-          await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "This topic is reserved for voice transcription. Use another topic for OpenCodez sessions." })
+          await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("polling.soundsReserved") })
           return
         }
       }
@@ -152,7 +154,7 @@ export function createTelegramPolling({
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: topicId(message),
-        text: "This topic is reserved for voice transcription. Send voice or audio messages here.",
+        text: t("polling.soundsHelp"),
       })
       return
     }
@@ -165,7 +167,7 @@ export function createTelegramPolling({
         await telegram.sendMessage({
           chatId: message.chat.id,
           topicId: topicId(message),
-          text: "⚠️ I couldn't read this Rich Message yet.\nPlease resend it as plain text or attach the images separately.",
+          text: t("polling.richUnreadable"),
         })
       }
       return
@@ -180,7 +182,7 @@ export function createTelegramPolling({
     if (await commandHandlers.handle(message, command, promptKey)) return
     if (text.startsWith("/")) {
       await flushPromptKey(promptKey)
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: "Unknown command. Send /help for available commands." })
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("polling.unknownCommand") })
       return
     }
 
@@ -192,7 +194,7 @@ export function createTelegramPolling({
     await telegram.sendMessage({
       chatId: message.chat.id,
       topicId: topicId(message),
-      text: "🔴 Topic is not bound\n🧭 Use /new, then send the prompt in the new topic",
+      text: t("polling.topicNotBound"),
     })
   }
 
@@ -223,11 +225,11 @@ export function parseCommand(text) {
 }
 
 function artifactTopicCommandAllowed(commandName) {
-  return ["artifacts_here", "session", "update", "help", "start", "notify_on", "notify_off", "notify_status"].includes(commandName)
+  return ["artifacts_here", "session", "update", "lang", "help", "start", "notify_on", "notify_off", "notify_status"].includes(commandName)
 }
 
 function soundsTopicCommandAllowed(commandName) {
-  return ["sounds_here", "sounds_off", "sounds_status", "session", "update", "help", "start", "notify_on", "notify_off", "notify_status"].includes(commandName)
+  return ["sounds_here", "sounds_off", "sounds_status", "session", "update", "lang", "help", "start", "notify_on", "notify_off", "notify_status"].includes(commandName)
 }
 
 function delay(ms) {

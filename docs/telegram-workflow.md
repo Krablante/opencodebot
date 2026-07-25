@@ -59,6 +59,7 @@ title synchronization after `/reset`.
 /notify_status                   show configured final-answer DM status
 /tts [on|off|status|...]         configure global final-answer voice replies
 /speak                           reply to text to voice a one-off summary
+/lang eng|ru                     switch the global interface language
 /update                          check GitHub now and offer an opencodebot-only update
 /debug_on                        enable global final-DM diagnostics
 /debug_off                       disable global final-DM diagnostics

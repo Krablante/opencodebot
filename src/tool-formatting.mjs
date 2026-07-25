@@ -17,7 +17,7 @@ export function shortUsefulResult(properties) {
 
 export function shortError(properties) {
   const error = properties.error || properties.result
-  if (!error) return "failed"
+  if (!error) return t("tools.failed")
   if (typeof error === "string") return trim(error, 160)
   return trim(error.message || error.name || JSON.stringify(error), 160)
 }
@@ -41,23 +41,23 @@ export function isHiddenTool(tool, hiddenTools) {
 export function toolSummaryLabel(tool, input = {}) {
   switch (inferTool(tool, input)) {
     case "read":
-      return "Read"
+      return t("tools.read")
     case "grep":
-      return "Search"
+      return t("tools.search")
     case "glob":
-      return "Glob"
+      return t("tools.glob")
     case "bash":
-      return "Shell"
+      return t("tools.shell")
     case "skill":
-      return "Skill"
+      return t("tools.skill")
     case "todowrite":
-      return "Todo"
+      return t("tools.todo")
     case "apply_patch":
-      return "Patch"
+      return t("tools.patch")
     case "edit":
-      return "Edit"
+      return t("tools.edit")
     case "write":
-      return "Write"
+      return t("tools.write")
     default:
       return titleCase(inferTool(tool, input) || tool || "tool")
   }
@@ -79,21 +79,21 @@ function toolAction(tool, input) {
   const inferred = inferTool(tool, input)
   switch (inferred) {
     case "read":
-      return compactJoin("Read", compactPath(input.filePath), kv("offset", input.offset), kv("limit", input.limit))
+      return compactJoin(t("tools.read"), compactPath(input.filePath), kv("offset", input.offset), kv("limit", input.limit))
     case "grep":
-      return compactJoin("Search", quote(input.pattern), compactPath(input.path), input.include ? `include=${input.include}` : "")
+      return compactJoin(t("tools.search"), quote(input.pattern), compactPath(input.path), input.include ? `include=${input.include}` : "")
     case "glob":
-      return compactJoin("Glob", quote(input.pattern), compactPath(input.path))
+      return compactJoin(t("tools.glob"), quote(input.pattern), compactPath(input.path))
     case "bash":
-      return compactJoin("Shell", input.description || trimOneLine(input.command, 90))
+      return compactJoin(t("tools.shell"), input.description || trimOneLine(input.command, 90))
     case "skill":
-      return compactJoin("Skill", input.name)
+      return compactJoin(t("tools.skill"), input.name)
     case "todowrite":
-      return compactJoin("Todo", Array.isArray(input.todos) ? `${input.todos.length} items` : "update")
+      return compactJoin(t("tools.todo"), Array.isArray(input.todos) ? t("tools.items", { count: input.todos.length }) : t("tools.update"))
     case "task":
-      return compactJoin(titleCase(input.subagent_type || "subagent"), input.description || "subagent")
+      return compactJoin(titleCase(input.subagent_type || t("tools.subagent")), input.description || t("tools.subagent"))
     case "apply_patch":
-      return compactJoin("Patch files", patchFileSummary(input))
+      return compactJoin(t("tools.patchFiles"), patchFileSummary(input))
     default:
       return compactJoin(titleCase(inferred || tool || "tool"), safeInputSummary(input))
   }
@@ -203,3 +203,4 @@ function normalizeToolName(tool) {
 function compactToolName(tool) {
   return normalizeToolName(tool).replace(/[^a-z0-9]/g, "")
 }
+import { t } from "./i18n/index.mjs"

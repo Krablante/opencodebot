@@ -5,6 +5,7 @@ import path from "node:path"
 
 import { downloadTelegramFiles } from "./attachments.mjs"
 import { joinServerPath, pathStyle, safeFilename, transferFile } from "./upload-transfer.mjs"
+import { t } from "./i18n/index.mjs"
 
 export class ArtifactUploadBuffer {
   constructor({ settings, flushUpload, onError = (error) => console.error(error) }) {
@@ -43,7 +44,7 @@ export class ArtifactUploadBuffer {
 export async function handleArtifactUploadMessage({ telegram, config, opencode, message, files }) {
   const uploadConfig = config.artifactUploads || {}
   if (!uploadConfig.enabled) {
-    await replyHTML(telegram, message, "Artifact uploads are disabled.")
+    await replyHTML(telegram, message, t("artifacts.disabled"))
     return { status: "disabled" }
   }
 
@@ -53,7 +54,7 @@ export async function handleArtifactUploadMessage({ telegram, config, opencode, 
     return { status: "unknown_server" }
   }
   if (!config.attachments?.enabled) {
-    await replyHTML(telegram, message, "Telegram file uploads are disabled.")
+    await replyHTML(telegram, message, t("artifacts.telegramDisabled"))
     return { status: "disabled" }
   }
 
@@ -67,7 +68,7 @@ export async function handleArtifactUploadMessage({ telegram, config, opencode, 
       requestedFilenames: target.requestedFilenames,
     })
   } catch (error) {
-    await replyHTML(telegram, message, `Could not save artifact upload: ${escapeHTML(error.message || String(error))}`)
+    await replyHTML(telegram, message, t("artifacts.saveFailed", { errorHtml: escapeHTML(error.message || String(error)) }))
     return { status: "failed", error }
   }
 
@@ -143,18 +144,9 @@ export function artifactUploadFilename({ originalFilename, requestedFilename }) 
 export function formatArtifactUploadHelp({ defaultServerId = "", availableServerIds = [] } = {}) {
   const exampleServer = defaultServerId || availableServerIds[0] || "nuc"
   const serverList = availableServerIds.length
-    ? `\nServers: <code>${escapeHTML(availableServerIds.join(", "))}</code>.`
+    ? `\n${t("artifacts.available", { serversHtml: escapeHTML(availableServerIds.join(", ")) }).trim()}`
     : ""
-  return [
-    "📥 <b>Artifact dropbox</b>",
-    "Attach one or more files and put the destination server first in the caption.",
-    "",
-    `<code>${escapeHTML(exampleServer)}</code> — keep every original filename`,
-    `<code>${escapeHTML(exampleServer)} photo</code> — rename the first file and inherit its complete extension`,
-    `<code>${escapeHTML(exampleServer)} photo1, photo2.png</code> — rename files in order`,
-    "",
-    `Missing names leave the remaining files unchanged.${serverList}`,
-  ].join("\n")
+  return t("artifacts.help", { exampleServerHtml: escapeHTML(exampleServer), serverList })
 }
 
 export function artifactTargetPath({ config, server, filename, now = new Date() }) {
@@ -204,14 +196,14 @@ function availableServerIds(opencode) {
 }
 
 function formatTargetError(target) {
-  if (target.error === "no_default_server") return "No artifact upload server is configured."
-  const available = target.available.length ? ` Available: <code>${escapeHTML(target.available.join(", "))}</code>.` : ""
-  return `Unknown artifact upload server: <code>${escapeHTML(target.requested)}</code>.${available}`
+  if (target.error === "no_default_server") return t("artifacts.noServer")
+  const available = target.available.length ? t("artifacts.available", { serversHtml: escapeHTML(target.available.join(", ")) }) : ""
+  return t("artifacts.unknownServer", { requestedHtml: escapeHTML(target.requested), available })
 }
 
 function formatSavedPaths({ server, paths }) {
   const body = paths.map(escapeHTML).join("\n")
-  return `✅ Saved to <code>${escapeHTML(server.id)}</code>:\n<blockquote>${body}</blockquote>`
+  return t("artifacts.saved", { serverHtml: escapeHTML(server.id), body })
 }
 
 function uniquedFiles(files) {

@@ -21,6 +21,7 @@ import { normalizeFinalVoiceConfig } from "../src/config/final-voice.mjs"
 import { normalizeUpdatesConfig } from "../src/config/updates.mjs"
 import { createFinalNotifier, finalNotificationMarkdown, finalNotificationTopicSource, formatDebugDiagnosticsText, formatDuration, formatTokenCount, runDiagnosticsBeforeAssistant, toolSummaryBeforeAssistant, turnMetadataBeforeAssistant, turnTokenUsageBeforeAssistant } from "../src/final-notifications.mjs"
 import { FinalVoiceModule } from "../src/final-voice.mjs"
+import { catalogKeys, configureI18n, getLanguage, setLanguage, t, tFor } from "../src/i18n/index.mjs"
 import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
 import { bindPendingTopicSession } from "../src/prompt-routing.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
@@ -52,6 +53,7 @@ await smokeLocalInvariants()
 await smokeRuntimeHealth(config, { explicit: Boolean(explicitConfigPath) })
 
 async function smokeLocalInvariants() {
+  await smokeI18n()
   smokeConfigExample()
   smokeUpdateSubsystem()
   await smokeUpdateManager()
@@ -103,6 +105,29 @@ async function smokeLocalInvariants() {
   await smokeIncompleteRunNotice()
   await smokePeriodicIncompleteRunGrace()
   await smokePeriodicReconcileDoesNotPostponeIncompleteWarning()
+}
+
+async function smokeI18n() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-i18n-smoke-"))
+  try {
+    const state = new StateStore(path.join(root, "state.json"))
+    await state.load()
+    configureI18n({ state, defaultLanguage: "en" })
+    assert.equal(getLanguage(), "en")
+    assert.match(telegramBotCommands().find((item) => item.command === "lang").description, /Switch interface language/)
+    assert.ok(catalogKeys().length > 150)
+    assert.match(tFor("ru", "polling.unknownCommand"), /Неизвестная команда/)
+    await setLanguage("ru")
+    assert.equal(state.data.ui.language, "ru")
+    assert.equal(getLanguage(), "ru")
+    assert.match(telegramBotCommands().find((item) => item.command === "lang").description, /Переключить язык/)
+    assert.match(t("finalVoice.automaticEnabled"), /включена глобально/)
+    configureI18n({ state, defaultLanguage: "en" })
+    assert.equal(getLanguage(), "ru")
+    await setLanguage("en")
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 }
 
 async function smokeFinalVoiceFlow() {
@@ -432,7 +457,9 @@ async function smokeMirrorModeCommands() {
   try {
     const state = new StateStore(statePath)
     await state.load()
+    configureI18n({ state, defaultLanguage: "en" })
     assert.equal(state.mirrorMode(), "full")
+    let menuRefreshes = 0
     const handlers = createTelegramCommandHandlers({
       config: { chatTemplates: {} },
       state,
@@ -441,6 +468,7 @@ async function smokeMirrorModeCommands() {
       promptQueue: {},
       multipartPrompts: { async flushKey() {} },
       createPendingTopic: async () => {},
+      refreshCommandMenu: async () => { menuRefreshes += 1 },
     })
     const message = { chat: { id: 123 }, message_thread_id: 456 }
     assert.equal(await handlers.handle(message, { name: "mode", args: "economy" }, "123:456"), true)
@@ -451,6 +479,16 @@ async function smokeMirrorModeCommands() {
     assert.equal(reloaded.mirrorMode(), "economy")
     assert.equal(await handlers.handle(message, { name: "mode", args: "full" }, "123:456"), true)
     assert.equal(state.mirrorMode(), "full")
+    assert.equal(await handlers.handle(message, { name: "lang", args: "ru" }, "123:456"), true)
+    assert.equal(state.data.ui.language, "ru")
+    assert.equal(menuRefreshes, 1)
+    assert.match(sent.at(-1).text, /переключён на русский/)
+    assert.equal(await handlers.handle(message, { name: "mode", args: "" }, "123:456"), true)
+    assert.match(sent.at(-1).text, /Режим зеркала/)
+    assert.equal(await handlers.handle(message, { name: "lang", args: "eng" }, "123:456"), true)
+    assert.equal(state.data.ui.language, "en")
+    assert.equal(menuRefreshes, 2)
+    assert.match(sent.at(-1).text, /switched to English/)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -1761,8 +1799,8 @@ async function smokeArtifactPluginBatchCaptions() {
 }
 
 async function smokeKillCommand() {
-  assert.ok(telegramBotCommands.some((command) => command.command === "kill"))
-  assert.ok(telegramBotCommands.some((command) => command.command === "debug_on"))
+  assert.ok(telegramBotCommands().some((command) => command.command === "kill"))
+  assert.ok(telegramBotCommands().some((command) => command.command === "debug_on"))
 
   const binding = { serverID: "nuc", sessionID: "ses_kill", directory: "/home/bloob/politia/projects/tg/opencodebot" }
   const sent = []
@@ -1832,7 +1870,7 @@ async function smokeKillCommand() {
 }
 
 async function smokeCompactCommand() {
-  assert.ok(telegramBotCommands.some((command) => command.command === "compact"))
+  assert.ok(telegramBotCommands().some((command) => command.command === "compact"))
 
   const binding = { serverID: "nuc", sessionID: "ses_compact", directory: "/tmp/work", topicId: 456 }
   const sent = []
@@ -1922,8 +1960,8 @@ async function smokeCompactCommand() {
 }
 
 async function smokeContextCommands() {
-  assert.ok(telegramBotCommands.some((command) => command.command === "context"))
-  assert.ok(telegramBotCommands.some((command) => command.command === "set_context"))
+  assert.ok(telegramBotCommands().some((command) => command.command === "context"))
+  assert.ok(telegramBotCommands().some((command) => command.command === "set_context"))
 
   const binding = { serverID: "nuc", sessionID: "ses_context", directory: "/tmp/work", topicId: 456 }
   const sent = []
@@ -2008,7 +2046,7 @@ async function smokeContextCommands() {
 }
 
 async function smokeResetCommand() {
-  assert.ok(telegramBotCommands.some((command) => command.command === "reset"))
+  assert.ok(telegramBotCommands().some((command) => command.command === "reset"))
 
   const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-reset-smoke-"))
   const statePath = path.join(root, "state.json")

@@ -17,6 +17,9 @@
       "localFilesRoot": "/var/lib/telegram-bot-api"
     }
   },
+  "ui": {
+    "defaultLanguage": "en"
+  },
   "updates": {
     "enabled": true,
     "repository": "Krablante/opencodebot",

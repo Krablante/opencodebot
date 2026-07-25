@@ -1,5 +1,6 @@
 import { visibleTextFromParts } from "./opencode.mjs"
 import { escapeHtml } from "./telegram.mjs"
+import { t } from "./i18n/index.mjs"
 
 export const DEFAULT_CONTEXT_TURNS = 3
 export const MAX_CONTEXT_TURNS = 10
@@ -74,8 +75,8 @@ export function buildCollapsedContextMessages(turns, {
   }
   const chunks = splitForEscapedHtml(text, maxRichContentBytes)
   return chunks.map((chunk, index) => {
-    const part = chunks.length > 1 ? ` · part ${index + 1}/${chunks.length}` : ""
-    const summary = `📋 Context · ${turns.length} turn${turns.length === 1 ? "" : "s"} · ${text.length.toLocaleString("en-US")} chars${part} · expand to copy`
+    const part = chunks.length > 1 ? t("context.part", { index: index + 1, total: chunks.length }) : ""
+    const summary = t("context.summary", { turns: turns.length, chars: text.length.toLocaleString("en-US"), part })
     return {
       html: `<details><summary>${escapeHtml(summary)}</summary><pre><code>${escapeHtml(chunk)}</code></pre></details>`,
       text: chunk,
@@ -100,7 +101,7 @@ function userPromptText(message) {
     .map((part) => {
       const name = part.filename || part.name || "attachment"
       const mime = part.mime || part.mimeType
-      return `[Attachment: ${name}${mime ? ` (${mime})` : ""}]`
+      return t("context.attachment", { name, mime })
     })
   return [text, ...attachments].filter(Boolean).join("\n")
 }
@@ -116,10 +117,10 @@ function contextRelevantMessage(message) {
 function formatContextTurns(turns) {
   return turns.map((turn) => {
     if (turn.interrupted) {
-      const progress = (turn.progress || []).flatMap((note, index) => ["", `### Progress ${index + 1}`, note.trim()])
-      return ["### User — interrupted", turn.prompt.trim(), ...progress].join("\n")
+      const progress = (turn.progress || []).flatMap((note, index) => ["", t("context.progress", { index: index + 1 }), note.trim()])
+      return [t("context.userInterrupted"), turn.prompt.trim(), ...progress].join("\n")
     }
-    return ["### User", turn.prompt.trim(), "", "### Assistant", turn.answer.trim()].join("\n")
+    return [t("context.user"), turn.prompt.trim(), "", t("context.assistant"), turn.answer.trim()].join("\n")
   }).join("\n\n---\n\n")
 }
 

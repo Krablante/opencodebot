@@ -2,7 +2,7 @@ export function parseNewTopicArgs(args, { servers, defaultServerID, chatTemplate
   const parts = tokenizeNewTopicArgs(args)
   const templates = chatTemplates || {}
   const serverID = parts[0] && servers.has(parts[0]) ? parts.shift() : defaultServerID
-  if (parts[0] === "gpt55p") throw new Error("Profile gpt55p was removed. Use luna, terra, or sol.")
+  if (parts[0] === "gpt55p") throw new Error(t("profiles.removed"))
   const chatTemplateName = parts[0] && templates[parts[0]] ? parts.shift() : ""
   let directory = ""
   const titleParts = []
@@ -24,13 +24,13 @@ export function parseResetProfileArg(args, { chatTemplates }) {
   const input = String(args || "").trim()
   if (!input) return null
   const parts = input.split(/\s+/)
-  if (parts.length !== 1) throw new Error("Usage: /reset [profile]")
+  if (parts.length !== 1) throw new Error(t("profiles.resetUsageOne"))
   const profile = parts[0]
-  if (profile === "gpt55p") throw new Error("Profile gpt55p was removed. Use luna, terra, or sol.")
+  if (profile === "gpt55p") throw new Error(t("profiles.removed"))
   const templates = chatTemplates || {}
   if (!templates[profile]) {
     const available = Object.keys(templates).sort().join(", ") || "none"
-    throw new Error(`Unknown profile ${profile}. Available profiles: ${available}.`)
+    throw new Error(t("profiles.unknown", { profile, available }))
   }
   return { chatTemplateName: profile, chatTemplate: templates[profile] }
 }
@@ -40,23 +40,23 @@ export function parseResetArgs(args, { chatTemplates, servers }) {
   const serverIds = new Set(servers instanceof Map ? servers.keys() : (servers || []).map((server) => server.id))
   const tokens = String(args || "").trim().split(/\s+/).filter(Boolean)
   if (!tokens.length) return { chatTemplateName: null, chatTemplate: null, serverID: null }
-  if (tokens.length > 2) throw new Error("Usage: /reset [profile] [server]")
+  if (tokens.length > 2) throw new Error(t("profiles.resetUsage"))
 
   if (tokens.length === 1) {
     const [token] = tokens
-    if (token === "gpt55p") throw new Error("Profile gpt55p was removed. Use luna, terra, or sol.")
+    if (token === "gpt55p") throw new Error(t("profiles.removed"))
     const profileMatch = Boolean(templates[token])
     const serverMatch = serverIds.has(token)
-    if (profileMatch && serverMatch) throw new Error(`Reset target ${token} is ambiguous. Use /reset <profile> <server>.`)
+    if (profileMatch && serverMatch) throw new Error(t("profiles.ambiguous", { token }))
     if (profileMatch) return { chatTemplateName: token, chatTemplate: templates[token], serverID: null }
     if (serverMatch) return { chatTemplateName: null, chatTemplate: null, serverID: token }
-    throw new Error(`Unknown reset profile or server: ${token}`)
+    throw new Error(t("profiles.unknownTarget", { token }))
   }
 
   const [profileName, serverID] = tokens
-  if (profileName === "gpt55p") throw new Error("Profile gpt55p was removed. Use luna, terra, or sol.")
-  if (!templates[profileName]) throw new Error(`Unknown chat profile: ${profileName}`)
-  if (!serverIds.has(serverID)) throw new Error(`Unknown OpenCodez server: ${serverID}`)
+  if (profileName === "gpt55p") throw new Error(t("profiles.removed"))
+  if (!templates[profileName]) throw new Error(t("profiles.unknownChat", { profile: profileName }))
+  if (!serverIds.has(serverID)) throw new Error(t("profiles.unknownServer", { server: serverID }))
   return { chatTemplateName: profileName, chatTemplate: templates[profileName], serverID }
 }
 
@@ -102,3 +102,4 @@ function directoryFromArg(value) {
   if (!match) return null
   return match[1].replace(/[\u0000-\u001f\u007f]/g, "").trim()
 }
+import { t } from "./i18n/index.mjs"

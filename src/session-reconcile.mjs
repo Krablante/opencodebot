@@ -4,6 +4,7 @@ import { formatToolLine } from "./render.mjs"
 import { runAfterFlight, runSingleFlight } from "./single-flight.mjs"
 import { escapeHtml } from "./telegram.mjs"
 import { managedTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
+import { t } from "./i18n/index.mjs"
 
 export function createSessionReconciler({
   config,
@@ -218,7 +219,7 @@ export function createSessionReconciler({
             await notifyRunAlert(binding, {
               kind: "error",
               properties,
-              detail: failure.errorText || "The run finished with an error.",
+              detail: failure.errorText || t("sessionError.runFailed"),
               topicMessageId: failure.message?.message_id,
             })
           }
@@ -486,15 +487,15 @@ export function createSessionReconciler({
         chatId: binding.chatId,
         topicId: binding.topicId,
         text: [
-          emptyTerminal ? "⚠️ <b>OpenCodez stopped without a final response</b>" : "⚠️ <b>OpenCodez run was interrupted</b>",
+          t(emptyTerminal ? "reconcile.emptyTitle" : "reconcile.interruptedTitle"),
           emptyTerminal
-            ? "The backend reported a normal stop, but the terminal assistant message contained no visible text."
-            : "The session became idle before a final answer was produced.",
-          `<b>Last state:</b> ${incompleteRunReason(outcome)}`,
-          "Continue the run in OpenCodez or send a new prompt in this topic.",
+            ? t("reconcile.emptyDetail")
+            : t("reconcile.idleDetail"),
+          t("reconcile.lastState", { reason: incompleteRunReason(outcome) }),
+          t("reconcile.continue"),
         ].join("\n\n"),
         disablePreview: true,
-        replyMarkup: sessionUrl ? { inline_keyboard: [[{ text: "Open session", url: sessionUrl }]] } : undefined,
+        replyMarkup: sessionUrl ? { inline_keyboard: [[{ text: t("reconcile.openSession"), url: sessionUrl }]] } : undefined,
       })
       await notifyRunAlert(binding, {
         kind: "interrupted",
@@ -1034,7 +1035,7 @@ export function normalizeSessionError(value) {
   if (value === null || value === undefined) return null
   const direct = typeof value === "object" ? value : {}
   const candidate = direct.error ?? direct.exception ?? direct.reason ?? value
-  if (typeof candidate === "string") return { title: "Session error", message: cleanSessionErrorMessage(candidate) }
+  if (typeof candidate === "string") return { title: t("sessionError.title.generic"), message: cleanSessionErrorMessage(candidate) }
   if (!candidate || typeof candidate !== "object") return null
 
   const data = candidate.data && typeof candidate.data === "object" ? candidate.data : {}
@@ -1044,38 +1045,38 @@ export function normalizeSessionError(value) {
   const message = explicitMessage || defaultSessionErrorMessage(name)
   if (!message && !name && statusCode === undefined) return null
 
-  const baseTitle = SESSION_ERROR_TITLES[name] || humanizeSessionErrorName(name) || "Session error"
+  const baseTitle = SESSION_ERROR_TITLE_KEYS[name] ? t(SESSION_ERROR_TITLE_KEYS[name]) : humanizeSessionErrorName(name) || t("sessionError.title.generic")
   const status = statusCode === undefined || statusCode === null || statusCode === "" ? "" : ` (${String(statusCode).slice(0, 16)})`
   return {
     title: `${baseTitle}${status}`.slice(0, 160),
-    message: cleanSessionErrorMessage(message || "OpenCodez reported an error without additional details."),
+    message: cleanSessionErrorMessage(message || t("sessionError.message.noDetails")),
   }
 }
 
-const SESSION_ERROR_TITLES = {
-  APIError: "API error",
-  ContentFilterError: "Content filter error",
-  ContextOverflowError: "Context overflow",
-  MessageAbortedError: "Session aborted",
-  MessageOutputLengthError: "Output limit reached",
-  ProviderAuthError: "Provider authentication error",
-  StructuredOutputError: "Structured output error",
-  UnknownError: "Unknown error",
+const SESSION_ERROR_TITLE_KEYS = {
+  APIError: "sessionError.title.APIError",
+  ContentFilterError: "sessionError.title.ContentFilterError",
+  ContextOverflowError: "sessionError.title.ContextOverflowError",
+  MessageAbortedError: "sessionError.title.MessageAbortedError",
+  MessageOutputLengthError: "sessionError.title.MessageOutputLengthError",
+  ProviderAuthError: "sessionError.title.ProviderAuthError",
+  StructuredOutputError: "sessionError.title.StructuredOutputError",
+  UnknownError: "sessionError.title.UnknownError",
 }
 
-const SESSION_ERROR_MESSAGES = {
-  APIError: "The model provider request failed.",
-  ContentFilterError: "The model provider blocked the response with its content filter.",
-  ContextOverflowError: "The session context is too large. Run /compact and retry the prompt.",
-  MessageAbortedError: "The OpenCodez run was aborted.",
-  MessageOutputLengthError: "The model reached its maximum output length before completing the response.",
-  ProviderAuthError: "The model provider rejected authentication. Check the provider credentials.",
-  StructuredOutputError: "The model could not produce the required structured output.",
-  UnknownError: "OpenCodez reported an unknown session error.",
+const SESSION_ERROR_MESSAGE_KEYS = {
+  APIError: "sessionError.message.APIError",
+  ContentFilterError: "sessionError.message.ContentFilterError",
+  ContextOverflowError: "sessionError.message.ContextOverflowError",
+  MessageAbortedError: "sessionError.message.MessageAbortedError",
+  MessageOutputLengthError: "sessionError.message.MessageOutputLengthError",
+  ProviderAuthError: "sessionError.message.ProviderAuthError",
+  StructuredOutputError: "sessionError.message.StructuredOutputError",
+  UnknownError: "sessionError.message.UnknownError",
 }
 
 function defaultSessionErrorMessage(name) {
-  return SESSION_ERROR_MESSAGES[name] || ""
+  return SESSION_ERROR_MESSAGE_KEYS[name] ? t(SESSION_ERROR_MESSAGE_KEYS[name]) : ""
 }
 
 function firstSessionErrorText(...values) {
@@ -1250,13 +1251,13 @@ function incompleteWarningKey(binding, outcome) {
 }
 
 function incompleteRunReason(outcome) {
-  if (outcome.reason === "empty_terminal") return "OpenCodez reported a normal stop, but the terminal assistant message was empty."
-  if (!outcome.assistantMessageID) return "No assistant response was created."
-  if (outcome.finish === "unknown") return "The assistant response ended unexpectedly."
-  if (outcome.finish === "tool-calls") return "The run stopped after a tool call."
-  if (outcome.finish === "length") return "The model reached its output limit."
-  if (outcome.finish === "content-filter") return "The response was stopped by the provider's content filter."
-  return "The assistant response did not reach a normal final answer."
+  if (outcome.reason === "empty_terminal") return t("reconcile.reason.emptyTerminal")
+  if (!outcome.assistantMessageID) return t("reconcile.reason.noAssistant")
+  if (outcome.finish === "unknown") return t("reconcile.reason.unexpected")
+  if (outcome.finish === "tool-calls") return t("reconcile.reason.toolCalls")
+  if (outcome.finish === "length") return t("reconcile.reason.length")
+  if (outcome.finish === "content-filter") return t("reconcile.reason.contentFilter")
+  return t("reconcile.reason.noFinal")
 }
 
 function sessionWebUrl(server, binding) {

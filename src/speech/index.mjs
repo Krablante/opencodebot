@@ -1,6 +1,7 @@
 import { cleanupFiles, downloadTelegramFiles, extractTelegramFiles } from "../attachments.mjs"
 import { logErrorEvent, logInfo } from "../logger.mjs"
 import { escapeHtml, topicId } from "../telegram.mjs"
+import { t } from "../i18n/index.mjs"
 import { GroqSpeechClient } from "./groq-client.mjs"
 import { OpenRouterSpeechClient } from "./openrouter-client.mjs"
 
@@ -152,36 +153,36 @@ export class SpeechModule {
     try {
       if (data === "sounds:refresh") {
         await this.createOrRefreshMenu({ chatId, topicId: currentTopicId, messageId: message.message_id })
-        await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: "Sounds menu refreshed" })
+        await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("speech.menuRefreshed") })
         return true
       }
       const modelId = decodeURIComponent(data.slice("sounds:model:".length))
       const model = this.models().find((item) => item.id === modelId)
       if (!model) {
-        await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: "Model is no longer configured", showAlert: true })
+        await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("speech.modelGone"), showAlert: true })
         await this.createOrRefreshMenu({ chatId, topicId: currentTopicId, messageId: message.message_id })
         return true
       }
       await this.state.setSpeechModelId(model.id)
       await this.createOrRefreshMenu({ chatId, topicId: currentTopicId, messageId: message.message_id })
-      await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: `STT model: ${model.label}` })
+      await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("speech.modelSelected", { label: model.label }) })
       return true
     } catch (error) {
       logErrorEvent("speech.menu.callback.failed", error, { chatId, topicId: currentTopicId, data })
-      await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: "Failed to update sounds menu", showAlert: true }).catch(() => {})
+      await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("speech.menuFailed"), showAlert: true }).catch(() => {})
       return true
     }
   }
 
   menuText() {
     const model = this.selectedModel()
-    if (!model) return "🎙 <b>Audio transcription model</b>\nNo configured STT models."
+    if (!model) return t("speech.menuEmpty")
     const parts = [
-      "🎙 <b>Audio transcription model</b>",
-      `Current: <code>${escapeHtml(model.label)}</code>${model.provider ? ` · ${escapeHtml(model.provider)}` : ""}`,
+      t("speech.menuTitle"),
+      t("speech.current", { labelHtml: escapeHtml(model.label), provider: model.provider ? escapeHtml(model.provider) : "" }),
     ]
-    if (model.price) parts.push(`Price: <code>${escapeHtml(model.price)}</code>`)
-    parts.push("Use buttons below to switch model. Refresh updates this menu after config changes.")
+    if (model.price) parts.push(t("speech.price", { priceHtml: escapeHtml(model.price) }))
+    parts.push(t("speech.menuHelp"))
     return parts.join("\n")
   }
 
@@ -191,7 +192,7 @@ export class SpeechModule {
       text: `${model.id === selected ? "✓ " : ""}${model.label}${model.provider ? ` · ${model.provider}` : ""}`,
       callback_data: `sounds:model:${encodeURIComponent(model.id)}`,
     }])
-    rows.push([{ text: "↻ Refresh", callback_data: "sounds:refresh" }])
+    rows.push([{ text: t("speech.refresh"), callback_data: "sounds:refresh" }])
     return { inline_keyboard: rows }
   }
 
@@ -218,7 +219,7 @@ export class SpeechModule {
         chatId,
         topicId: currentTopicId,
         replyToMessageId: message.message_id,
-        text: "Speech module is enabled but no configured STT provider is available.",
+        text: t("speech.noProvider"),
       })
       return
     }
@@ -272,13 +273,13 @@ export class SpeechModule {
             chatId,
             topicId: currentTopicId,
             replyToMessageId: message.message_id,
-            text: `Transcript delivery stopped after ${delivered}/${transcriptParts.length} parts. Retry the voice message to receive the complete text.`,
+            text: t("speech.partialDelivery", { delivered, total: transcriptParts.length }),
           }).catch(() => {})
         } else {
           await this.telegram.editMessageText({
             chatId,
             messageId: status?.message_id,
-            text: `Speech transcript delivery failed.\n<code>${escapeHtml(error.message)}</code>`,
+            text: t("speech.deliveryFailed", { errorHtml: escapeHtml(error.message) }),
           }).catch(() => {})
         }
       } else {
@@ -286,7 +287,7 @@ export class SpeechModule {
         await this.telegram.editMessageText({
           chatId,
           messageId: status?.message_id,
-          text: `Speech transcription failed.\n<code>${escapeHtml(error.message)}</code>`,
+          text: t("speech.transcriptionFailed", { errorHtml: escapeHtml(error.message) }),
         }).catch(() => {})
       }
     } finally {

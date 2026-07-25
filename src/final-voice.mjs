@@ -1,4 +1,5 @@
 import { logErrorEvent, logInfo, logWarn } from "./logger.mjs"
+import { t } from "./i18n/index.mjs"
 
 const FINAL_VOICE_STATE_LIMIT = 512
 const TELEGRAM_TEXT_LIMIT = 3900
@@ -82,33 +83,11 @@ export class FinalVoiceModule {
   }
 
   helpSummary() {
-    return [
-      "Final Voice:",
-      "/tts — toggle automatic voice globally",
-      "/tts status — current configuration",
-      "/tts help — all voice commands",
-      "/speak — reply to a message and voice its summary",
-    ].join("\n")
+    return t("finalVoice.helpSummary")
   }
 
   helpText() {
-    return [
-      "🎙️ Final Voice",
-      "",
-      "/tts — включить или выключить автоозвучку глобально",
-      "/tts on|off — включить или выключить явно",
-      "/tts status — показать состояние",
-      "/tts prompt — показать промпт",
-      "/tts prompt <текст> — изменить общий промпт",
-      "/tts prompt reset — вернуть промпт по умолчанию",
-      "/tts voice [имя] — показать или выбрать голос",
-      "/tts engine [имя] — показать или выбрать TTS-профиль",
-      "/tts minlength [число] — минимальная длина финала",
-      "/tts intro [текст|off|reset] — вступительная фраза",
-      "/speak — ответьте этой командой на текст для ручной озвучки",
-      "",
-      "Старые команды /озвучка, /промпт, /голос, /движок, /минимум, /стартовый, /озвучь и их английские аналоги тоже работают.",
-    ].join("\n")
+    return t("finalVoice.help")
   }
 
   async handleTTS(message, args) {
@@ -125,136 +104,129 @@ export class FinalVoiceModule {
     if (["minlength", "minimum", "минимум"].includes(action)) return this.handleMinLength(message, tokens.join(" "))
     if (["intro", "стартовый"].includes(action)) return this.handleIntro(message, tokens.join(" "))
     if (["steps", "шаги"].includes(action)) return this.handleSteps(message)
-    return this.reply(message, "Неизвестная подкоманда. Используйте /tts help.")
+    return this.reply(message, t("finalVoice.unknownSubcommand"))
   }
 
   async setGlobalEnabled(message, enabled) {
     if (enabled && !this.config.enabled) {
-      return this.reply(message, "Final Voice выключен оператором в конфигурации deployment.")
+      return this.reply(message, t("finalVoice.deploymentDisabled"))
     }
     const readiness = this.readiness(this.settings().profile)
     if (enabled && !readiness.ready) {
-      return this.reply(message, `Final Voice пока не готов: ${readiness.reason}.`)
+      return this.reply(message, t("finalVoice.notReady", { reason: readiness.reason }))
     }
     await this.patchSettings({ enabled })
-    return this.reply(message, enabled
-      ? "🔊 Автоозвучка включена глобально."
-      : "🔇 Автоозвучка выключена глобально.")
+    return this.reply(message, t(enabled ? "finalVoice.automaticEnabled" : "finalVoice.automaticDisabled"))
   }
 
   async sendStatus(message) {
     const settings = this.settings()
     const profile = this.config.tts.profiles[settings.profile]
     const readiness = this.readiness(settings.profile)
-    const promptMode = settings.promptOverride ? "настроен глобально" : "по умолчанию"
-    const intro = settings.introTemplate ? "включено" : "выключено"
-    const reasoning = this.config.summary.requestBody?.reasoning_effort || "не задан"
-    const lines = [
-      "🎙️ Final Voice",
-      "",
-      `Deployment: ${this.config.enabled ? "включён" : "выключен"}`,
-      `Готовность: ${readiness.ready ? "готов" : `не готов — ${readiness.reason}`}`,
-      `Автоозвучка: ${settings.enabled ? "включена глобально" : "выключена глобально"}`,
-      `Summary: ${this.config.summary.model}`,
-      `Reasoning: ${reasoning}`,
-      `TTS-профиль: ${settings.profile}${profile?.label ? ` — ${profile.label}` : ""}`,
-      `Модель: ${profile?.model || "не настроена"}`,
-      `Голос: ${settings.voice || "не настроен"}`,
-      `Минимум: ${settings.minFinalChars} символов`,
-      `Промпт: ${promptMode}`,
-      `Вступление: ${intro}`,
-      `Очередь: ${this.active} выполняется, ${this.pending.length} ожидает`,
-    ]
-    if (this.lastError) lines.push(`Последняя ошибка: ${this.lastError}`)
-    return this.reply(message, lines.join("\n"))
+    return this.reply(message, t("finalVoice.status", {
+      deployment: t(this.config.enabled ? "common.enabled" : "common.disabled"),
+      readiness: readiness.ready ? t("finalVoice.ready") : t("finalVoice.notReadyStatus", { reason: readiness.reason }),
+      automatic: t(settings.enabled ? "finalVoice.globallyEnabled" : "finalVoice.globallyDisabled"),
+      summary: this.config.summary.model,
+      reasoning: this.config.summary.requestBody?.reasoning_effort || t("finalVoice.valueNotSet"),
+      profile: `${settings.profile}${profile?.label ? ` — ${profile.label}` : ""}`,
+      model: profile?.model || t("finalVoice.valueNotSet"),
+      voice: settings.voice || t("finalVoice.valueNotSet"),
+      minimum: settings.minFinalChars,
+      prompt: t(settings.promptOverride ? "finalVoice.promptCustom" : "finalVoice.promptDefault"),
+      intro: t(settings.introTemplate ? "common.enabled" : "common.disabled"),
+      active: this.active,
+      pending: this.pending.length,
+      lastError: this.lastError,
+    }))
   }
 
   async handlePrompt(message, args) {
     const value = String(args || "").trim()
     if (!value) {
       const settings = this.settings()
-      const label = settings.promptOverride ? "Общий промпт" : "Промпт по умолчанию"
+      const label = t(settings.promptOverride ? "finalVoice.promptTitleCustom" : "finalVoice.promptTitleDefault")
       return this.reply(message, `${label}:\n\n${clampText(settings.prompt, 3400)}`)
     }
     if (["reset", "сброс"].includes(value.toLowerCase())) return this.resetPrompt(message)
-    if (value.length > 12_000) return this.reply(message, "Промпт слишком длинный. Максимум — двенадцать тысяч символов.")
+    if (value.length > 12_000) return this.reply(message, t("finalVoice.promptTooLong"))
     await this.patchSettings({ prompt: value })
-    return this.reply(message, "✅ Общий промпт обновлён для всех топиков.")
+    return this.reply(message, t("finalVoice.promptUpdated"))
   }
 
   async resetPrompt(message) {
     await this.patchSettings({ prompt: null })
-    return this.reply(message, "✅ Для всех топиков используется промпт по умолчанию.")
+    return this.reply(message, t("finalVoice.promptReset"))
   }
 
   async handleVoice(message, args) {
     const settings = this.settings()
     const profile = this.config.tts.profiles[settings.profile]
-    if (!profile) return this.reply(message, "Текущий TTS-профиль не найден в конфигурации.")
+    if (!profile) return this.reply(message, t("finalVoice.profileMissing"))
     const requested = String(args || "").trim().toLowerCase()
-    if (!requested) return this.reply(message, `Доступные голоса: ${profile.voices.join(", ")}\nСейчас: ${settings.voice}`)
+    if (!requested) return this.reply(message, t("finalVoice.voices", { voices: profile.voices.join(", "), current: settings.voice }))
     const voice = profile.voices.find((item) => item.toLowerCase() === requested)
-    if (!voice) return this.reply(message, `Неизвестный голос. Доступны: ${profile.voices.join(", ")}`)
+    if (!voice) return this.reply(message, t("finalVoice.voiceUnknown", { voices: profile.voices.join(", ") }))
     await this.patchSettings({ voice })
-    return this.reply(message, `✅ Голос ${voice} выбран глобально.`)
+    return this.reply(message, t("finalVoice.voiceSelected", { voice }))
   }
 
   async handleEngine(message, args) {
     const settings = this.settings()
     const requested = String(args || "").trim().toLowerCase()
     const profileIDs = Object.keys(this.config.tts.profiles)
-    if (!requested) return this.reply(message, `Доступные TTS-профили: ${profileIDs.join(", ")}\nСейчас: ${settings.profile}`)
+    if (!requested) return this.reply(message, t("finalVoice.profiles", { profiles: profileIDs.join(", "), current: settings.profile }))
     const profile = this.config.tts.profiles[requested]
-    if (!profile) return this.reply(message, `Профиль не настроен. Доступны: ${profileIDs.join(", ")}`)
+    if (!profile) return this.reply(message, t("finalVoice.profileUnknown", { profiles: profileIDs.join(", ") }))
     await this.patchSettings({ profile: requested, voice: profile.defaultVoice })
-    return this.reply(message, `✅ TTS-профиль ${requested} и голос ${profile.defaultVoice} выбраны глобально.`)
+    return this.reply(message, t("finalVoice.profileSelected", { profile: requested, voice: profile.defaultVoice }))
   }
 
   async handleMinLength(message, args) {
     const value = String(args || "").trim()
-    if (!value) return this.reply(message, `Сейчас глобально: ${this.settings().minFinalChars} символов.`)
-    if (!/^\d+$/.test(value)) return this.reply(message, "Укажите целое число от ста до ста тысяч.")
+    if (!value) return this.reply(message, t("finalVoice.minimumCurrent", { value: this.settings().minFinalChars }))
+    if (!/^\d+$/.test(value)) return this.reply(message, t("finalVoice.minimumInteger"))
     const minFinalChars = Number(value)
-    if (minFinalChars < 100 || minFinalChars > 100_000) return this.reply(message, "Допустимый диапазон: от ста до ста тысяч символов.")
+    if (minFinalChars < 100 || minFinalChars > 100_000) return this.reply(message, t("finalVoice.minimumRange"))
     await this.patchSettings({ minFinalChars })
-    return this.reply(message, `✅ Глобальная минимальная длина финала: ${minFinalChars} символов.`)
+    return this.reply(message, t("finalVoice.minimumUpdated", { value: minFinalChars }))
   }
 
   async handleIntro(message, args) {
     const value = String(args || "").trim()
     const settings = this.settings()
     if (!value) return this.reply(message, settings.introTemplate
-      ? `Текущее вступление:\n${settings.introTemplate}`
-      : "Вступительная фраза выключена.")
+      ? t("finalVoice.introCurrent", { value: settings.introTemplate })
+      : t("finalVoice.introDisabled"))
     if (["off", "выкл", "выключить"].includes(value.toLowerCase())) {
       await this.patchSettings({ introTemplate: "" })
-      return this.reply(message, "✅ Вступительная фраза выключена глобально.")
+      return this.reply(message, t("finalVoice.introDisabledGlobally"))
     }
     if (["reset", "сброс"].includes(value.toLowerCase())) {
       await this.patchSettings({ introTemplate: null })
-      return this.reply(message, "✅ Для всех топиков восстановлено вступление по умолчанию.")
+      return this.reply(message, t("finalVoice.introReset"))
     }
-    if (value.length > 1_000) return this.reply(message, "Вступление слишком длинное. Максимум — тысяча символов.")
+    if (value.length > 1_000) return this.reply(message, t("finalVoice.introTooLong"))
     await this.patchSettings({ introTemplate: value })
-    return this.reply(message, "✅ Общая вступительная фраза обновлена для всех топиков.")
+    return this.reply(message, t("finalVoice.introUpdated"))
   }
 
   async handleSteps(message) {
-    return this.reply(message, "Параметр «шаги» сохранён как совместимая команда, но OpenAI-compatible Silero его не использует.")
+    return this.reply(message, t("finalVoice.stepsUnsupported"))
   }
 
   async handleSpeak(message) {
-    if (!this.config.enabled) return this.reply(message, "Final Voice выключен оператором в конфигурации deployment.")
+    if (!this.config.enabled) return this.reply(message, t("finalVoice.deploymentDisabled"))
     const source = message.reply_to_message
     const text = String(source?.text || source?.caption || "").trim()
-    if (!source?.message_id || !text) return this.reply(message, "Ответьте командой /speak или /озвучь на текстовое сообщение.")
+    if (!source?.message_id || !text) return this.reply(message, t("finalVoice.speakReplyRequired"))
     const settings = this.settings()
     const readiness = this.readiness(settings.profile)
-    if (!readiness.ready) return this.reply(message, `Final Voice пока не готов: ${readiness.reason}.`)
+    if (!readiness.ready) return this.reply(message, t("finalVoice.notReady", { reason: readiness.reason }))
     const key = `manual:${message.chat.id}:${message.message_id}`
-    if (this.wasSent(key) || this.inFlight.has(key)) return this.reply(message, "Это сообщение уже поставлено на озвучку.")
-    if (this.pending.length >= this.config.queue.maxPending) return this.reply(message, "Очередь озвучки заполнена. Попробуйте чуть позже.")
-    const status = await this.reply(message, "🎙️ Готовлю краткую озвучку…")
+    if (this.wasSent(key) || this.inFlight.has(key)) return this.reply(message, t("finalVoice.alreadyQueued"))
+    if (this.pending.length >= this.config.queue.maxPending) return this.reply(message, t("finalVoice.queueFull"))
+    const status = await this.reply(message, t("finalVoice.preparing"))
     const binding = this.bindingFor(message.chat.id, message.message_thread_id)
     const queued = this.enqueueJob({
       key,
@@ -271,7 +243,7 @@ export class FinalVoiceModule {
       await this.telegram.editMessageText({
         chatId: message.chat.id,
         messageId: status.message_id,
-        text: "❌ Не удалось поставить озвучку в очередь. Попробуйте чуть позже.",
+        text: t("finalVoice.queueFailed"),
         format: "plain",
       }).catch(() => undefined)
     }
@@ -344,7 +316,7 @@ export class FinalVoiceModule {
       await this.telegram.editMessageText({
         chatId: job.chatId,
         messageId: job.statusMessageId,
-        text: "❌ Не удалось подготовить озвучку. Текстовое сообщение не затронуто; попробуйте ещё раз позже.",
+        text: t("finalVoice.jobFailed"),
         format: "plain",
       }).catch(() => undefined)
     }
@@ -439,10 +411,10 @@ export class FinalVoiceModule {
   }
 
   readiness(profileID) {
-    if (!this.summaryReady()) return { ready: false, reason: `не задан ${this.config.summary.apiKeyEnv}` }
+    if (!this.summaryReady()) return { ready: false, reason: t("finalVoice.reason.missingKey", { env: this.config.summary.apiKeyEnv }) }
     const profile = this.config.tts.profiles[profileID]
-    if (!profile) return { ready: false, reason: "не найден TTS-профиль" }
-    if (!profile.baseURL || !profile.model || !profile.defaultVoice) return { ready: false, reason: "TTS-профиль настроен не полностью" }
+    if (!profile) return { ready: false, reason: t("finalVoice.reason.profileMissing") }
+    if (!profile.baseURL || !profile.model || !profile.defaultVoice) return { ready: false, reason: t("finalVoice.reason.profileIncomplete") }
     return { ready: true }
   }
 
@@ -633,6 +605,6 @@ function clampText(value, maxChars) {
 }
 
 function friendlyError(error) {
-  if (error?.name === "AbortError") return "таймаут или остановка запроса"
-  return String(error?.message || "неизвестная ошибка").slice(0, 160)
+  if (error?.name === "AbortError") return t("finalVoice.error.aborted")
+  return String(error?.message || t("finalVoice.error.unknown")).slice(0, 160)
 }

@@ -1,5 +1,6 @@
 import { clampTelegram, escapeHtml, telegramMessageLink } from "./telegram.mjs"
 import { logInfo } from "./logger.mjs"
+import { t } from "./i18n/index.mjs"
 
 const CALLBACK_PREFIX = "oq:"
 
@@ -117,26 +118,26 @@ export function createQuestionManager({
     const [, requestID, optionText] = data.split(":")
     const record = state.questionRecord(requestID)
     if (!record || record.status !== "pending") {
-      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: "На этот вопрос уже ответили", showAlert: true })
+      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("questions.alreadyAnswered"), showAlert: true })
       return true
     }
     if (query.message?.chat?.id !== record.chatId || query.message?.message_id !== record.messageId) {
-      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: "Кнопка относится к другому вопросу", showAlert: true })
+      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("questions.wrongQuestion"), showAlert: true })
       return true
     }
     const option = record.question?.options?.[Number(optionText)]
     if (!option) {
-      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: "Вариант больше недоступен", showAlert: true })
+      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("questions.optionUnavailable"), showAlert: true })
       return true
     }
     const binding = state.findBinding(record.serverID, record.sessionID)
     try {
       await opencode.replyQuestion(record.serverID, requestID, [[option.label]], { directory: binding?.directory })
       await handleResolved(requestID, "answered", [[option.label]])
-      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: `Выбрано: ${option.label}` })
+      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("questions.selected", { option: option.label }) })
     } catch (error) {
       logError(error, { event: "question.reply", requestID })
-      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: "Не удалось отправить ответ", showAlert: true })
+      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("questions.replyFailed"), showAlert: true })
     }
     return true
   }
@@ -157,7 +158,7 @@ export function createQuestionManager({
       await handleResolved(record.requestID, "answered", [[text]])
     } catch (error) {
       logError(error, { event: "question.custom_reply", requestID: record.requestID })
-      await telegram.sendMessage({ chatId: record.chatId, topicId: record.topicId, text: "Не удалось отправить собственный ответ в OpenCodez." })
+      await telegram.sendMessage({ chatId: record.chatId, topicId: record.topicId, text: t("questions.customFailed") })
     }
     return true
   }
@@ -215,8 +216,8 @@ export function createQuestionManager({
       try {
         await telegram.sendMessage({
           chatId: userID,
-          text: `❓ <b>OpenCodez ждёт ответа</b>\n💬 ${escapeHtml(binding.topicTitle || `Topic ${binding.topicId}`)}\nБез ответа работа в этой сессии не продолжится.`,
-          replyMarkup: link ? { inline_keyboard: [[{ text: "Открыть вопрос", url: link }]] } : undefined,
+          text: t("questions.notification", { topicHtml: escapeHtml(binding.topicTitle || t("questions.topicFallback", { topicId: binding.topicId })) }),
+          replyMarkup: link ? { inline_keyboard: [[{ text: t("questions.open"), url: link }]] } : undefined,
         })
         record.notifiedUserIds.push(value)
         await state.upsertQuestion(record)
@@ -248,9 +249,9 @@ function normalizeQuestions(questions) {
 
 function renderQuestion(record) {
   const question = record.question
-  const lines = ["❓ <b>OpenCodez ждёт ответа</b>"]
+  const lines = [t("questions.title")]
   if (!question) {
-    lines.push("", "В опроснике несколько вопросов. Ответьте на них в OpenCodez.")
+    lines.push("", t("questions.multipleIntro"))
     ;(record.questions || []).forEach((item, index) => {
       lines.push("", `<b>${index + 1}.</b> ${escapeHtml(item.text)}`)
     })
@@ -260,12 +261,12 @@ function renderQuestion(record) {
       lines.push("", `<b>${index + 1}. ${escapeHtml(option.label)}</b>`)
       if (option.description) lines.push(escapeHtml(option.description))
     })
-    if (question.multiple) lines.push("", "Для выбора нескольких вариантов ответьте через OpenCodez.")
-    else if (question.custom) lines.push("", "Свой ответ можно отправить реплаем на это сообщение.")
+    if (question.multiple) lines.push("", t("questions.multipleHelp"))
+    else if (question.custom) lines.push("", t("questions.customHelp"))
   }
-  if (record.status === "answered") lines.push("", `✅ <b>Выбран ответ:</b> ${escapeHtml(flattenAnswers(record.answers))}`)
-  if (record.status === "rejected") lines.push("", "⚪️ Вопрос отменён в OpenCodez.")
-  if (record.status === "closed") lines.push("", "⚪️ Вопрос закрыт в OpenCodez.")
+  if (record.status === "answered") lines.push("", t("questions.answered", { answerHtml: escapeHtml(flattenAnswers(record.answers)) }))
+  if (record.status === "rejected") lines.push("", t("questions.rejected"))
+  if (record.status === "closed") lines.push("", t("questions.closed"))
   return clampTelegram(lines.join("\n"))
 }
 
@@ -280,5 +281,5 @@ function questionReplyMarkup(record) {
 }
 
 function flattenAnswers(answers) {
-  return (answers || []).flat().filter(Boolean).join(", ") || "ответ отправлен"
+  return (answers || []).flat().filter(Boolean).join(", ") || t("questions.answerSent")
 }

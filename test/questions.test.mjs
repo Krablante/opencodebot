@@ -51,8 +51,8 @@ test("single-choice questions render buttons, notify, and reply through OpenCode
 
   assert.deepEqual(replies, [{ serverID: "nuc", requestID: "que_test", answers: [["Сделай ты"]] }])
   assert.deepEqual(edits[0].replyMarkup, { inline_keyboard: [] })
-  assert.match(edits[0].text, /Выбран ответ.*Сделай ты/s)
-  assert.equal(callbacks[0].text, "Выбрано: Сделай ты")
+  assert.match(edits[0].text, /Selected answer.*Сделай ты/s)
+  assert.equal(callbacks[0].text, "Selected: Сделай ты")
   assert.equal(manager.hasPending("nuc", "ses_test"), false)
 
   await manager.handleEvent({ id: "nuc" }, binding, {
@@ -64,7 +64,7 @@ test("single-choice questions render buttons, notify, and reply through OpenCode
     },
   })
   const custom = state.questionRecord("que_custom")
-  assert.match(sent[2].text, /Свой ответ можно отправить реплаем/)
+  assert.match(sent[2].text, /You can send a custom answer by replying/)
   assert.equal(await manager.handleReplyMessage({
     chat: { id: binding.chatId },
     message_thread_id: binding.topicId,
@@ -72,5 +72,5 @@ test("single-choice questions render buttons, notify, and reply through OpenCode
     reply_to_message: { message_id: custom.messageId },
   }), true)
   assert.deepEqual(replies[1], { serverID: "nuc", requestID: "que_custom", answers: [["Мой собственный ответ"]] })
-  assert.match(edits.at(-1).text, /Выбран ответ.*Мой собственный ответ/s)
+  assert.match(edits.at(-1).text, /Selected answer.*Мой собственный ответ/s)
 })

@@ -1,5 +1,6 @@
 import { logInfo } from "./logger.mjs"
 import { clampTelegram, escapeHtml, telegramMessageLink } from "./telegram.mjs"
+import { t } from "./i18n/index.mjs"
 
 export function createRunAlerter({ config, state, telegram, logError = () => {} }) {
   const recipients = [...new Set((config.finalNotifications?.userIds || []).map(String))]
@@ -44,10 +45,10 @@ export function createRunAlerter({ config, state, telegram, logError = () => {} 
 }
 
 function runAlertText(binding, kind, detail) {
-  const title = kind === "interrupted" ? "⚠️ Run interrupted" : "❌ OpenCodez run error"
-  const topic = escapeHtml(binding.topicTitle || `Topic ${binding.topicId}`)
+  const title = t(kind === "interrupted" ? "runAlert.interrupted" : "runAlert.error")
+  const topic = escapeHtml(binding.topicTitle || t("runAlert.topicFallback", { topicId: binding.topicId }))
   const source = escapeHtml(binding.serverID)
-  const detailText = String(detail || (kind === "interrupted" ? "The run stopped without a final response." : "The run failed."))
+  const detailText = String(detail || t(kind === "interrupted" ? "runAlert.interruptedDetail" : "runAlert.failedDetail"))
   return [
     `${title}`,
     `💬 <b>${topic}</b>`,
@@ -59,7 +60,7 @@ function runAlertText(binding, kind, detail) {
 function runAlertMarkup(binding, topicMessageId, sessionUrl) {
   const buttons = []
   const topicLink = telegramMessageLink(binding.chatId, topicMessageId || binding.topicId)
-  if (topicLink) buttons.push({ text: "Open topic", url: topicLink })
-  if (sessionUrl) buttons.push({ text: "Open session", url: sessionUrl })
+  if (topicLink) buttons.push({ text: t("runAlert.openTopic"), url: topicLink })
+  if (sessionUrl) buttons.push({ text: t("runAlert.openSession"), url: sessionUrl })
   return buttons.length ? { inline_keyboard: [buttons] } : undefined
 }

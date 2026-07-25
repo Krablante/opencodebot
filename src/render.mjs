@@ -1,4 +1,5 @@
 import { clampTelegram, escapeHtml, TELEGRAM_RICH_TEXT_MAX_CHARS } from "./telegram.mjs"
+import { t } from "./i18n/index.mjs"
 import {
   formatToolLine,
   isHiddenTool,
@@ -501,7 +502,7 @@ function rememberBounded(set, value, maxSize) {
 
 function subagentSpawnMessage(input = {}) {
   const title = shortText(subagentSpawnTitle(input), 140)
-  return `🤖 Subagent spawned: <code>${escapeHtml(title)}</code>`
+  return t("render.subagentSpawned", { titleHtml: escapeHtml(title) })
 }
 
 function hasSubagentSpawnTitle(input = {}) {

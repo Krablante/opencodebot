@@ -2,6 +2,7 @@ import { textFromPrompt } from "./opencode.mjs"
 import { escapeMarkdownV2, toolQuoteMarkdownV2 } from "./rich-markdown.mjs"
 import { escapeHtml, telegramMessageLink } from "./telegram.mjs"
 import { logErrorEvent, logInfo } from "./logger.mjs"
+import { t } from "./i18n/index.mjs"
 import { changedFilesForTool, isHiddenTool, isTaskTool, toolNameSet, toolSummaryLabel } from "./tool-formatting.mjs"
 
 const FINAL_NOTIFICATION_SAFE_CHARS = 3800
@@ -79,9 +80,9 @@ async function sendFinalNotificationMessage({ telegram, userId, text, fallbackTe
 
 export function finalNotificationMarkdown({ topicSource, serverID, promptText, completedTodos = [], tools = [], patchedFiles = [], durationMs, modelID, variant, tokenUsage, debugDiagnostics }) {
   const lines = [
-    "🏁 *Final answer is ready*",
+    `*${t("final.ready")}*`,
     finalNotificationTopicMarkdown(topicSource),
-    `🖥️ Server: ${escapeMarkdownV2(serverID)}`,
+    t("final.server", { server: escapeMarkdownV2(serverID) }),
   ]
   const telemetry = finalNotificationTelemetryLine({ durationMs, modelID, variant })
   if (telemetry) lines.push(escapeMarkdownV2(telemetry))
@@ -101,9 +102,9 @@ export function finalNotificationMarkdown({ topicSource, serverID, promptText, c
 
 function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos = [], tools = [], patchedFiles = [], durationMs, modelID, variant, tokenUsage, debugDiagnostics }) {
   const lines = [
-    "🏁 Final answer is ready",
+    t("final.ready"),
     finalNotificationTopicHtml(topicSource),
-    `🖥️ Server: <code>${escapeHtml(serverID)}</code>`,
+    t("final.server", { server: `<code>${escapeHtml(serverID)}</code>` }),
   ]
   const telemetry = finalNotificationTelemetryLine({ durationMs, modelID, variant })
   if (telemetry) lines.push(escapeHtml(telemetry))
@@ -120,9 +121,9 @@ function finalNotificationFallbackHtml({ topicSource, serverID, completedTodos =
 
 function finalNotificationCompactHtml({ topicSource, serverID, tools = [], patchedFiles = [], durationMs, modelID, variant, tokenUsage, debugDiagnostics }) {
   const lines = [
-    "🏁 Final answer is ready",
+    t("final.ready"),
     finalNotificationTopicHtml(topicSource),
-    `🖥️ Server: <code>${escapeHtml(serverID)}</code>`,
+    t("final.server", { server: `<code>${escapeHtml(serverID)}</code>` }),
   ]
   const telemetry = finalNotificationTelemetryLine({ durationMs, modelID, variant })
   if (telemetry) lines.push(escapeHtml(telemetry))
@@ -139,7 +140,7 @@ function clampNotificationMarkdown(lines, importantTail = [], debugTail = [], he
   let text = lines.join("\n")
   if (text.length <= FINAL_NOTIFICATION_SAFE_CHARS) return text
   const compact = lines.slice(0, headerLines)
-  compact.push("", toolQuoteMarkdownV2("Notification context was too long and was trimmed. Open the topic for full context."))
+  compact.push("", toolQuoteMarkdownV2(t("final.trimmed")))
   if (importantTail.length) compact.push("", ...importantTail)
   if (debugTail.length) compact.push("", ...debugTail)
   text = compact.join("\n")
@@ -149,24 +150,24 @@ function clampNotificationMarkdown(lines, importantTail = [], debugTail = [], he
 function formatToolSummaryMarkdown(tools, patchedFiles) {
   const lines = []
   const toolText = summarizeItems(
-    tools.map((tool) => `${tool.name} × ${tool.count}${tool.failed ? ` (${tool.failed} failed)` : ""}`),
+    tools.map((tool) => `${tool.name} × ${tool.count}${tool.failed ? ` (${t("final.failedCount", { count: tool.failed })})` : ""}`),
     900,
   )
   const patchedText = summarizeItems(patchedFileDisplayNames(patchedFiles), 2200)
-  if (toolText) lines.push(`🔧 Tools: ${toolText}`)
-  if (patchedText) lines.push(`🩹 Patched: ${patchedText}`)
+  if (toolText) lines.push(t("final.tools", { value: toolText }))
+  if (patchedText) lines.push(t("final.patched", { value: patchedText }))
   return lines.length ? toolQuoteMarkdownV2(lines.join("\n")).split("\n") : []
 }
 
 function formatToolSummaryHtml(tools, patchedFiles) {
   const lines = []
   const toolText = summarizeItems(
-    tools.map((tool) => `${tool.name} × ${tool.count}${tool.failed ? ` (${tool.failed} failed)` : ""}`),
+    tools.map((tool) => `${tool.name} × ${tool.count}${tool.failed ? ` (${t("final.failedCount", { count: tool.failed })})` : ""}`),
     900,
   )
   const patchedText = summarizeItems(patchedFileDisplayNames(patchedFiles), 2200)
-  if (toolText) lines.push(`🔧 Tools: ${toolText}`)
-  if (patchedText) lines.push(`🩹 Patched: ${patchedText}`)
+  if (toolText) lines.push(t("final.tools", { value: toolText }))
+  if (patchedText) lines.push(t("final.patched", { value: patchedText }))
   return lines.length ? [`<blockquote>${lines.map((line) => escapeHtml(line)).join("\n")}</blockquote>`] : []
 }
 
@@ -214,13 +215,13 @@ function summarizeItems(values, maxChars) {
   const visible = []
   for (let index = 0; index < items.length; index += 1) {
     const remaining = items.length - visible.length
-    const suffix = remaining > 1 ? `; +${remaining} more` : ""
+    const suffix = remaining > 1 ? `; ${t("common.more", { count: remaining })}` : ""
     const candidate = [...visible, items[index]].join("; ")
     if (candidate.length + suffix.length > maxChars && visible.length) break
     visible.push(items[index])
   }
   if (visible.length === items.length) return visible.join("; ")
-  return `${visible.join("; ")}; +${items.length - visible.length} more`
+  return `${visible.join("; ")}; ${t("common.more", { count: items.length - visible.length })}`
 }
 
 function patchedFileDisplayNames(values) {
@@ -237,7 +238,7 @@ function fileDisplayName(value) {
 function truncateNotificationText(value, maxChars) {
   const text = String(value || "").trim()
   if (!text || text.length <= maxChars) return text
-  return `${text.slice(0, Math.max(0, maxChars - 16)).trimEnd()}... [trimmed]`
+  return `${text.slice(0, Math.max(0, maxChars - 16)).trimEnd()}... ${t("common.trimmed")}`
 }
 
 function finalNotificationTelemetryLine({ durationMs, modelID, variant }) {
@@ -253,7 +254,7 @@ function finalNotificationTokenLine(tokenUsage) {
   if (!tokenUsage) return ""
   const output = tokenUsage.output + tokenUsage.reasoning
   const cache = tokenUsage.cacheRead + tokenUsage.cacheWrite
-  return `🪙 Tokens: ${formatTokenCount(tokenUsage.total)} · in ${formatTokenCount(tokenUsage.input)} · out ${formatTokenCount(output)} · cache ${formatTokenCount(cache)}`
+  return t("final.tokens", { total: formatTokenCount(tokenUsage.total), input: formatTokenCount(tokenUsage.input), output: formatTokenCount(output), cache: formatTokenCount(cache) })
 }
 
 export function formatTokenCount(value) {
@@ -275,21 +276,17 @@ export function formatDuration(value) {
   seconds -= hours * 3600
   const minutes = Math.floor(seconds / 60)
   seconds -= minutes * 60
-  const parts = []
-  if (hours) parts.push(`${hours}h`)
-  if (minutes || hours) parts.push(`${minutes}m`)
-  parts.push(`${seconds}s`)
-  return parts.join(" ")
+  return t("common.duration.full", { hours, minutes, seconds })
 }
 
 function finalNotificationReplyMarkup(link) {
   if (!link) return undefined
-  return { inline_keyboard: [[{ text: "Open topic", url: link }]] }
+  return { inline_keyboard: [[{ text: t("final.openTopic"), url: link }]] }
 }
 
 function finalNotificationTopicSource(binding) {
   return {
-    title: String(binding?.topicTitle || `Topic ${binding?.topicId || ""}`).trim(),
+    title: String(binding?.topicTitle || t("final.topicFallback", { topicId: binding?.topicId || "" })).trim(),
     iconCustomEmojiId: normalizeCustomEmojiId(binding?.topicIconCustomEmojiId),
     iconEmoji: normalizeTopicIconEmoji(binding?.topicIconEmoji),
   }
@@ -299,12 +296,12 @@ export { finalNotificationTopicSource }
 
 function finalNotificationTopicMarkdown(topicSource) {
   const icon = topicSource?.iconCustomEmojiId ? `![${escapeMarkdownV2(topicSource.iconEmoji || "💬")}](tg://emoji?id=${topicSource.iconCustomEmojiId}) ` : ""
-  return `💬 *Topic:* ${icon}${escapeMarkdownV2(topicSource?.title || "Topic")}`
+  return t("final.topicMarkdown", { icon, title: escapeMarkdownV2(topicSource?.title || t("final.topicFallback", { topicId: "" })) })
 }
 
 function finalNotificationTopicHtml(topicSource) {
   const icon = topicSource?.iconCustomEmojiId ? `<tg-emoji emoji-id="${escapeHtml(topicSource.iconCustomEmojiId)}">${escapeHtml(topicSource.iconEmoji || "💬")}</tg-emoji> ` : ""
-  return `💬 Topic: ${icon}<b>${escapeHtml(topicSource?.title || "Topic")}</b>`
+  return t("final.topicHtml", { icon, title: escapeHtml(topicSource?.title || t("final.topicFallback", { topicId: "" })) })
 }
 
 function normalizeCustomEmojiId(value) {
@@ -693,7 +690,7 @@ function formatCompletedTodoLines(todos, { maxItems, maxItemChars }) {
   if (!items.visible.length) return []
   const lines = [`📋 Tasks [${items.visible.length}/${items.total}]:`]
   items.visible.forEach((item, index) => lines.push(`✅ ${index + 1}. ${item}`))
-  if (items.hidden > 0) lines.push(`✅ ${items.visible.length + 1}. and ${items.hidden} more`)
+  if (items.hidden > 0) lines.push(t("final.moreItem", { index: items.visible.length + 1, hidden: items.hidden }))
   return lines
 }
 
