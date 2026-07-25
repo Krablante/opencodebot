@@ -2,7 +2,8 @@
 
 OpenCodeBot has one global interface language for all chats, topics, recipients, command menus, buttons, status messages, and asynchronous notifications.
 
-Commands always remain in English. Switch the interface without restarting the bot:
+Commands always remain in English. The preferred switch is `General → System`; the direct command remains available
+without restarting the bot:
 
 ```text
 /lang
@@ -12,7 +13,9 @@ Commands always remain in English. Switch the interface without restarting the b
 
 `/lang en` is accepted as a convenience alias for `/lang eng`. The selected language is stored as `ui.language` in the existing atomic `state.json` and survives restart. A command sent in any permitted topic changes the interface everywhere.
 
-The response to `/lang eng|ru` is written in the newly selected language. OpenCodeBot also refreshes Telegram's command-menu descriptions. If Telegram temporarily rejects that refresh, normal interface text still switches immediately and startup retries the menu synchronization.
+The panel is redrawn immediately in the selected language. The response to `/lang eng|ru` is likewise written in the
+newly selected language. OpenCodeBot also refreshes Telegram's command-menu descriptions. If Telegram temporarily rejects
+that refresh, normal interface text still switches immediately and startup retries the menu synchronization.
 
 ## Scope
 
@@ -62,10 +65,10 @@ Dynamic provider errors may remain in their original language inside a localized
 
 Useful smoke sequence:
 
-1. Run `/lang ru` and inspect the reply plus Telegram command menu.
-2. Run `/help`, `/session`, `/tts status`, and one harmless status/error flow.
+1. Select Russian in `General → System` and inspect the panel plus Telegram command menu.
+2. Open Help, run `/session`, `/tts`, and one harmless status/error flow.
 3. Trigger one asynchronous notification or question and verify it uses Russian.
-4. Run `/lang eng` and repeat the checks in English.
+4. Select English in the panel and repeat the checks.
 5. Return to the preferred production language.
 
-Rollback is only `/lang eng`; no restart, database migration, or deployment change is required.
+Rollback is one panel click or `/lang eng`; no restart, database migration, or deployment change is required.

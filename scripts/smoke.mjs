@@ -114,7 +114,9 @@ async function smokeI18n() {
     await state.load()
     configureI18n({ state, defaultLanguage: "en" })
     assert.equal(getLanguage(), "en")
-    assert.match(telegramBotCommands().find((item) => item.command === "lang").description, /Switch interface language/)
+    assert.equal(telegramBotCommands().length, 10)
+    assert.match(telegramBotCommands().find((item) => item.command === "menu").description, /control center/)
+    assert.equal(telegramBotCommands().some((item) => item.command === "lang"), false)
     assert.ok(catalogKeys().length > 150)
     assert.match(tFor("ru", "polling.unknownCommand"), /Неизвестная команда/)
     assert.match(tFor("ru", "questions.answered", { answerHtml: "ответ" }), /Выбран ответ/)
@@ -125,7 +127,8 @@ async function smokeI18n() {
     await setLanguage("ru")
     assert.equal(state.data.ui.language, "ru")
     assert.equal(getLanguage(), "ru")
-    assert.match(telegramBotCommands().find((item) => item.command === "lang").description, /Переключить язык/)
+    assert.match(telegramBotCommands().find((item) => item.command === "menu").description, /центр управления/)
+    assert.match(t("controlMenu.title"), /Центр управления/)
     assert.match(t("finalVoice.automaticEnabled"), /включена глобально/)
     const russianFinal = finalNotificationMarkdown({ topicSource: { title: "KFR101 (dima)", iconCustomEmojiId: "123", iconEmoji: "⚡️" }, serverID: "dima", promptText: "" })
     assert.ok(russianFinal.startsWith("💬 *Топик:* ![⚡️](tg://emoji?id=123) KFR101 \\(dima\\)"))
@@ -284,6 +287,8 @@ async function smokeFinalVoiceFlow() {
     assert.equal(finalVoice.settings().enabled, false)
     const anotherTopic = { chat: { id: -1001 }, message_id: 101, message_thread_id: 999 }
     await handlers.озвучка(anotherTopic, "")
+    assert.equal(finalVoice.settings().enabled, false)
+    await handlers.озвучка(anotherTopic, "включить")
     assert.equal(finalVoice.settings().enabled, true)
     await handlers.status(commandMessage)
     assert.match(replies.at(-1), /Reasoning: max/)
@@ -1849,7 +1854,7 @@ async function smokeArtifactPluginBatchCaptions() {
 
 async function smokeKillCommand() {
   assert.ok(telegramBotCommands().some((command) => command.command === "kill"))
-  assert.ok(telegramBotCommands().some((command) => command.command === "debug_on"))
+  assert.equal(telegramBotCommands().some((command) => command.command === "debug_on"), false)
 
   const binding = { serverID: "nuc", sessionID: "ses_kill", directory: "/home/bloob/politia/projects/tg/opencodebot" }
   const sent = []
@@ -2010,7 +2015,7 @@ async function smokeCompactCommand() {
 
 async function smokeContextCommands() {
   assert.ok(telegramBotCommands().some((command) => command.command === "context"))
-  assert.ok(telegramBotCommands().some((command) => command.command === "set_context"))
+  assert.equal(telegramBotCommands().some((command) => command.command === "set_context"), false)
 
   const binding = { serverID: "nuc", sessionID: "ses_context", directory: "/tmp/work", topicId: 456 }
   const sent = []

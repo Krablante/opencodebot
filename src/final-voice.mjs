@@ -96,7 +96,7 @@ export class FinalVoiceModule {
   async handleTTS(message, args) {
     const tokens = splitArgs(args)
     const action = String(tokens.shift() || "").toLowerCase()
-    if (!action) return this.setGlobalEnabled(message, !this.settings().enabled)
+    if (!action) return this.sendStatus(message)
     if (["on", "enable", "вкл", "включить"].includes(action)) return this.setGlobalEnabled(message, true)
     if (["off", "disable", "выкл", "выключить"].includes(action)) return this.setGlobalEnabled(message, false)
     if (["status", "статус"].includes(action)) return this.sendStatus(message)

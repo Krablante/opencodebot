@@ -201,8 +201,13 @@ The local Telegram Bot API sidecar is also optional. Add `TELEGRAM_API_ID` and `
 
 ## Commands
 
-Use `/start` or `/help` when you want the bot to show its command summary. These commands are safe to run in a normal
-topic, and they do not create or change an OpenCodez session.
+OpenCodeBot creates one pinned control-panel message in General. It shows active sessions and current global state, and
+provides inline controls for new sessions, Final Voice, personal notifications/context depth, language, and mirror mode.
+Use `/menu`, `/start`, or `/help` to refresh or open it. Running one of these commands in another topic returns a temporary
+link to the same General panel rather than creating another menu. See [General Control Menu](docs/control-menu.md).
+
+Telegram's visible slash suggestions contain only the common panel and topic commands. Rare setup and operator commands
+remain accepted when typed, so existing operational procedures continue to work without crowding the normal interface.
 
 Use `/update` to check GitHub immediately. An available revision is shown with readable notes, a full compare link, and
 `Update & restart` / `Not now` buttons. Scheduled checks use `updates.checkAt` and `updates.timeZone` from private config
@@ -338,13 +343,15 @@ single-server deployments keep plain names.
 
 ## Docs
 
+- [General Control Menu](docs/control-menu.md) covers the singleton pinned panel, command scope, callbacks, reply-based
+  settings, state recovery, and operations.
 - [Telegram Workflow](docs/telegram-workflow.md) covers topics, `/new`, `/reset`, `/q`, `/kill`, attachments, multipart
   prompts, rich messages, tools, user-prompt pins, final notifications, and reconcile.
 - [Config And Runtime](docs/config-runtime.md) covers config loading, token handling, chat profiles, mirror settings,
   attachments, and state.
 - [Final Voice](docs/final-voice.md) covers optional final-answer summary and TTS voice replies, commands, provider
   contracts, queue behavior, and safe cutover.
-- [Interface Language](docs/interface-language.md) covers the global `/lang eng|ru` switch, localization boundaries,
+- [Interface Language](docs/interface-language.md) covers the global panel and `/lang eng|ru` switch, localization boundaries,
   persistent state, command-menu synchronization, and catalog maintenance.
 - [Artifact Gateway](docs/artifact-gateway.md) covers `/artifacts_here`, the LAN gateway, user-dropped artifact uploads,
   the OpenCodez plugin, and the bundled skill.

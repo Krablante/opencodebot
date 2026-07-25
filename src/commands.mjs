@@ -14,12 +14,7 @@ import {
   parseContextTurnCount,
 } from "./context-export.mjs"
 
-const commandDefinitions = [
-  "new", "reset", "session", "artifacts_here", "sounds_here", "sounds_off", "sounds_status",
-  "q", "kill", "compact", "context", "set_context", "notify_on", "notify_off", "notify_status",
-  "tts", "speak", "lang", "update", "debug_on", "debug_off", "debug_status", "mode",
-  "mirror_on", "mirror_off", "help", "start",
-]
+const commandDefinitions = ["menu", "new", "session", "q", "compact", "context", "speak", "reset", "kill", "help"]
 
 export function telegramBotCommands() {
   return commandDefinitions.map((command) => ({
@@ -42,6 +37,7 @@ export function createTelegramCommandHandlers({
   finalVoice,
   questionManager,
   updateManager,
+  controlMenu,
   refreshCommandMenu = async () => {},
 }) {
   const compactOperations = new Map()
@@ -61,8 +57,9 @@ export function createTelegramCommandHandlers({
     session: handleSessionInfo,
     new: createPendingTopic,
     reset: handleResetCommand,
-    help: sendHelp,
-    start: sendHelp,
+    menu: (message) => controlMenu.open(message),
+    help: (message) => controlMenu.open(message, "help"),
+    start: (message) => controlMenu.open(message),
     q: handleQueueCommand,
     kill: handleKillCommand,
     compact: handleCompactCommand,
@@ -90,9 +87,13 @@ export function createTelegramCommandHandlers({
       return true
     },
     async handleCallback(query) {
+      if (await controlMenu?.handleCallback?.(query)) return true
       if (await updateManager?.handleCallback?.(query)) return true
       if (await questionManager?.handleCallback?.(query)) return true
       return Boolean(await speech?.handleCallbackQuery?.(query))
+    },
+    handleMessage(message) {
+      return controlMenu?.handleMessage?.(message) || false
     },
   }
 
@@ -908,19 +909,6 @@ export function createTelegramCommandHandlers({
       text: lines.filter(Boolean).join("\n"),
       replyMarkup: sessionUrl ? { inline_keyboard: [[{ text: t("commands.session.openButton"), url: sessionUrl }]] } : undefined,
     })
-  }
-
-  async function sendHelp(message) {
-    await telegram.sendMessage({
-      chatId: message.chat.id,
-      topicId: topicId(message),
-      text: helpText(),
-    })
-  }
-
-  function helpText() {
-    const profiles = Object.keys(config.chatTemplates || {}).join(", ") || "none"
-    return t("commands.help.body", { maxContextTurns: MAX_CONTEXT_TURNS, profilesHtml: escapeHtml(profiles) })
   }
 
   async function sendQueueStatus(message, binding) {

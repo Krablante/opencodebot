@@ -479,7 +479,8 @@ Telegram bot, OpenCodez API mirroring, long polling, and LAN web UI do not depen
 ## Paths And State
 
 `paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, pending topics waiting for
-their first prompt, the current artifacts topic, the current sounds topic, the global full/economy mirror mode, mirror
+their first prompt, the singleton General control-menu chat/message reference, the current artifacts topic, the current
+sounds topic, the global full/economy mirror mode, mirror
 enabled state, pending Telegram-origin prompt ids, known sessions, per-session mirror markers, bounded reconcile
 windows, final-notification opt-ins/dedupe markers, a bounded incomplete-run handling ledger, a bounded list of
 OpenCodez question/message bindings, and bounded reply-to-rewind links. The incomplete-run ledger contains only

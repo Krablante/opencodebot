@@ -61,11 +61,11 @@ When `finalVoice.enabled` is false:
 The compact interface is:
 
 ```text
-/tts                         toggle automatic voice globally
+/tts                         show readiness and effective global settings
 /tts on|off                  explicitly enable or disable it
 /tts status                  show readiness and effective settings
 /tts prompt                  show the effective prompt
-/tts prompt <text>           set a topic prompt
+/tts prompt <text>           set the global prompt
 /tts prompt reset            restore the deployment default
 /tts voice [name]            list or select a configured voice
 /tts engine [profile]        list or select a configured TTS profile
@@ -77,9 +77,15 @@ The compact interface is:
 
 Legacy commands remain accepted: `/озвучка`, `/промпт`, `/промпт_сброс`, `/голос`, `/движок`, `/минимум`, `/шаги`, `/стартовый`, `/озвучь`, `/статус`, `/помощь`, and their English aliases from the previous service.
 
-Telegram Bot API command-menu names permit only lowercase English letters, digits, and underscores. Therefore the menu advertises `/tts` and `/speak`; Cyrillic aliases work when typed manually.
+Telegram Bot API command-menu names permit only lowercase English letters, digits, and underscores. The compact visible
+menu advertises `/speak`; Final Voice configuration lives in the General control panel and `/tts` remains available as a
+typed accelerator. Cyrillic aliases work when typed manually.
 
-All Final Voice settings are global and stored once in the existing atomic `state.json`: automatic on/off, prompt, TTS profile, voice, minimum final length, and intro. Changing any of them from one topic immediately affects every topic. Telegram topic data is used only to route the resulting voice reply. A session `/reset` does not reset Final Voice settings.
+All Final Voice settings are global and stored once in the existing atomic `state.json`: automatic on/off, prompt, TTS profile, voice, minimum final length, and intro. The preferred UI is `General → Voice`; commands remain available as direct accelerators. Changing any setting from the panel or one topic immediately affects every topic. Telegram topic data is used only to route the resulting voice reply. A session `/reset` does not reset Final Voice settings.
+
+Panel buttons set explicit on/off values and never perform a blind toggle. Bare `/tts` is likewise status-only so that
+checking state cannot accidentally disable automatic voice. `/tts toggle` remains available only as an explicit legacy
+shortcut.
 
 On first startup after upgrading from the earlier topic-local format, OpenCodeBot migrates the enabled state and existing overrides into the single global settings object and removes the obsolete topic map. Existing prompts are preserved.
 

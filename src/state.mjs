@@ -242,6 +242,22 @@ export class StateStore {
     return messageId || null
   }
 
+  controlMenuMessage() {
+    const menu = this.data.telegram.controlMenu
+    if (!menu?.messageId) return null
+    return {
+      chatId: menu.chatId ?? this.chatId,
+      messageId: Number(menu.messageId),
+    }
+  }
+
+  async setControlMenuMessage({ chatId, messageId } = {}) {
+    return this.update((data) => {
+      data.telegram.controlMenu = messageId ? { chatId, messageId: Number(messageId) } : null
+      return data.telegram.controlMenu
+    })
+  }
+
   isSoundsTopic(chatId, topicId) {
     const topic = this.soundsTopic()
     return Boolean(topic && String(topic.chatId) === String(chatId) && Number(topic.topicId || 0) === Number(topicId || 0))
@@ -823,7 +839,7 @@ function defaultState() {
   return {
     version: 1,
     ui: {},
-    telegram: { mirrorMode: "full", contextTurnsByUser: {}, artifactsTopic: null, soundsTopic: null },
+    telegram: { mirrorMode: "full", contextTurnsByUser: {}, artifactsTopic: null, soundsTopic: null, controlMenu: null },
     bindings: [],
     pendingTopics: {},
     pendingPrompts: [],

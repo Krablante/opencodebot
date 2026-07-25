@@ -39,7 +39,14 @@ title synchronization after `/reset`.
 
 ## Commands
 
+One pinned inline control panel in General owns session discovery and global/personal settings. `/menu`, `/start`, and
+`/help` open that same message. See [General Control Menu](control-menu.md) for its UI, state, callback, and recovery
+contract.
+
+Telegram's visible slash suggestions are deliberately limited to the common panel and topic actions:
+
 ```text
+/menu                              open the singleton General control panel
 /new [server] [profile] [dir:<path>] [title]   create a topic and wait for the first prompt
 /reset [profile] [server]          preserve the old session and start fresh, optionally changing profile/server
 /session                           show topic, binding, session URL, and special topic status
@@ -49,30 +56,16 @@ title synchronization after `/reset`.
 /kill                             stop the current run and clear queued prompts
 /compact                          compact the current session context
 /context [N]                      export recent completed or interrupted turns as collapsed context
-/set_context N                    set the personal /context default (1–10)
-/artifacts_here                   make this topic the artifact target and file dropbox
-/sounds_here                      use this topic as the dedicated speech inbox
-/sounds_off                       disable the dedicated speech inbox
-/sounds_status                    show speech transcription status
-/notify_on                       enable final-answer DMs for configured recipients
-/notify_off                      disable final-answer DMs for configured recipients
-/notify_status                   show configured final-answer DM status
-/tts [on|off|status|...]         configure global final-answer voice replies
 /speak                           reply to text to voice a one-off summary
-/lang eng|ru                     switch the global interface language
-/update                          check GitHub now and offer an opencodebot-only update
-/debug_on                        enable global final-DM diagnostics
-/debug_off                       disable global final-DM diagnostics
-/debug_status                    show global diagnostics status
-/mode [full|economy]             show or set the global mirror mode
-/mirror_on                        enable web-to-Telegram mirroring
-/mirror_off                       disable web-to-Telegram mirroring
-/help                             show commands and configured chat profiles
+/help                            open the panel's concise usage guide
 ```
 
-The bot syncs this slash-command menu on startup through Bot API `setMyCommands` for default, private-chat, group-chat,
-administrator, configured-chat, and configured-member scopes, so the same commands should appear in Telegram's command
-suggestions.
+Setup and operator commands such as `/set_context`, `/artifacts_here`, `/sounds_here`, `/notify_on`, `/tts`, `/lang`,
+`/update`, `/debug_on`, `/mode`, and `/mirror_on` are still accepted when typed. They are hidden only from suggestions.
+
+The bot syncs the small slash-command menu on startup through Bot API `setMyCommands` for default, private-chat,
+group-chat, administrator, configured-chat, and configured-member scopes. Bot API has no command scope for one forum
+topic, so General and working topics share this list.
 
 `/tts` is the compact Final Voice interface; legacy Russian and English voice commands from the previous service are
 also accepted when typed manually. `/speak` works only as a reply to a text message. See [Final Voice](final-voice.md)

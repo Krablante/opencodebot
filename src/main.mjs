@@ -7,7 +7,8 @@ import { parseNewTopicArgs } from "./chat-templates.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "./commands.mjs"
 import { createFinalNotifier } from "./final-notifications.mjs"
 import { FinalVoiceModule } from "./final-voice.mjs"
-import { configureI18n, t } from "./i18n/index.mjs"
+import { ControlMenu } from "./control-menu.mjs"
+import { configureI18n, setLanguage, t } from "./i18n/index.mjs"
 import { OpenCodeClient } from "./opencode.mjs"
 import { createPromptRouter } from "./prompt-routing.mjs"
 import { createQuestionManager } from "./questions.mjs"
@@ -127,6 +128,18 @@ sessionReconciler = createSessionReconciler({
   shouldStop: () => shutdownRequested,
 })
 let refreshCommandMenu = async () => {}
+const controlMenu = new ControlMenu({
+  config,
+  state,
+  telegram,
+  promptQueue,
+  finalVoice,
+  createSession: createPendingTopic,
+  refreshCommandMenu: async (language) => {
+    if (language) await setLanguage(language)
+    await refreshCommandMenu()
+  },
+})
 const commandHandlers = createTelegramCommandHandlers({
   config,
   state,
@@ -141,6 +154,7 @@ const commandHandlers = createTelegramCommandHandlers({
   finalVoice,
   questionManager,
   updateManager,
+  controlMenu,
   refreshCommandMenu: () => refreshCommandMenu(),
 })
 const telegramPolling = createTelegramPolling({
@@ -172,6 +186,7 @@ process.once("SIGTERM", () => requestShutdown("SIGTERM"))
 await telegram.deleteWebhook()
 await finalVoice.start()
 await telegramPolling.syncCommandMenu()
+await controlMenu.start()
 await updateManager.start()
 await cleanupUploads(config.paths.uploadsDir, config.attachments.cleanupAfterMs).catch(logError)
 setInterval(() => cleanupUploads(config.paths.uploadsDir, config.attachments.cleanupAfterMs).catch(logError), 60 * 60 * 1000).unref?.()
@@ -216,6 +231,7 @@ async function createPendingTopic(message, args) {
     topicId: topic.message_thread_id,
     text: t("topic.created", { serverHtml: escapeHtml(serverID), suffix, directoryLine }),
   })
+  return topic
 }
 
 function logError(error) {

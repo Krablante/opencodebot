@@ -115,6 +115,7 @@ export function createTelegramPolling({
     // Artifact topics keep file-upload semantics; elsewhere voice notes are transcript-only drafts.
     if (!artifactsTopic && message.voice && (await handleVoiceMessage?.(message))) return
 
+    if (await commandHandlers.handleMessage?.(message)) return
     if (await questionManager?.handleReplyMessage?.(message)) return
 
     const promptKey = multipartPromptKey(message)
@@ -225,11 +226,11 @@ export function parseCommand(text) {
 }
 
 function artifactTopicCommandAllowed(commandName) {
-  return ["artifacts_here", "session", "update", "lang", "help", "start", "notify_on", "notify_off", "notify_status"].includes(commandName)
+  return ["artifacts_here", "session", "update", "lang", "help", "start", "menu", "notify_on", "notify_off", "notify_status"].includes(commandName)
 }
 
 function soundsTopicCommandAllowed(commandName) {
-  return ["sounds_here", "sounds_off", "sounds_status", "session", "update", "lang", "help", "start", "notify_on", "notify_off", "notify_status"].includes(commandName)
+  return ["sounds_here", "sounds_off", "sounds_status", "session", "update", "lang", "help", "start", "menu", "notify_on", "notify_off", "notify_status"].includes(commandName)
 }
 
 function delay(ms) {
