@@ -8,11 +8,11 @@ and for actions whose target is the current topic or replied message.
 
 The panel is created or recovered at startup, edited in place, and pinned without a notification. Its home page shows:
 
-- active session and queued-prompt counts;
+- currently running session and queued-prompt counts;
 - global automatic Final Voice state;
 - global mirror state and detail mode;
 - global interface language;
-- entry points for a new session, active sessions, voice, personal settings, system settings, and help.
+- entry points for a new session, recent sessions, voice, personal settings, system settings, and help.
 
 `/menu`, `/start`, and `/help` all lead to the panel. In General, the command message is removed after the panel is
 refreshed. In another topic, the bot returns a temporary `Open panel` link to General instead of creating another menu.
@@ -29,8 +29,8 @@ The panel labels shared and personal state explicitly:
 - `My settings` controls the callback user's final-answer DMs and personal `/context` depth.
 - `System` controls the global interface language, mirroring switch, and mirror detail mode; Sounds and debug state are
   shown read-only.
-- `Sessions` lists active bindings and links to their Telegram topics. Destructive session actions are intentionally not
-  offered from General.
+- `Sessions` lists the twelve most recently active bindings and links to their Telegram topics. Destructive session
+  actions are intentionally not offered from General.
 
 The following actions remain topic commands because their target comes from the current forum topic:
 

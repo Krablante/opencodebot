@@ -331,6 +331,7 @@ export class ControlMenu {
   renderHome() {
     const bindings = this.activeBindings()
     const queued = bindings.reduce((total, binding) => total + this.promptQueue.status(binding).length, 0)
+    const busy = bindings.filter((binding) => this.promptQueue.isBusy(binding)).length
     const settings = this.finalVoice.settings()
     const voiceEnabled = this.finalVoice.config.enabled && settings.enabled
     const mirrorEnabled = this.state.mirrorEnabled(this.config)
@@ -338,7 +339,7 @@ export class ControlMenu {
       t("controlMenu.title"),
       "",
       t("controlMenu.home.healthy"),
-      t("controlMenu.home.sessions", { sessions: bindings.length, queued }),
+      t("controlMenu.home.sessions", { busy, queued }),
       t("controlMenu.home.voice", { value: this.stateLabel(voiceEnabled) }),
       t("controlMenu.home.mirror", { value: this.stateLabel(mirrorEnabled), mode: this.state.mirrorMode() }),
       t("controlMenu.home.language", { value: getLanguage().toUpperCase() }),
@@ -521,7 +522,10 @@ export class ControlMenu {
   activeBindings() {
     return this.state.bindings()
       .filter((binding) => String(binding.chatId) === String(this.chatId()))
-      .sort((left, right) => bindingTitle(left).localeCompare(bindingTitle(right), getLanguage()))
+      .sort((left, right) => (
+        bindingActivity(right) - bindingActivity(left)
+        || bindingTitle(left).localeCompare(bindingTitle(right), getLanguage())
+      ))
   }
 
   voiceProfiles() {
@@ -600,6 +604,11 @@ export class ControlMenu {
 
 function bindingTitle(binding) {
   return String(binding.topicTitle || binding.title || binding.topicBaseTitle || `Topic ${binding.topicId}`)
+}
+
+function bindingActivity(binding) {
+  const value = Date.parse(binding.lastActiveAt || binding.createdAt || "")
+  return Number.isFinite(value) ? value : 0
 }
 
 function actorLabel(actor) {
