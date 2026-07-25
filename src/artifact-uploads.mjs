@@ -6,6 +6,7 @@ import path from "node:path"
 import { downloadTelegramFiles } from "./attachments.mjs"
 import { joinServerPath, pathStyle, safeFilename, transferFile } from "./upload-transfer.mjs"
 import { t } from "./i18n/index.mjs"
+import { escapeHtml, topicId } from "./telegram.mjs"
 
 export class ArtifactUploadBuffer {
   constructor({ settings, flushUpload, onError = (error) => console.error(error) }) {
@@ -68,7 +69,7 @@ export async function handleArtifactUploadMessage({ telegram, config, opencode, 
       requestedFilenames: target.requestedFilenames,
     })
   } catch (error) {
-    await replyHTML(telegram, message, t("artifacts.saveFailed", { errorHtml: escapeHTML(error.message || String(error)) }))
+    await replyHTML(telegram, message, t("artifacts.saveFailed", { errorHtml: escapeHtml(error.message || String(error)) }))
     return { status: "failed", error }
   }
 
@@ -144,9 +145,9 @@ export function artifactUploadFilename({ originalFilename, requestedFilename }) 
 export function formatArtifactUploadHelp({ defaultServerId = "", availableServerIds = [] } = {}) {
   const exampleServer = defaultServerId || availableServerIds[0] || "nuc"
   const serverList = availableServerIds.length
-    ? `\n${t("artifacts.available", { serversHtml: escapeHTML(availableServerIds.join(", ")) }).trim()}`
+    ? `\n${t("artifacts.available", { serversHtml: escapeHtml(availableServerIds.join(", ")) }).trim()}`
     : ""
-  return t("artifacts.help", { exampleServerHtml: escapeHTML(exampleServer), serverList })
+  return t("artifacts.help", { exampleServerHtml: escapeHtml(exampleServer), serverList })
 }
 
 export function artifactTargetPath({ config, server, filename, now = new Date() }) {
@@ -197,13 +198,13 @@ function availableServerIds(opencode) {
 
 function formatTargetError(target) {
   if (target.error === "no_default_server") return t("artifacts.noServer")
-  const available = target.available.length ? t("artifacts.available", { serversHtml: escapeHTML(target.available.join(", ")) }) : ""
-  return t("artifacts.unknownServer", { requestedHtml: escapeHTML(target.requested), available })
+  const available = target.available.length ? t("artifacts.available", { serversHtml: escapeHtml(target.available.join(", ")) }) : ""
+  return t("artifacts.unknownServer", { requestedHtml: escapeHtml(target.requested), available })
 }
 
 function formatSavedPaths({ server, paths }) {
-  const body = paths.map(escapeHTML).join("\n")
-  return t("artifacts.saved", { serverHtml: escapeHTML(server.id), body })
+  const body = paths.map(escapeHtml).join("\n")
+  return t("artifacts.saved", { serverHtml: escapeHtml(server.id), body })
 }
 
 function uniquedFiles(files) {
@@ -263,12 +264,4 @@ function trimTrailingSeparators(value, style) {
 
 async function replyHTML(telegram, message, text) {
   await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text })
-}
-
-function topicId(message) {
-  return message.message_thread_id || message.reply_to_message?.message_thread_id || undefined
-}
-
-function escapeHTML(value) {
-  return String(value).replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char])
 }

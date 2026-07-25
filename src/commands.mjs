@@ -15,39 +15,16 @@ import {
 } from "./context-export.mjs"
 
 const commandDefinitions = [
-  ["new", "new"],
-  ["reset", "reset"],
-  ["session", "session"],
-  ["artifacts_here", "artifacts_here"],
-  ["sounds_here", "sounds_here"],
-  ["sounds_off", "sounds_off"],
-  ["sounds_status", "sounds_status"],
-  ["q", "q"],
-  ["kill", "kill"],
-  ["compact", "compact"],
-  ["context", "context"],
-  ["set_context", "set_context"],
-  ["notify_on", "notify_on"],
-  ["notify_off", "notify_off"],
-  ["notify_status", "notify_status"],
-  ["tts", "tts"],
-  ["speak", "speak"],
-  ["lang", "lang"],
-  ["update", "update"],
-  ["debug_on", "debug_on"],
-  ["debug_off", "debug_off"],
-  ["debug_status", "debug_status"],
-  ["mode", "mode"],
-  ["mirror_on", "mirror_on"],
-  ["mirror_off", "mirror_off"],
-  ["help", "help"],
-  ["start", "start"],
+  "new", "reset", "session", "artifacts_here", "sounds_here", "sounds_off", "sounds_status",
+  "q", "kill", "compact", "context", "set_context", "notify_on", "notify_off", "notify_status",
+  "tts", "speak", "lang", "update", "debug_on", "debug_off", "debug_status", "mode",
+  "mirror_on", "mirror_off", "help", "start",
 ]
 
 export function telegramBotCommands() {
-  return commandDefinitions.map(([command, descriptionKey]) => ({
+  return commandDefinitions.map((command) => ({
     command,
-    description: t(`command.description.${descriptionKey}`),
+    description: t(`command.description.${command}`),
   }))
 }
 

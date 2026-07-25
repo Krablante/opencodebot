@@ -63,7 +63,7 @@ export class SpeechModule {
     return this.state.setSoundsTopic({
       chatId: message.chat.id,
       topicId: nextTopicId,
-      title: message.forum_topic_created?.name || message.chat.title || "Sounds topic",
+      title: message.forum_topic_created?.name || message.chat.title || t("speech.soundsTopic"),
       setBy: message.from?.id,
     })
   }
@@ -121,7 +121,7 @@ export class SpeechModule {
     const topic = this.state.soundsTopic()
     const targetChatId = chatId || topic?.chatId
     const targetTopicId = currentTopicId ?? topic?.topicId
-    if (!targetChatId) throw new Error("Sounds topic is not configured")
+    if (!targetChatId) throw new Error(t("speech.topicNotConfigured"))
     const text = this.menuText()
     const replyMarkup = this.menuMarkup()
     const existingMessageId = messageId || this.state.soundsMenuMessageId()
@@ -227,7 +227,7 @@ export class SpeechModule {
       chatId,
       topicId: currentTopicId,
       replyToMessageId: message.message_id,
-      text: escapeHtml(this.config.statusMessage),
+      text: escapeHtml(t("speech.transcribing")),
     })
     let downloads = []
     let transcriptionComplete = false

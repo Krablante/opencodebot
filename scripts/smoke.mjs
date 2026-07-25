@@ -117,6 +117,11 @@ async function smokeI18n() {
     assert.match(telegramBotCommands().find((item) => item.command === "lang").description, /Switch interface language/)
     assert.ok(catalogKeys().length > 150)
     assert.match(tFor("ru", "polling.unknownCommand"), /Неизвестная команда/)
+    assert.match(tFor("ru", "questions.answered", { answerHtml: "ответ" }), /Выбран ответ/)
+    assert.match(tFor("ru", "updates.failureTitle"), /Не удалось обновить/)
+    assert.equal(tFor("ru", "speech.transcribing"), "🎙️ Распознаю аудио…")
+    assert.match(tFor("ru", "artifacts.saved", { serverHtml: "nuc", body: "file.txt" }), /Сохранено/)
+    assert.match(tFor("ru", "sessionError.message.ContextOverflowError"), /Контекст сессии слишком велик/)
     await setLanguage("ru")
     assert.equal(state.data.ui.language, "ru")
     assert.equal(getLanguage(), "ru")
@@ -1394,7 +1399,8 @@ function smokeConfigExample() {
   assert.equal(example.artifactUploads.root, "~/trash")
   assert.equal(example.attachments.maxFileBytes, 20000000)
   assert.equal(example.attachments.maxTotalBytes, 60000000)
-  assert.equal(example.speech.enabled, false)
+    assert.equal(example.speech.enabled, false)
+    assert.equal(example.speech.statusMessage, undefined)
   assert.equal(example.speech.defaultModel, "openai/whisper-large-v3-turbo")
   assert.equal(example.speech.models.length, 3)
   assert.equal(example.speech.models[1].apiProvider, "groq")
@@ -1497,7 +1503,6 @@ async function smokeSpeechTopicRouting() {
       enabled: true,
       maxFileBytes: 25_000_000,
       queueConcurrency: 1,
-      statusMessage: "Transcribing voice...",
       openrouter: { apiKeyEnv: "OPENROUTER_API_KEY", timeoutMs: 5000 },
     }, { OPENROUTER_API_KEY: "test-key" }),
     telegram: {},

@@ -33,7 +33,6 @@ export function normalizeSpeechConfig(settings = {}, env = {}) {
     enabled: settings.enabled === true,
     maxFileBytes: numberAtLeast(settings.maxFileBytes, 25_000_000, 1024),
     queueConcurrency: numberAtLeast(settings.queueConcurrency, 1, 1),
-    statusMessage: settings.statusMessage || "Transcribing voice...",
     defaultModel: models.some((model) => model.id === requestedDefault) ? requestedDefault : models[0].id,
     models,
     providers,

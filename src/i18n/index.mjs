@@ -48,7 +48,7 @@ export async function setLanguage(value) {
 export function t(key, values = {}) {
   const message = catalogs[language]?.[key]
   if (message === undefined) throw new Error(`Unknown i18n key: ${key}`)
-  return typeof message === "function" ? message(values) : interpolate(message, values)
+  return typeof message === "function" ? message(values) : message
 }
 
 export function tFor(selectedLanguage, key, values = {}) {
@@ -56,15 +56,11 @@ export function tFor(selectedLanguage, key, values = {}) {
   if (!normalized) throw new Error(`Unsupported interface language: ${selectedLanguage}`)
   const message = catalogs[normalized][key]
   if (message === undefined) throw new Error(`Unknown i18n key: ${key}`)
-  return typeof message === "function" ? message(values) : interpolate(message, values)
+  return typeof message === "function" ? message(values) : message
 }
 
 export function catalogKeys() {
   return Object.keys(en).sort()
-}
-
-function interpolate(template, values) {
-  return String(template).replace(/\{([A-Za-z0-9_]+)\}/g, (_match, name) => String(values[name] ?? ""))
 }
 
 function validateCatalogs() {

@@ -144,7 +144,6 @@ disable another configured provider.
     "enabled": true,
     "maxFileBytes": 25000000,
     "queueConcurrency": 1,
-    "statusMessage": "Transcribing voice...",
     "defaultModel": "openai/whisper-large-v3-turbo",
     "language": "auto",
     "temperature": 0,
