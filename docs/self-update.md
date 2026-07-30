@@ -121,6 +121,11 @@ the host bind-mount source explicitly:
 npm run update-runner:install -- --state-dir /absolute/host/state
 ```
 
+Run the installer with the exact Node runtime intended for the service. The
+generated unit pins that executable and its adjacent `npm` directory instead
+of inheriting the systemd user manager's generic PATH, so NVM/proto shell
+switches cannot silently change the updater runtime.
+
 The selected host state directory must be the source mounted at `/app/state`. The installer writes only user units under
 `~/.config/systemd/user/`, enables `opencodebot-update.path`, and leaves a non-secret `updates/runner.json` readiness
 marker for the container. Remove it with `npm run update-runner:uninstall`.
