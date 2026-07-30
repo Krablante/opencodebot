@@ -95,6 +95,12 @@ The running Git revision comes from `OPENCODEBOT_BUILD_SHA`. Do not set it by ha
 derives it from the clean checkout and supplies it to Docker. An image with missing or malformed revision metadata can
 run normally, but automatic and manual update checks stay disabled until one correctly labelled rebuild.
 
+The labelled revision must also be published in the configured GitHub repository
+and be an ancestor of `updates.branch`. GitHub cannot compare a host-only commit
+and returns 404 for that range. The bot reports this condition explicitly; the
+safe fix is to publish the deployed revision through the normal review path,
+not to substitute another SHA or bypass the fast-forward checks.
+
 ## Install The Linux Host Runner
 
 The Telegram checker and `/update` work on every supported client and do not depend on the OpenCodez target server OS.

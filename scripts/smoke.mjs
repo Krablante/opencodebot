@@ -1416,6 +1416,26 @@ async function smokeUpdateManager() {
       message: { message_id: 77, chat: { id: -100 } },
     })
     assert.match(calls.at(-1)[1].text, /must be installed manually/)
+
+    const missingRevisionManager = createUpdateManager({
+      config: { updates, telegram: { chatId: -100 } },
+      state,
+      telegram,
+      fetchImpl: async () => ({
+        ok: false,
+        status: 404,
+        headers: { get: () => null },
+      }),
+      now: () => new Date("2026-07-24T06:00:00.000Z"),
+    })
+    const missingCallsStart = calls.length
+    await missingRevisionManager.checkNow({ chatId: -100, topicId: 5 })
+    const missingRevisionEdit = calls
+      .slice(missingCallsStart)
+      .find(([kind]) => kind === "edit")
+    assert.ok(missingRevisionEdit)
+    assert.match(missingRevisionEdit[1].text, /deployed revision .* is published/u)
+    missingRevisionManager.stop()
   } finally {
     manager.stop()
     await rm(tempRoot, { recursive: true, force: true })
