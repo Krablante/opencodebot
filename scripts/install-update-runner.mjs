@@ -12,6 +12,13 @@ const servicePath = path.join(unitDir, "opencodebot-update.service")
 const pathUnitPath = path.join(unitDir, "opencodebot-update.path")
 const stateDir = path.resolve(optionValue("--state-dir") || process.env.OPENCODEBOT_STATE_DIR || path.join(os.homedir(), "politia", "state", "projects", "tg", "opencodebot"))
 const runtimeDir = path.join(stateDir, "updates")
+const nodeExecutable = path.resolve(process.execPath)
+const runnerPath = [
+  path.dirname(nodeExecutable),
+  "/usr/local/bin",
+  "/usr/bin",
+  "/bin",
+].join(":")
 
 if (process.platform !== "linux") {
   throw new Error("The unattended update runner is available only on the Linux host running opencodebot")
@@ -44,7 +51,8 @@ WorkingDirectory=${pathValue(projectRoot)}
 Environment=${unitValue(`OPENCODEBOT_UPDATE_RUNTIME_DIR=${runtimeDir}`)}
 Environment=${unitValue(`OPENCODEBOT_UPDATE_REPOSITORY=${repository}`)}
 Environment=${unitValue(`OPENCODEBOT_UPDATE_BRANCH=${branch}`)}
-ExecStart=/usr/bin/env node ${unitValue(path.join(projectRoot, "scripts", "apply-update.mjs"))}
+Environment=${unitValue(`PATH=${runnerPath}`)}
+ExecStart=${pathValue(nodeExecutable)} ${unitValue(path.join(projectRoot, "scripts", "apply-update.mjs"))}
 `
 
 const pathUnit = `[Unit]
@@ -69,6 +77,7 @@ await writeJsonAtomic(path.join(runtimeDir, "runner.json"), {
   stateDir,
   repository,
   branch,
+  nodeExecutable,
   unit: "opencodebot-update.path",
 })
 console.log(`Installed opencodebot update runner for ${runtimeDir}`)
