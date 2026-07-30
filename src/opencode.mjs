@@ -256,7 +256,8 @@ export class OpenCodeClient {
   authHeader() {
     const password = this.config.opencode.password
     if (!password) return undefined
-    return `Basic ${Buffer.from(`:${password}`).toString("base64")}`
+    const username = this.config.opencode.username || ""
+    return `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`
   }
 }
 

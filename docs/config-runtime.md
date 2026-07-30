@@ -243,7 +243,10 @@ for scope, catalog structure, exclusions, and operations.
 ## OpenCodez
 
 `opencode.baseUrl` is the local/default API origin used when a server-specific URL is not involved.
-`opencode.passwordEnvNames` lists env var names that may contain the OpenCodez password.
+`opencode.usernameEnvNames` and `opencode.passwordEnvNames` list env var names
+that may contain the OpenCodez Basic Auth username and password. The username
+remains optional for compatibility with OpenCodez servers that use an empty
+Basic Auth username.
 
 The bot separates mirroring from Telegram-created session placement. `opencode.mirrorScope` controls what the bot
 watches on configured OpenCodez servers: `global` mirrors new sessions from any workspace on that host, while

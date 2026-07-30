@@ -108,6 +108,7 @@
   "opencode": {
     "mirrorScope": "global",
     "newSessionDefaultDirectory": "serverHome",
+    "usernameEnvNames": ["OPENCODE_SERVER_USERNAME", "OPENCODEZ_SERVER_USERNAME"],
     "passwordEnvNames": ["OPENCODE_SERVER_PASSWORD", "OPENCODEZ_SERVER_PASSWORD"]
   },
   "defaultPrompt": {

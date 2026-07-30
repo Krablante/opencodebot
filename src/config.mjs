@@ -36,6 +36,7 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
   const mergedEnv = { ...env, ...process.env }
   const telegramToken = pickToken(config.telegram?.token, mergedEnv)
   const allowedUserIds = uniqueNumbers(readNumberList(config.telegram?.allowedUserIds, mergedEnv))
+  const openCodeUsername = pickValue(mergedEnv, config.opencode?.usernameEnvNames || [])
   const openCodePassword = pickValue(mergedEnv, config.opencode?.passwordEnvNames || [])
   const artifactToken = pickValue(mergedEnv, config.artifacts?.tokenEnvNames || defaultArtifacts.tokenEnvNames) || config.artifacts?.token
   const chatId = config.telegram?.chatId ?? readFirstNumber(mergedEnv, ["OPENCODEBOT_CHAT_ID", "TELEGRAM_CHAT_ID"])
@@ -71,6 +72,7 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
     },
     opencode: {
       ...normalizeOpencode(config.opencode),
+      username: openCodeUsername,
       password: openCodePassword,
       servers,
     },

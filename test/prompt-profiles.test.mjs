@@ -119,3 +119,26 @@ test("OpenCodez System selection sends the current minimal payload", async (cont
     body: { sessionID: "ses_test", name: "codex_gpt_5_6_sol" },
   })
 })
+
+test("OpenCodez client sends the configured Basic Auth username", async (context) => {
+  let authorization
+  const server = createServer((request, response) => {
+    authorization = request.headers.authorization
+    response.writeHead(200, { "content-type": "application/json" })
+    response.end(JSON.stringify([]))
+  })
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+  context.after(() => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())))
+
+  const address = server.address()
+  const client = new OpenCodeClient({
+    opencode: {
+      servers: [{ id: "test", url: `http://127.0.0.1:${address.port}` }],
+      username: "atlas",
+      password: "secret",
+    },
+  })
+  await client.listSessions("test")
+
+  assert.equal(authorization, `Basic ${Buffer.from("atlas:secret").toString("base64")}`)
+})
