@@ -12,6 +12,8 @@ const servicePath = path.join(unitDir, "opencodebot-update.service")
 const pathUnitPath = path.join(unitDir, "opencodebot-update.path")
 const stateDir = path.resolve(optionValue("--state-dir") || process.env.OPENCODEBOT_STATE_DIR || path.join(os.homedir(), "politia", "state", "projects", "tg", "opencodebot"))
 const runtimeDir = path.join(stateDir, "updates")
+const composeEnvInput = optionValue("--compose-env-file") || process.env.OPENCODEBOT_COMPOSE_ENV_FILE || ""
+const composeEnvFile = composeEnvInput ? path.resolve(composeEnvInput) : ""
 const nodeExecutable = path.resolve(process.execPath)
 const runnerPath = [
   path.dirname(nodeExecutable),
@@ -23,6 +25,7 @@ const runnerPath = [
 if (process.platform !== "linux") {
   throw new Error("The unattended update runner is available only on the Linux host running opencodebot")
 }
+if (composeEnvFile) await fs.access(composeEnvFile)
 
 const uninstall = process.argv.includes("--uninstall")
 if (uninstall) {
@@ -52,6 +55,7 @@ Environment=${unitValue(`OPENCODEBOT_UPDATE_RUNTIME_DIR=${runtimeDir}`)}
 Environment=${unitValue(`OPENCODEBOT_UPDATE_REPOSITORY=${repository}`)}
 Environment=${unitValue(`OPENCODEBOT_UPDATE_BRANCH=${branch}`)}
 Environment=${unitValue(`PATH=${runnerPath}`)}
+${composeEnvFile ? `EnvironmentFile=${pathValue(composeEnvFile)}` : ""}
 ExecStart=${pathValue(nodeExecutable)} ${unitValue(path.join(projectRoot, "scripts", "apply-update.mjs"))}
 `
 
@@ -78,6 +82,7 @@ await writeJsonAtomic(path.join(runtimeDir, "runner.json"), {
   repository,
   branch,
   nodeExecutable,
+  composeEnvFile: composeEnvFile || null,
   unit: "opencodebot-update.path",
 })
 console.log(`Installed opencodebot update runner for ${runtimeDir}`)

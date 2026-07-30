@@ -121,6 +121,18 @@ the host bind-mount source explicitly:
 npm run update-runner:install -- --state-dir /absolute/host/state
 ```
 
+When Compose paths and runtime values live in an explicit env file, bind that
+same file into the updater unit:
+
+```bash
+npm run update-runner:install -- \
+  --state-dir /absolute/host/state \
+  --compose-env-file /absolute/private/compose.env
+```
+
+The unit records only the env-file path and lets systemd load it at execution
+time; the installer does not read or print its values.
+
 Run the installer with the exact Node runtime intended for the service. The
 generated unit pins that executable and its adjacent `npm` directory instead
 of inheriting the systemd user manager's generic PATH, so NVM/proto shell
