@@ -121,6 +121,7 @@ the OpenCodez server API:
 ```env
 OPENCODEBOT_TOKEN=123456:telegram-token
 OPENCODEBOT_ALLOWED_USER_IDS=123456789
+OPENCODE_SERVER_USERNAME=your-opencodez-username
 OPENCODEZ_SERVER_PASSWORD=your-opencodez-password
 # Optional, only when speech.enabled is true:
 OPENROUTER_API_KEY=sk-or-...

@@ -18,5 +18,6 @@ COPY config.example.json servers.example.json ./
 COPY plugins ./plugins
 COPY src ./src
 COPY scripts ./scripts
+COPY test ./test
 
 CMD ["node", "src/main.mjs"]

@@ -276,6 +276,11 @@ class UpdateManager {
       signal: AbortSignal.timeout(15_000),
     })
     if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error(
+          `GitHub cannot compare deployed revision ${shortRevision(baseSha)} against ${updates.branch}. Confirm that the deployed revision is published in ${updates.repository} and is an ancestor of that branch.`,
+        )
+      }
       const reset = response.headers?.get?.("x-ratelimit-reset")
       const suffix = reset ? ` Rate limit resets at ${new Date(Number(reset) * 1000).toISOString()}.` : ""
       throw new Error(`GitHub returned HTTP ${response.status}.${suffix}`)

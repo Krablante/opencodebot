@@ -13,7 +13,23 @@ OPENCODEBOT_ARTIFACT_GATEWAY_URL=http://192.168.1.50:8788
 OPENCODEBOT_ARTIFACT_TOKEN=replace-with-artifact-token
 ```
 
-Install or vendor this package in the OpenCodez environment, then reference the package directory. Example OpenCodez config entry:
+On the same host as OpenCodez, install the tracked plugin as a managed local
+copy:
+
+```bash
+npm run opencodez-plugin:check
+npm run opencodez-plugin:install
+npm run opencodez-plugin:check
+```
+
+The installer writes only
+`$XDG_CONFIG_HOME/opencodez/plugins/opencodebot-artifacts.js` (or the matching
+`~/.config` path), updates only a copy bearing its managed header, and refuses
+to overwrite unrelated local code. Override the config root with
+`-- --config-root /absolute/path` when needed.
+
+Alternatively, install or vendor this package in the OpenCodez environment,
+then reference the package directory. Example OpenCodez config entry:
 
 ```jsonc
 {

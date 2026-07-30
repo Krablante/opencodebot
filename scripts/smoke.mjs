@@ -1124,20 +1124,24 @@ async function smokeStrictConfigLoading() {
   const missingPath = path.join(root, "missing.json")
   const oldToken = process.env.OPENCODEBOT_SMOKE_TOKEN
   const oldAllowed = process.env.OPENCODEBOT_SMOKE_ALLOWED
+  const oldOpenCodeUsername = process.env.OPENCODEBOT_SMOKE_OPENCODE_USERNAME
   const oldNoiseToken = process.env.TOKEN
   try {
     assert.throws(() => loadConfig(missingPath), /Config file not found/)
     process.env.OPENCODEBOT_SMOKE_TOKEN = "123456:abcdefghijklmnopqrstuvwxyz"
     process.env.OPENCODEBOT_SMOKE_ALLOWED = "42,43"
+    process.env.OPENCODEBOT_SMOKE_OPENCODE_USERNAME = "atlas"
     process.env.TOKEN = "999999:wrongwrongwrongwrongwrongwrong"
     await writeFile(path.join(root, "servers.example.json"), JSON.stringify([{ id: "nuc", url: "http://127.0.0.1:40999" }]))
     await writeFile(configPath, JSON.stringify({
       telegram: { token: { env: "OPENCODEBOT_SMOKE_TOKEN" }, allowedUserIds: { env: "OPENCODEBOT_SMOKE_ALLOWED" } },
+      opencode: { usernameEnvNames: ["OPENCODEBOT_SMOKE_OPENCODE_USERNAME"] },
       artifacts: { enabled: false },
     }))
     const strict = loadConfig(configPath)
     assert.equal(strict.telegram.token, process.env.OPENCODEBOT_SMOKE_TOKEN)
     assert.deepEqual(strict.telegram.allowedUserIds, [42, 43])
+    assert.equal(strict.opencode.username, "atlas")
     assert.equal(strict.opencode.servers[0].transfer.type, "local")
 
     await writeFile(path.join(root, "servers.example.json"), JSON.stringify([
@@ -1163,6 +1167,7 @@ async function smokeStrictConfigLoading() {
   } finally {
     restoreEnv("OPENCODEBOT_SMOKE_TOKEN", oldToken)
     restoreEnv("OPENCODEBOT_SMOKE_ALLOWED", oldAllowed)
+    restoreEnv("OPENCODEBOT_SMOKE_OPENCODE_USERNAME", oldOpenCodeUsername)
     restoreEnv("TOKEN", oldNoiseToken)
     await rm(root, { recursive: true, force: true })
   }
@@ -1411,6 +1416,26 @@ async function smokeUpdateManager() {
       message: { message_id: 77, chat: { id: -100 } },
     })
     assert.match(calls.at(-1)[1].text, /must be installed manually/)
+
+    const missingRevisionManager = createUpdateManager({
+      config: { updates, telegram: { chatId: -100 } },
+      state,
+      telegram,
+      fetchImpl: async () => ({
+        ok: false,
+        status: 404,
+        headers: { get: () => null },
+      }),
+      now: () => new Date("2026-07-24T06:00:00.000Z"),
+    })
+    const missingCallsStart = calls.length
+    await missingRevisionManager.checkNow({ chatId: -100, topicId: 5 })
+    const missingRevisionEdit = calls
+      .slice(missingCallsStart)
+      .find(([kind]) => kind === "edit")
+    assert.ok(missingRevisionEdit)
+    assert.match(missingRevisionEdit[1].text, /deployed revision .* is published/u)
+    missingRevisionManager.stop()
   } finally {
     manager.stop()
     await rm(tempRoot, { recursive: true, force: true })
