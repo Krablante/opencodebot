@@ -249,7 +249,8 @@ The bot separates mirroring from Telegram-created session placement. `opencode.m
 watches on configured OpenCodez servers: `global` mirrors new sessions from any workspace on that host, while
 `serverHome` keeps the older host-home scope. `opencode.newSessionDefaultDirectory` controls where `/new` creates
 sessions when the operator does not pass `dir:<path>`; the normal value is `serverHome`, which uses the selected
-server's `home` from `servers.json`.
+server's `home` from `servers.json`. `global` uses one aggregate OpenCodez `/global/event` SSE connection per server;
+`serverHome` uses `/event?directory=<server.home>`. It does not create one long-lived connection per workspace.
 
 Each server in `servers.json` needs a non-empty unique `id` and an absolute HTTP(S) `url`. The optional `home` field
 gives `/new` a default directory and lets `~/trash` expand naturally for artifact uploads. `uploadRoot` gives large

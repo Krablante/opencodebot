@@ -15,8 +15,9 @@ adds selectable System prompts, token-saving pruning, and a more convenient cach
 the LAN by default, and can also be reached away from home through the optional WireGuard helper if you want private
 remote access.
 
-The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and `/event` SSE stream, then mirrors useful
-session activity into Telegram.
+The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and its SSE stream, then mirrors useful session
+activity into Telegram. Global mirroring uses one `/global/event` stream per server; server-home mirroring uses the
+workspace-scoped `/event` stream.
 
 ## Features
 
@@ -63,7 +64,7 @@ session activity into Telegram.
 ```text
 Telegram forum chat
   -> opencodebot long polling
-    -> OpenCodez HTTP API and /event SSE
+    -> OpenCodez HTTP API and one SSE stream per server
     -> local topic/session state
 
 LAN browser, or optional WireGuard browser
@@ -254,7 +255,8 @@ performs the potentially long operation in the background. Prompts sent after co
 topic queue. The internal compaction summary is not mirrored as an assistant answer; the status is edited to a concise
 success or failure result, and the session remains available either way. The running guard uses authoritative live
 OpenCodez `sessionStatus`; a stale in-memory queue busy flag cannot keep `/compact` blocked after the backend is idle. A
-genuinely busy backend or an already active compaction still returns concise wait/`/kill` guidance.
+genuinely busy backend or an already active compaction still returns concise wait/`/kill` guidance. Successful summarize
+completion releases the topic queue directly, so a missed terminal SSE event cannot leave later prompts stuck.
 
 Use `/context`, `/context N`, or `/set_context N` to export the latest main-session user turns from the current topic.
 The personal default is three turns and the supported range is 1–10. A completed turn contains the user prompt and its

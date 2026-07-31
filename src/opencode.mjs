@@ -189,12 +189,13 @@ export class OpenCodeClient {
   async subscribeEvents(serverID, onEvent, signal, { onConnected } = {}) {
     const server = this.server(serverID)
     const requestOptions = this.requestOptions(server, { mirror: true })
+    const eventPath = this.config.opencode.mirrorScope === "global" ? "/global/event" : "/event"
     let retryDelayMs = 2500
     let offlineSince = 0
     let lastOfflineLogAt = 0
     while (!signal?.aborted) {
       try {
-        const url = this.url(server, "/event", requestOptions)
+        const url = this.url(server, eventPath, requestOptions)
         const headers = {}
         const auth = this.authHeader()
         if (auth) headers.authorization = auth
@@ -212,7 +213,7 @@ export class OpenCodeClient {
             console.warn(`[opencodebot] ${serverID} event stream connected recovery failed: ${error.message}`)
           }
         }
-        await readSse(response.body, (event) => onEvent(server, event), signal)
+        await readSse(response.body, (event) => onEvent(server, normalizeEventStreamEvent(event)), signal)
         if (!signal?.aborted) throw new Error("event stream closed")
       } catch (error) {
         if (signal?.aborted) return
@@ -264,6 +265,11 @@ function cleanDirectory(value) {
   if (typeof value !== "string") return undefined
   const trimmed = value.trim()
   return trimmed || undefined
+}
+
+function normalizeEventStreamEvent(event) {
+  if (!event?.directory || !event?.payload?.type) return event
+  return { ...event.payload, directory: event.directory }
 }
 
 function nextBeforeCursor(link) {

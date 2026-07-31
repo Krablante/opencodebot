@@ -985,13 +985,13 @@ async function smokeOpenCodeEventOrdering() {
   const events = []
   const connections = []
   const server = createServer((request, response) => {
-    if (request.url !== "/event") {
+    if (request.url !== "/global/event") {
       response.writeHead(404).end()
       return
     }
     response.writeHead(200, { "content-type": "text/event-stream" })
-    response.write("data: {\"type\":\"first\",\"properties\":{}}\n\n")
-    response.write("data: {\"type\":\"second\",\"properties\":{}}\n\n")
+    response.write("data: {\"directory\":\"/tmp/work\",\"payload\":{\"type\":\"first\",\"properties\":{}}}\n\n")
+    response.write("data: {\"directory\":\"/tmp/work\",\"payload\":{\"type\":\"second\",\"properties\":{}}}\n\n")
     response.end()
   })
   const { url, close } = await listen(server)
@@ -999,6 +999,7 @@ async function smokeOpenCodeEventOrdering() {
   try {
     const client = new OpenCodeClient({ opencode: { password: "", mirrorScope: "global", servers: [{ id: "local", url }] } })
     await client.subscribeEvents("local", async (_server, event) => {
+      assert.equal(event.directory, "/tmp/work")
       events.push(`start:${event.type}`)
       if (event.type === "first") await wait(25)
       events.push(`end:${event.type}`)
@@ -1974,6 +1975,7 @@ async function smokeCompactCommand() {
   resolveInitialCompact(true)
   await wait(0)
   assert.match(edited[0].text, /Context compacted/)
+  assert.equal(promptQueue.isBusy(binding), false)
 
   promptQueue.clear(binding)
   let resolveCompact

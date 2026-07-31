@@ -405,6 +405,15 @@ export function createTelegramCommandHandlers({
       return
     }
 
+    if (config.reconcile && config.reconcile.enabled !== false) {
+      const now = Date.now()
+      await state.activateBinding(binding.serverID, binding.sessionID, {
+        reconcileAfter: now - config.reconcile.lookbackMs,
+        reconcileUntil: now + config.reconcile.activeWindowMs,
+        reason: "compact-command",
+      })
+    }
+
     const feedback = await telegram.sendMessage({
       chatId: message.chat.id,
       topicId: currentTopicId,
@@ -419,8 +428,10 @@ export function createTelegramCommandHandlers({
   }
 
   async function compactSessionInBackground({ binding, message, feedback, model, operation }) {
+    let compactCompleted = false
     try {
       await opencode.summarizeSession(binding.serverID, binding.sessionID, { directory: binding.directory, model })
+      compactCompleted = true
       if (operation.cancelled) {
         await updateCompactFeedback({ message, feedback, text: t("commands.compact.stopped") })
         return
@@ -436,6 +447,14 @@ export function createTelegramCommandHandlers({
         await updateCompactFeedback({ message, feedback, text: t("commands.compact.stopped") })
         return
       }
+      if (compactCompleted) {
+        logErrorEvent("compact.feedback_failed", error, {
+          serverID: binding.serverID,
+          sessionID: binding.sessionID,
+          topicId: binding.topicId,
+        })
+        return
+      }
       await releaseCompactQueueAfterFailure(binding)
       logErrorEvent("compact.failed", error, { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId })
       await updateCompactFeedback({
@@ -444,8 +463,22 @@ export function createTelegramCommandHandlers({
         text: t("commands.compact.failed", { errorHtml: escapeHtml(error.message) }),
       })
     } finally {
+      if (compactCompleted && !operation.cancelled) {
+        await releaseCompactQueueAfterSuccess(binding).catch((error) => {
+          logErrorEvent("compact.queue_release_failed", error, {
+            serverID: binding.serverID,
+            sessionID: binding.sessionID,
+            topicId: binding.topicId,
+          })
+        })
+      }
       if (compactOperations.get(compactOperationKey(binding)) === operation) compactOperations.delete(compactOperationKey(binding))
     }
+  }
+
+  async function releaseCompactQueueAfterSuccess(binding) {
+    await promptQueue.markTerminalMirrored(binding)
+    await promptQueue.markBackendIdle(binding)
   }
 
   async function releaseCompactQueueAfterFailure(binding) {

@@ -11,6 +11,12 @@ feedback, and the prompt queue. `session-reconcile.mjs` owns OpenCodez event han
 recovery, session-update gating, cross-host reconcile scheduling, and the bounded watchdog. `topic-lifecycle.mjs` owns
 forum topic creation and lifecycle handling, while the small `single-flight.mjs` helper coalesces duplicate fallback
 work and lets primary SSE events wait behind active per-session recovery without being dropped.
+Global mirroring uses OpenCodez `/global/event`, not one workspace stream per directory. On connection, bound-session
+catch-up considers only recent bindings, open leases, and non-empty queues. It is sequential per server, limited to the
+normal active window, cursor-bounded, and capped at five pages per binding; this keeps recovery deterministic without
+stale Telegram floods, continuous polling, or reconnect request bursts. `OpenCodeClient` unwraps the global
+`{ directory, payload }` envelope once at the transport boundary, so downstream event handlers share the same shape in
+both mirror scopes.
 `final-notifications.mjs` owns final-answer DMs. `commands.mjs` owns Telegram command handlers. `render.mjs` coordinates
 Telegram message rendering while `render-side-effects.mjs` owns pin/final/mirror side effects. `tool-formatting.mjs` and
 `rich-markdown.mjs` hold pure formatting helpers; `rich-list-normalization.mjs` uses mdast to isolate Telegram's

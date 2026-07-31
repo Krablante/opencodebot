@@ -28,6 +28,7 @@ export function createSessionReconciler({
   incompleteRunGraceMs = 1500,
   initialMessagePageSize = 5,
   messagePageSize = 20,
+  reconnectMaxPages = 5,
   reconcileWatchdogMs = 60_000,
   sessionScanOverlapMs = 5 * 60_000,
   cursorCheckpointMs = 60_000,
@@ -46,6 +47,7 @@ export function createSessionReconciler({
   const cursorCheckpointAt = new Map()
   const sessionScanWatermarks = new Map()
   const lastWatchdogAt = new Map()
+  const connectionRecoveries = new Map()
 
   function activeBinding(binding) {
     const current = state.findBinding(binding.serverID, binding.sessionID)
@@ -59,6 +61,17 @@ export function createSessionReconciler({
     const status = promptQueue.status(binding)
     if (Array.isArray(status)) return status.length
     return Number(status?.queued || 0)
+  }
+
+  function clearManualCompaction(binding, reason) {
+    if (!manualCompactions.delete(bindingKey(binding))) return false
+    logInfo("compact.released", {
+      source: binding.serverID,
+      sessionID: binding.sessionID,
+      topicId: binding.topicId,
+      reason,
+    })
+    return true
   }
 
   async function reconcileQueuedPromptStatus(binding) {
@@ -81,7 +94,7 @@ export function createSessionReconciler({
   }
 
   function handleOpenCodeEvent(server, event) {
-    const sessionID = eventSessionID(event.properties)
+    const sessionID = eventSessionID(event)
     if (!sessionID) return Promise.resolve()
     return runAfterFlight(
       bindingOperations,
@@ -93,7 +106,7 @@ export function createSessionReconciler({
   async function handleOpenCodeEventNow(server, event) {
     const startedAt = Date.now()
     const properties = event.properties || {}
-    const sessionID = eventSessionID(properties)
+    const sessionID = eventSessionID(event)
     if (!sessionID) return
 
     if (event.type === "question.replied" || event.type === "question.rejected") {
@@ -117,6 +130,8 @@ export function createSessionReconciler({
       manualCompactions.add(key)
       logInfo("compact.detected", { source: server.id, sessionID, topicId: binding.topicId })
     }
+    if (event.type === "session.compacted") clearManualCompaction(binding, "session-compacted")
+    if (isRollbackRemovalEvent(event.type)) clearManualCompaction(binding, event.type)
     const manualCompaction = manualCompactions.has(key)
     const userMessage = event.type === "message.updated" && properties.info?.role === "user"
     const newUserRun = userMessage && startRun(binding, properties.info.id)
@@ -173,7 +188,7 @@ export function createSessionReconciler({
           if (manualCompaction) {
             await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
             if (properties.finish === "stop") {
-              manualCompactions.delete(key)
+              clearManualCompaction(binding, "step-ended")
               clearRunCheck(binding)
               await promptQueue.markTerminalMirrored(binding)
             }
@@ -198,20 +213,20 @@ export function createSessionReconciler({
         case "session.status":
           if (properties.status?.type === "idle") {
             await handleSessionIdle(server, binding)
-            manualCompactions.delete(key)
+            clearManualCompaction(binding, "session-status-idle")
           }
           onSessionStatusChange(binding, properties.status)
           break
         case "session.idle":
           await handleSessionIdle(server, binding)
-          manualCompactions.delete(key)
+          clearManualCompaction(binding, "session-idle")
           onSessionStatusChange(binding, { type: "idle" })
           break
         case "session.next.step.failed":
           clearRunCheck(binding)
           await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
           if (manualCompaction) {
-            manualCompactions.delete(key)
+            clearManualCompaction(binding, "step-failed")
             if (promptQueue.hasExpectedStop(binding)) break
             promptQueue.markSendFailed(binding)
             break
@@ -230,7 +245,7 @@ export function createSessionReconciler({
         case "session.error":
           clearRunCheck(binding)
           if (manualCompaction) {
-            manualCompactions.delete(key)
+            clearManualCompaction(binding, "session-error")
             if (promptQueue.hasExpectedStop(binding)) break
             promptQueue.markSendFailed(binding)
             break
@@ -583,6 +598,43 @@ export function createSessionReconciler({
     }
   }
 
+  function recoverServerBindings(serverID) {
+    return runSingleFlight(connectionRecoveries, serverID, () => recoverServerBindingsNow(serverID))
+  }
+
+  async function recoverServerBindingsNow(serverID) {
+    if (config.reconcile.enabled === false || !state.mirrorEnabled(config)) return
+    const now = Date.now()
+    const recentCutoff = now - config.reconcile.activeWindowMs
+    const bindings = state.data.bindings.filter((binding) => (
+      !binding.disabled
+      && binding.serverID === serverID
+      && (
+        Date.parse(binding.reconcileUntil || "") > now
+        || Date.parse(binding.lastActiveAt || binding.createdAt || "") >= recentCutoff
+        || queuedPromptCount(binding) > 0
+      )
+    ))
+    if (!bindings.length) return
+
+    const startedAt = Date.now()
+    let failed = 0
+    for (const binding of bindings) {
+      try {
+        await reconcileBinding(binding, { force: true })
+      } catch (error) {
+        failed += 1
+        await handleMirrorError(binding, error).catch(logError)
+      }
+    }
+    logInfo("reconcile.connected", {
+      source: serverID,
+      bindings: bindings.length,
+      failed,
+      durationMs: Date.now() - startedAt,
+    })
+  }
+
   async function seedExistingSessions() {
     const batches = await Promise.all(config.opencode.servers.map(async (server) => {
       const sessions = await backendRequest(server.id, "seed sessions", () => opencode.listSessions(server.id, { mirror: true }))
@@ -672,11 +724,11 @@ export function createSessionReconciler({
     }
   }
 
-  function reconcileBinding(binding) {
-    return runSingleFlight(bindingOperations, bindingKey(binding), () => reconcileBindingNow(binding))
+  function reconcileBinding(binding, options = {}) {
+    return runSingleFlight(bindingOperations, bindingKey(binding), () => reconcileBindingNow(binding, options))
   }
 
-  async function loadReconcileMessages(binding, window, usersOnlyCatchup) {
+  async function loadReconcileMessages(binding, window, usersOnlyCatchup, maxPages = Number.POSITIVE_INFINITY) {
     if (typeof opencode.messagePage !== "function") {
       const messages = await backendRequest(binding.serverID, "session messages", () => opencode.messages(binding.serverID, binding.sessionID, { directory: binding.directory }))
       return messages === skippedBackendRequest ? skippedBackendRequest : { messages, pages: 1 }
@@ -701,7 +753,7 @@ export function createSessionReconciler({
       const reachedWindowStart = items.some((message) => !messageInReconcileWindow(message.info || message, window))
       const reachedUser = items.some((message) => (message.info || message).role === "user")
       const reachedCursor = reconcileCursor && items.some((message) => (message.info || message).id === reconcileCursor)
-      if (!page.before || reachedWindowStart || (usersOnlyCatchup ? reachedUser : reachedCursor)) break
+      if (!page.before || reachedWindowStart || (usersOnlyCatchup ? reachedUser : reachedCursor) || pages >= maxPages) break
       if (cursors.has(page.before)) break
       cursors.add(page.before)
       before = page.before
@@ -757,14 +809,14 @@ export function createSessionReconciler({
     lastWatchdogAt.set(key, now)
   }
 
-  async function reconcileBindingNow(binding) {
+  async function reconcileBindingNow(binding, { force = false } = {}) {
     const current = activeBinding(binding)
     if (!current) return
     binding = current
-    const window = reconcileWindow(binding)
+    const window = reconcileWindow(binding) || (force ? reconnectReconcileWindow(binding, config.reconcile.activeWindowMs) : null)
     if (!window) return
     await ensureObservedSessionUpdate(binding)
-    if (await unchangedWatchdogCheck(binding)) return
+    if (!force && await unchangedWatchdogCheck(binding)) return
     const startedAt = Date.now()
     let mirroredUsers = 0
     let mirroredAssistants = 0
@@ -772,7 +824,12 @@ export function createSessionReconciler({
     const skippedAssistantIDs = []
     let usersOnlyCatchup = Date.parse(binding.reconcileUsersOnlyUntil || "") > Date.now()
     let catchupUserSeen = !usersOnlyCatchup
-    const pageResult = await loadReconcileMessages(binding, window, usersOnlyCatchup)
+    const pageResult = await loadReconcileMessages(
+      binding,
+      window,
+      usersOnlyCatchup,
+      force ? reconnectMaxPages : Number.POSITIVE_INFINITY,
+    )
     if (pageResult === skippedBackendRequest) return
     const { messages, pages } = pageResult
     if (!activeBinding(binding)) return
@@ -1017,7 +1074,16 @@ export function createSessionReconciler({
     }
   }
 
-  return { handleOpenCodeEvent, reconcileBinding, reconcileLoop, reconcileSessions, scheduleReconcile, seedExistingSessions, detachBinding }
+  return {
+    handleOpenCodeEvent,
+    reconcileBinding,
+    reconcileLoop,
+    reconcileSessions,
+    recoverServerBindings,
+    scheduleReconcile,
+    seedExistingSessions,
+    detachBinding,
+  }
 }
 
 function isUnavailableTopicError(error) {
@@ -1135,6 +1201,16 @@ function reconcileWindow(binding) {
   return { afterMs, untilMs }
 }
 
+function reconnectReconcileWindow(binding, activeWindowMs) {
+  const now = Date.now()
+  const lastActiveMs = Date.parse(binding.lastActiveAt || binding.createdAt || "")
+  const boundedAfterMs = now - activeWindowMs
+  return {
+    afterMs: Number.isFinite(lastActiveMs) ? Math.max(lastActiveMs, boundedAfterMs) : boundedAfterMs,
+    untilMs: now,
+  }
+}
+
 function messageInReconcileWindow(info, window) {
   const timeMs = messageTimeMs(info)
   return timeMs > 0 && timeMs >= window.afterMs
@@ -1191,8 +1267,20 @@ export function isManualCompactionPart(part) {
   return part?.type === "compaction" && part.auto === false
 }
 
-function eventSessionID(properties = {}) {
-  return properties.sessionID || properties.part?.sessionID || properties.info?.sessionID || ""
+function isRollbackRemovalEvent(type) {
+  return type === "message.removed"
+    || type === "message.part.removed"
+    || type === "session.next.revert.started"
+    || type === "session.next.revert.completed"
+}
+
+function eventSessionID(event = {}) {
+  const properties = event.properties || {}
+  return properties.sessionID
+    || properties.part?.sessionID
+    || properties.info?.sessionID
+    || (event.type?.startsWith("session.") ? properties.info?.id : "")
+    || ""
 }
 
 function latestRunOutcome(messages) {

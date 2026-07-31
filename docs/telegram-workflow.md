@@ -116,8 +116,9 @@ compaction after a final response, while a genuinely non-idle backend still reje
 `POST /session/:sessionID/summarize` with `auto=false` in the background, so Telegram polling remains responsive during
 a long summary run. A single status message moves from `Compacting context…` to a concise success or failure result.
 Prompts received after the operation starts use the ordinary per-session queue and are released after OpenCodez is idle
-and the compaction terminal event has been handled. OpenCodez's internal assistant message marked `summary=true` is
-recorded as handled but never mirrored into Telegram. `/compact` does not create a session, change the selected model,
+and the summarize request has completed successfully; queue release does not depend on receiving a terminal SSE event.
+The command also refreshes the binding's bounded reconcile lease before it starts. OpenCodez's internal assistant message
+marked `summary=true` is recorded as handled but never mirrored into Telegram. `/compact` does not create a session, change the selected model,
 delete history, or modify OpenCodez/Harness deployment state. Use `/kill` if an in-progress compaction must be aborted.
 
 `/context` exports the latest three main-session user turns from the topic; `/context N` overrides the count once and
@@ -420,8 +421,9 @@ only announce the spawn event with the web-visible task title.
 
 ## Reconcile
 
-Live `/event` SSE is the primary path. Reconcile is a narrow fallback for the current or very recent run, not a
-historical backfill of every bound session. A Telegram prompt, a freshly autocreated web topic, or a live web prompt
+Live SSE is the primary path. Global mirroring consumes OpenCodez's aggregate `/global/event` endpoint through one
+connection per configured server; `serverHome` mode keeps the workspace-scoped `/event` endpoint. Reconcile is a narrow
+fallback, not an unbounded historical backfill. A Telegram prompt, a freshly autocreated web topic, or a live web prompt
 opens a bounded reconcile window for that binding and ends any startup users-only catch-up mode, because assistant
 output after a known-live prompt must remain eligible for recovery. Within that window, reconcile may recover missed
 user/assistant messages and especially the final answer. Topic autocreation is single-flight per OpenCodez
@@ -432,7 +434,11 @@ are coalesced instead of duplicating mirror output. Reconcile reads recent OpenC
 `before` cursor only until it reaches the durable high-water message from the previous complete scan, the active window
 boundary, or the current user prompt; it no longer downloads a long session's complete history on every pass. A restart
 reuses that checkpoint and conservatively rescans only any uncheckpointed tail, while message markers remain
-authoritative for dedupe. The session-list `time.updated` value gates unchanged bindings, while a bounded watchdog
+authoritative for dedupe. Every successful SSE connection also runs one ordered catch-up pass for that server's recent
+bindings, open reconcile leases, and non-empty queues. This reconnect pass is limited to the ordinary active-window
+duration, hard-capped at five message pages per binding, and uses the durable cursor. A long-expired session therefore
+resumes with new live events instead of being polled or flooding Telegram with stale history.
+The session-list `time.updated` value gates unchanged bindings, while a bounded watchdog
 verifies the small session object before fetching message pages. Different OpenCodez hosts reconcile concurrently, but
 bindings on one host remain ordered to avoid host-local request bursts. If an already-bound web session is updated after
 its reconcile window expired, the session-list pass reopens a fresh user-prompt catch-up window so missed web prompts

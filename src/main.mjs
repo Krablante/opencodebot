@@ -198,7 +198,10 @@ console.log(`[opencodebot] starting ${config.opencode.servers.length} OpenCodez 
 
 for (const server of config.opencode.servers) {
   opencode.subscribeEvents(server.id, sessionReconciler.handleOpenCodeEvent, abort.signal, {
-    onConnected: () => questionManager.reconcileServer(server.id),
+    onConnected: () => {
+      questionManager.reconcileServer(server.id).catch(logError)
+      sessionReconciler.recoverServerBindings(server.id).catch(logError)
+    },
   })
 }
 
