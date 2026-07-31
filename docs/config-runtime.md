@@ -503,6 +503,11 @@ including visible progress notes for interrupted turns, and never stores prompt,
 `state.json`. Its Rich Message chunk size, 240,000-character total ceiling, and default of three turns are fixed
 conservative behavior rather than runtime config knobs.
 
+`runtime.telegramUpdateOffset` is the durable completion watermark, not merely the most recently fetched update. The
+poller keeps ordered per-topic lanes and per-host concurrency state in memory, and advances this watermark only after all
+earlier fetched updates have completed. The fixed limits are two active handlers per backend group, 100 unfinished
+updates, and 1,000 uncommitted update records; no additional queue service or configuration is required.
+
 The mirror-marker references above are one logical part of durable state but are physically stored in the sibling append
 journal `<statePath>.mirror-markers.ndjson`; marker maps are not written to `state.json`. Startup loads the compact journal
 before reconciliation. New markers append tens of bytes and duplicate updates are no-ops; historical assistant markers

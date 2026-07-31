@@ -61,6 +61,7 @@ async function smokeLocalInvariants() {
   smokeNestedRichListNormalization()
   smokeIncomingRichMessages()
   await smokeIncomingRichPolling()
+  await smokePollingHostIsolation()
   await smokeArtifactDropbox()
   await smokeArtifactPluginBatchCaptions()
   await smokeSpeechOpenRouterRequest()
@@ -449,6 +450,73 @@ async function smokeIncomingRichPolling() {
   assert.equal(handled[0].caption, "inspect this image")
   assert.equal(handled[0].files[0].fileID, "rich-image")
   assert.equal(handled[0].promptKey, "-1001:88:7")
+}
+
+async function smokePollingHostIsolation() {
+  const startedAt = Date.now()
+  const starts = new Map()
+  let stopped = false
+  let delivered = false
+  let completed = 0
+  let offsetWhileSlow
+  const updates = [
+    { update_id: 1, message: { message_id: 1, message_thread_id: 11, chat: { id: -1001 }, from: { id: 7 }, text: "slow one" } },
+    { update_id: 2, message: { message_id: 2, message_thread_id: 12, chat: { id: -1001 }, from: { id: 7 }, text: "slow two" } },
+    { update_id: 3, message: { message_id: 3, message_thread_id: 13, chat: { id: -1001 }, from: { id: 7 }, text: "fast one" } },
+    { update_id: 4, message: { message_id: 4, message_thread_id: 13, chat: { id: -1001 }, from: { id: 7 }, text: "fast two" } },
+  ]
+  const state = {
+    chatId: -1001,
+    data: { runtime: {} },
+    isArtifactsTopic: () => false,
+    isSoundsTopic: () => false,
+    findBindingByTopic: (_chatId, topic) => ({ serverID: Number(topic) === 13 ? "fast" : "slow" }),
+    async update(mutator) { mutator(this.data) },
+  }
+  const polling = createTelegramPolling({
+    config: { telegram: { allowedUserIds: [7], chatId: -1001 }, mirror: {} },
+    commands: [],
+    state,
+    telegram: {
+      async getUpdates() {
+        if (!delivered) {
+          delivered = true
+          return updates
+        }
+        await wait(5)
+        return []
+      },
+      async sendMessage() {},
+    },
+    commandHandlers: { async handle() { return false } },
+    handleTopicLifecycleMessage: async () => false,
+    extractTelegramFiles: () => [],
+    hasPendingAttachmentBatch: () => false,
+    queueTelegramPrompt: async (key, text) => {
+      starts.set(text, Date.now() - startedAt)
+      if (key === "11") await wait(250)
+      if (text === "fast one") await wait(100)
+      completed += 1
+      if (completed === updates.length) stopped = true
+    },
+    flushAttachmentText: async () => {},
+    promptContext: () => ({}),
+    multipartPromptKey: (message) => String(message.message_thread_id),
+    flushPromptKey: async () => {},
+    logError: (error) => { throw error },
+    maxConcurrentUpdatesPerGroup: 1,
+  })
+  const observeWatermark = wait(150).then(() => {
+    offsetWhileSlow = state.data.runtime.telegramUpdateOffset
+  })
+  await polling.poll({ shouldStop: () => stopped })
+  await observeWatermark
+  await wait(0)
+  assert.ok(starts.get("fast one") < 100, JSON.stringify(Object.fromEntries(starts)))
+  assert.ok(starts.get("fast two") - starts.get("fast one") >= 90, JSON.stringify(Object.fromEntries(starts)))
+  assert.ok(starts.get("slow two") >= 200, JSON.stringify(Object.fromEntries(starts)))
+  assert.equal(offsetWhileSlow, undefined)
+  assert.equal(state.data.runtime.telegramUpdateOffset, 5)
 }
 
 function smokeNestedRichListNormalization() {

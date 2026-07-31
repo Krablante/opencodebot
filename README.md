@@ -25,6 +25,8 @@ workspace-scoped `/event` stream.
 - `/new [server] [profile] [dir:<path>] [title]` for explicit server/profile/directory/topic setup.
 - User-provided topic titles stay user-owned; placeholder titles can be renamed from OpenCodez session titles.
 - `/q` in-memory per-session prompt queue, with status/delete commands.
+- Telegram updates run in ordered per-topic lanes with per-host concurrency limits, so an overloaded OpenCodez server
+  cannot block commands or prompts for other servers.
 - `/kill` to stop the current OpenCodez run for a topic and clear queued prompts.
 - `/reset` to preserve the old session and start fresh in the same Telegram topic.
 - Reply to an earlier Telegram user prompt to rewind that OpenCodez branch and replace it with the reply text and

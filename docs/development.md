@@ -46,7 +46,9 @@ npm run smoke
 expansion. `npm test` holds only the few contracts that benefit from a dedicated test file, such as chat-profile shape,
 the OpenCodez System selection payload, the terminal-mirror/idle latch that guards queued prompts, and single-choice
 question callbacks. `npm run smoke` is the central regression check: it verifies config shape and aggregated
-server-config validation, ordered SSE event handling, OpenCode request timeouts, whole-session state pruning without
+server-config validation, ordered SSE event handling, OpenCode request timeouts, and Telegram update isolation: a slow
+backend group cannot delay another group, same-backend work respects its concurrency bound, and the durable offset
+advances only after the contiguous completion prefix. It also verifies whole-session state pruning without
 per-session message loss, Telegram download limits, synthetic file text filtering, nested rich-list normalization,
 `/kill`, native `/compact` request shape and internal-summary suppression, structured session-error normalization and
 history fallback without raw provider-data leakage, queued prompt release after terminal mirror and session idle, the

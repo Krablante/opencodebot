@@ -271,6 +271,20 @@ Supported attachment inputs include documents, photos, videos, animations, audio
 groups. File count, file size, total size, and cleanup limits are conservative runtime settings. Cloud Bot API mode
 clamps download size to Telegram's cloud limit; local Bot API mode can accept larger files when configured.
 
+## Telegram update isolation
+
+Incoming updates preserve strict order inside one chat/topic but different topics are dispatched independently. Active
+bindings are grouped by OpenCodez server with at most two update handlers running per server, so a slow or overloaded
+host can delay only its own work. Unbound/control updates use a separate Telegram group. The dispatcher allows at most
+100 unfinished updates and 1,000 fetched-but-not-yet-committed updates; these are fixed safety bounds rather than runtime
+knobs.
+
+The in-memory fetch cursor may advance while handlers run, but `telegramUpdateOffset` is persisted only through the
+contiguous completed prefix. A restart therefore replays unfinished work instead of losing it; as before, a crash after
+an external side effect but before offset persistence may replay that update. Existing command, marker, and binding
+idempotency remains authoritative. Outbound OpenCodez SSE streams are already independent per server and do not use this
+input dispatcher.
+
 ## Queue
 
 `/q <prompt>` sends immediately when the bound OpenCodez session is idle. If the session is busy, the prompt is kept in

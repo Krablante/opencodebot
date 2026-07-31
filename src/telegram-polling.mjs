@@ -24,6 +24,10 @@ export function createTelegramPolling({
   multipartPromptKey,
   flushPromptKey,
   logError,
+  maxPendingUpdates = 100,
+  maxUncommittedUpdates = 1_000,
+  maxConcurrentUpdatesPerGroup = 2,
+  slowUpdateMs = 5_000,
 }) {
   async function syncCommandMenu() {
     const menuCommands = typeof commands === "function" ? commands() : commands
@@ -50,22 +54,24 @@ export function createTelegramPolling({
 
   async function poll({ shouldStop }) {
     let offset = state.data.runtime.telegramUpdateOffset || undefined
+    const dispatcher = createUpdateDispatcher({
+      state,
+      config,
+      handleUpdate,
+      persistOffset,
+      logError,
+      maxPendingUpdates,
+      maxUncommittedUpdates,
+      maxConcurrentUpdatesPerGroup,
+      slowUpdateMs,
+    })
     while (!shouldStop()) {
       try {
         const updates = await telegram.getUpdates(offset, 25)
         for (const update of updates) {
-          try {
-            if (update.callback_query) await handleCallbackQuery(update.callback_query)
-            if (update.message) await handleTelegramMessage(update.message)
-          } catch (error) {
-            logError(error)
-          }
+          await dispatcher.waitForCapacity()
           offset = update.update_id + 1
-          await state.update((data) => {
-            if (data.runtime.telegramUpdateOffset === offset) return false
-            data.runtime.telegramUpdateOffset = offset
-            return true
-          })
+          dispatcher.enqueue(update, offset)
         }
       } catch (error) {
         if (shouldStop()) break
@@ -73,6 +79,19 @@ export function createTelegramPolling({
         await delay(2500)
       }
     }
+  }
+
+  async function handleUpdate(update) {
+    if (update.callback_query) await handleCallbackQuery(update.callback_query)
+    if (update.message) await handleTelegramMessage(update.message)
+  }
+
+  async function persistOffset(offset) {
+    await state.update((data) => {
+      if (data.runtime.telegramUpdateOffset === offset) return false
+      data.runtime.telegramUpdateOffset = offset
+      return true
+    })
   }
 
   async function handleCallbackQuery(query) {
@@ -217,6 +236,142 @@ export function createTelegramPolling({
   }
 
   return { poll, syncCommandMenu }
+}
+
+function createUpdateDispatcher({
+  state,
+  config,
+  handleUpdate,
+  persistOffset,
+  logError,
+  maxPendingUpdates,
+  maxUncommittedUpdates,
+  maxConcurrentUpdatesPerGroup,
+  slowUpdateMs,
+}) {
+  const acknowledgements = []
+  const lanes = new Map()
+  const capacityWaiters = []
+  const semaphore = createKeyedSemaphore(maxConcurrentUpdatesPerGroup)
+  let persistRunning = false
+  let unfinishedUpdates = 0
+
+  async function waitForCapacity() {
+    while (unfinishedUpdates >= maxPendingUpdates || acknowledgements.length >= maxUncommittedUpdates) {
+      await new Promise((resolve) => capacityWaiters.push(resolve))
+    }
+  }
+
+  function enqueue(update, offset) {
+    const routing = updateRouting(update, state, config)
+    const acknowledgement = { offset, done: false }
+    acknowledgements.push(acknowledgement)
+    unfinishedUpdates += 1
+
+    const previous = lanes.get(routing.lane) || Promise.resolve()
+    const task = previous.then(async () => {
+      const release = await semaphore.acquire(routing.group)
+      const startedAt = Date.now()
+      try {
+        await handleUpdate(update)
+      } catch (error) {
+        logError(error)
+      } finally {
+        release()
+        const durationMs = Date.now() - startedAt
+        if (durationMs >= slowUpdateMs) {
+          logInfo("telegram.update.slow", {
+            updateId: update.update_id,
+            lane: routing.lane,
+            group: routing.group,
+            durationMs,
+          })
+        }
+      }
+    })
+    const settled = task.catch(logError).finally(() => {
+      acknowledgement.done = true
+      unfinishedUpdates -= 1
+      while (capacityWaiters.length) capacityWaiters.shift()()
+      if (lanes.get(routing.lane) === settled) lanes.delete(routing.lane)
+      void persistCompletedPrefix()
+    })
+    lanes.set(routing.lane, settled)
+  }
+
+  async function persistCompletedPrefix() {
+    if (persistRunning) return
+    persistRunning = true
+    try {
+      while (true) {
+        let completed = 0
+        let offset
+        while (acknowledgements[completed]?.done) {
+          offset = acknowledgements[completed].offset
+          completed += 1
+        }
+        if (!completed) return
+        try {
+          await persistOffset(offset)
+        } catch (error) {
+          logError(error)
+          await delay(2500)
+          continue
+        }
+        acknowledgements.splice(0, completed)
+        while (capacityWaiters.length) capacityWaiters.shift()()
+      }
+    } finally {
+      persistRunning = false
+      if (acknowledgements[0]?.done) void persistCompletedPrefix()
+    }
+  }
+
+  return { enqueue, waitForCapacity }
+}
+
+function updateRouting(update, state, config) {
+  const message = update.message || update.callback_query?.message || {}
+  const chatId = message.chat?.id ?? update.callback_query?.from?.id ?? "unknown"
+  const currentTopicId = topicId(message)
+  const bootstrapPending = !state.chatId && !config.telegram.chatId && config.telegram.allowChatBootstrap
+  const lane = bootstrapPending ? "bootstrap" : `${chatId}:${currentTopicId}`
+  const binding = state.findBindingByTopic?.(chatId, currentTopicId)
+  const pending = state.pendingTopic?.(currentTopicId)
+  return {
+    lane,
+    group: binding?.serverID || pending?.serverID || "telegram",
+  }
+}
+
+function createKeyedSemaphore(limit) {
+  const groups = new Map()
+
+  async function acquire(key) {
+    let group = groups.get(key)
+    if (!group) {
+      group = { active: 0, waiters: [] }
+      groups.set(key, group)
+    }
+    if (group.active < limit) {
+      group.active += 1
+    } else {
+      await new Promise((resolve) => group.waiters.push(resolve))
+    }
+    return () => release(key, group)
+  }
+
+  function release(key, group) {
+    const next = group.waiters.shift()
+    if (next) {
+      next()
+      return
+    }
+    group.active -= 1
+    if (!group.active) groups.delete(key)
+  }
+
+  return { acquire }
 }
 
 export function parseCommand(text) {
