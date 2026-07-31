@@ -116,7 +116,9 @@ When files arrive without captions, the bot waits for plain text from the same u
 OpenCodez. If Telegram splits a large follow-up text into several messages, the bot keeps collecting those chunks until
 the short attachment-text idle window settles, then sends one prompt with all files and text chunks together.
 Telegram-authored Rich Messages require no additional configuration: readable block text becomes the prompt, and
-embedded rich photo blocks use these same attachment limits and buffering rules.
+embedded rich photo blocks use these same attachment limits and buffering rules. Mixed rich-text arrays are flattened in
+source order; visible captions, credits, details headers, custom-emoji alternatives, and mathematical expressions are
+preserved as plain text.
 
 ```json
 {

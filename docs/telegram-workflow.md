@@ -221,9 +221,14 @@ captions flush as one prompt after media groups settle. Files without captions w
 user/topic; if Telegram splits that text into near-limit chunks, those chunks are collected until the short
 attachment-text idle window settles and then sent with the files as one prompt.
 
-Telegram-authored Rich Messages are normalized before ordinary command and prompt routing. Visible block text keeps
-paragraph, heading, list, quote, preformatted-code, details, table, caption, and explicit link-target structure in a
-readable prompt form. Photo blocks, including photos nested in collage or slideshow blocks, select the largest Telegram
+Telegram-authored Rich Messages are normalized before ordinary command and prompt routing. Telegram `RichText` strings,
+mixed arrays, and nested formatting nodes are flattened in source order without dropping visible spans. Paragraphs,
+section headings, list labels and captions, quote captions and credits, preformatted captions, details headers, tables,
+custom-emoji alternatives, mathematical expressions, and explicit link targets keep readable plain-text structure.
+Ordinary `text` or `caption` messages with Bot API `entities` keep the original Telegram string unchanged; entity offsets
+are metadata and are never used to slice prompt content. Rich Message normalization is only the fallback when those
+ordinary fields are absent.
+Photo blocks, including photos nested in collage or slideshow `blocks`, select the largest Telegram
 `PhotoSize` and enter the same attachment download, size-limit, buffering, queue, reply-to-rewind, and OpenCodez
 file-part path as ordinary photos. File descriptors are deduplicated by Telegram file identity. Rich text plus photos
 sends immediately as one prompt; photo-only rich messages wait for follow-up text exactly like ordinary captionless

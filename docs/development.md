@@ -52,9 +52,11 @@ per-session message loss, Telegram download limits, synthetic file text filterin
 history fallback without raw provider-data leakage, queued prompt release after terminal mirror and session idle, the
 interrupted and empty-terminal warning paths, per-recipient final-notification delivery/dedupe with mandatory Telegram
 message ids, full/economy mode behavior, task/subagent spawn notices, final notification
-summaries, artifact-topic host rejection, and artifact upload path handling. Incoming Rich Message smoke covers nested
-inline text, headings, lists, code, details, tables, explicit link targets, captions, largest-photo selection, multiple
-embedded photos, attachment descriptor reuse, and unsupported-media reporting. Web-prompt smoke covers the ordinary
+summaries, artifact-topic host rejection, and artifact upload path handling. Incoming Rich Message smoke uses the current
+Bot API schema and covers mixed `RichText` arrays, inline wrappers, custom emoji and math alternatives, section headings,
+list labels/captions/credits, preformatted captions, details headers, table rows/captions/credits, quote captions/credits,
+collage `blocks`, largest-photo selection, attachment descriptor reuse, and unsupported-media reporting. Web-prompt smoke
+covers the ordinary
 threshold, literal escaped rich HTML, rich splitting only beyond 32,000 characters, and complete ordinary-message
 fallback after a simulated rich rejection. The incomplete-run smoke deliberately uses the real classic sequence
 (`message.updated` for the user followed by `session.idle`) without fabricating `session.next.prompted`; it also covers

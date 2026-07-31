@@ -301,50 +301,59 @@ async function smokeFinalVoiceFlow() {
 function smokeIncomingRichMessages() {
   const richMessage = {
     blocks: [
-      { type: "heading", size: 2, text: { type: "plain", text: "Plan" } },
+      { type: "section_heading", size: 2, text: "Plan" },
       {
         type: "paragraph",
-        text: {
-          type: "concat",
-          texts: [
-            { type: "plain", text: "Read " },
-            { type: "bold", text: { type: "plain", text: "the docs" } },
-            { type: "plain", text: " at " },
-            { type: "url", text: { type: "plain", text: "this link" }, url: "https://example.com/docs" },
-          ],
-        },
+        text: [
+          "Read ",
+          { type: "bold", text: "the docs" },
+          " at ",
+          { type: "url", text: "this link", url: "https://example.com/docs" },
+          " ",
+          { type: "custom_emoji", custom_emoji_id: "emoji-1", alternative_text: "✅" },
+          " ",
+          { type: "mathematical_expression", expression: "x + y" },
+        ],
       },
       {
         type: "list",
         items: [
-          { label: "-", blocks: [{ type: "paragraph", text: { type: "plain", text: "first" } }] },
-          { label: "-", has_checkbox: true, is_checked: true, blocks: [{ type: "paragraph", text: { type: "plain", text: "second" } }] },
+          { label: "-", blocks: [{ type: "paragraph", text: "first" }] },
+          { label: "-", has_checkbox: true, is_checked: true, blocks: [{ type: "paragraph", text: "second" }] },
         ],
+        caption: { text: "List caption", credit: "List credit" },
       },
-      { type: "pre", language: "js", text: { type: "plain", text: "console.log('ok')" } },
+      { type: "preformatted", language: "js", text: "console.log('ok')", caption: { text: "Code caption" } },
       {
         type: "details",
-        summary: { type: "plain", text: "More" },
-        blocks: [{ type: "paragraph", text: { type: "plain", text: "details body" } }],
+        header: "More",
+        blocks: [{ type: "paragraph", text: "details body" }],
       },
       {
         type: "table",
-        caption: { type: "plain", text: "Values" },
-        cells: [
-          [{ text: { type: "plain", text: "A" } }, { text: { type: "plain", text: "B" } }],
-          [{ text: { type: "plain", text: "1" } }, { text: { type: "plain", text: "2" } }],
+        caption: { text: "Values", credit: "Table credit" },
+        rows: [
+          [{ text: "A" }, { text: "B" }],
+          [{ text: "1" }, { text: "2" }],
         ],
       },
       {
+        type: "blockquote",
+        blocks: [{ type: "paragraph", text: "Quoted sentence" }],
+        credit: "Quote credit",
+        caption: { text: "Quote caption" },
+      },
+      { type: "pullquote", text: "Pull sentence", credit: "Pull credit", caption: { text: "Pull caption" } },
+      {
         type: "collage",
-        items: [
+        blocks: [
           {
             type: "photo",
             photo: [
               { file_id: "small-1", file_unique_id: "photo-1-small", width: 100, height: 100 },
               { file_id: "large-1", file_unique_id: "photo-1", width: 1200, height: 800, file_size: 1000 },
             ],
-            caption: { text: { type: "plain", text: "first image" } },
+            caption: { text: "first image", credit: "Image credit" },
           },
           {
             type: "photo",
@@ -358,11 +367,16 @@ function smokeIncomingRichMessages() {
   assert.match(normalized.text, /^## Plan/)
   assert.match(normalized.text, /the docs/)
   assert.match(normalized.text, /this link \(https:\/\/example\.com\/docs\)/)
+  assert.match(normalized.text, /✅ x \+ y/)
   assert.match(normalized.text, /- \[x\] second/)
+  assert.match(normalized.text, /List caption\n\n— List credit/)
   assert.match(normalized.text, /```js\nconsole\.log\('ok'\)\n```/)
+  assert.match(normalized.text, /Code caption/)
   assert.match(normalized.text, /More\n\ndetails body/)
-  assert.match(normalized.text, /Values\nA \| B\n1 \| 2/)
-  assert.match(normalized.text, /first image/)
+  assert.match(normalized.text, /A \| B\n1 \| 2\n\nValues\n\n— Table credit/)
+  assert.match(normalized.text, /> Quoted sentence\n\n— Quote credit\n\nQuote caption/)
+  assert.match(normalized.text, /> Pull sentence\n\n— Pull credit\n\nPull caption/)
+  assert.match(normalized.text, /first image\n\n— Image credit/)
   assert.deepEqual(normalized.media.map((item) => item.file.file_id), ["large-1", "large-2"])
   assert.deepEqual(normalized.unsupportedTypes, [])
 

@@ -32,44 +32,44 @@ function renderBlock(block, context) {
     case "footer":
     case "thinking":
       return renderRichText(block.text)
-    case "heading": {
+    case "heading":
+    case "section_heading": {
       const text = renderRichText(block.text)
       const level = Math.min(6, Math.max(1, Number(block.size) || 1))
       return text ? `${"#".repeat(level)} ${text}` : ""
     }
-    case "pre": {
+    case "pre":
+    case "preformatted": {
       const text = renderRichText(block.text)
-      if (!text) return ""
       const language = String(block.language || "").trim()
-      return `\`\`\`${language}\n${text}\n\`\`\``
+      const body = text ? `\`\`\`${language}\n${text}\n\`\`\`` : ""
+      return joinSections(body, renderCaption(block.caption))
     }
     case "divider":
       return "---"
     case "mathematical_expression":
-      return String(block.expression || "")
+      return joinSections(String(block.expression || ""), renderCaption(block.caption))
     case "anchor":
       return ""
     case "list":
-      return renderList(block.items, context)
+      return joinSections(renderList(block.items, context), renderCaption(block.caption))
     case "blockquote": {
       const body = renderBlocks(block.blocks, context)
-      const credit = renderRichText(block.credit)
-      return quoteText([body, credit && `— ${credit}`].filter(Boolean).join("\n"))
+      return joinSections(quoteText(body), renderCredit(block.credit), renderCaption(block.caption))
     }
     case "pullquote":
-      return quoteText(renderRichText(block.text))
+      return joinSections(quoteText(renderRichText(block.text)), renderCredit(block.credit), renderCaption(block.caption))
     case "collage":
     case "slideshow":
-      return renderBlocks(block.items, context)
+      return joinSections(renderBlocks(block.blocks || block.items, context), renderCaption(block.caption))
     case "table": {
-      const caption = renderRichText(block.caption)
-      const body = renderTable(block.cells)
-      return [caption, body].filter(Boolean).join("\n")
+      const body = renderTable(block.rows || block.cells)
+      return joinSections(body, renderCaption(block.caption))
     }
     case "details": {
-      const header = renderRichText(block.summary)
+      const header = renderRichText(block.header || block.summary)
       const body = renderBlocks(block.blocks, context)
-      return [header, body].filter(Boolean).join("\n\n")
+      return joinSections(header, body)
     }
     case "map": {
       const caption = renderCaption(block.caption)
@@ -91,14 +91,16 @@ function renderBlock(block, context) {
       return renderCaption(block.caption)
     default: {
       context.unsupportedTypes.add(type)
-      const ownText = renderRichText(block.text || block.header || block.caption?.text)
+      const ownText = renderRichText(block.text || block.header)
+      const expression = String(block.expression || "")
       const childText = renderBlocks(block.blocks || block.items, context)
-      return [ownText, childText].filter(Boolean).join("\n\n")
+      return joinSections(ownText, expression, childText, renderCaption(block.caption), renderCredit(block.credit))
     }
   }
 }
 
 function renderRichText(value) {
+  if (Array.isArray(value)) return value.map(renderRichText).join("")
   if (typeof value === "string") return value
   if (!value || typeof value !== "object") return ""
   if (value.type === "concat") return (value.texts || []).map(renderRichText).join("")
@@ -107,6 +109,9 @@ function renderRichText(value) {
   if (value.type === "url") return withTarget(visible, value.url)
   if (value.type === "email_address") return withTarget(visible, value.email_address)
   if (value.type === "phone_number") return withTarget(visible, value.phone_number)
+  if (value.type === "custom_emoji") return String(value.alternative_text || "")
+  if (value.type === "mathematical_expression") return String(value.expression || "")
+  if (value.type === "anchor") return ""
   if (visible) return visible
   if (typeof value.text === "string") return value.text
   if (Array.isArray(value.texts)) return value.texts.map(renderRichText).join("")
@@ -116,7 +121,7 @@ function renderRichText(value) {
 function renderList(items, context) {
   return (Array.isArray(items) ? items : [])
     .map((item, index) => {
-      const label = String(item?.label || (item?.value != null ? `${item.value}.` : `${index + 1}.`))
+      const label = renderRichText(item?.label) || String(item?.value != null ? `${item.value}.` : `${index + 1}.`)
       const checkbox = item?.has_checkbox ? (item.is_checked ? "[x] " : "[ ] ") : ""
       const body = renderBlocks(item?.blocks, context)
       if (!body) return ""
@@ -135,7 +140,20 @@ function renderTable(rows) {
 }
 
 function renderCaption(caption) {
-  return renderRichText(caption?.text)
+  if (!caption) return ""
+  if (typeof caption === "object" && ("text" in caption || "credit" in caption)) {
+    return joinSections(renderRichText(caption.text), renderCredit(caption.credit))
+  }
+  return renderRichText(caption)
+}
+
+function renderCredit(credit) {
+  const value = renderRichText(credit)
+  return value ? `— ${value}` : ""
+}
+
+function joinSections(...values) {
+  return values.map((value) => String(value || "").trim()).filter(Boolean).join("\n\n")
 }
 
 function largestPhoto(photo) {

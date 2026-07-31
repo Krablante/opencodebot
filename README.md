@@ -52,8 +52,8 @@ workspace-scoped `/event` stream.
 - Multipart prompt buffering for Telegram clients that split long messages.
 - Long web-origin prompts use one escaped Telegram Rich Message when they exceed the ordinary message limit; only
   prompts beyond the richer safe limit are numbered and split, with a lossless ordinary-message fallback.
-- Telegram-authored Rich Messages are accepted as prompts: block text is normalized into readable prompt text and
-  embedded rich photos reuse the ordinary attachment pipeline.
+- Telegram-authored Rich Messages are accepted as prompts: mixed inline formatting, visible block text, captions, and
+  credits are normalized without dropping words, while embedded rich photos reuse the ordinary attachment pipeline.
 - Optional WireGuard helper for private off-LAN access to the existing OpenCodez web UI.
 - Configurable daily GitHub update checks (`07:00 Europe/London` in the example and current deployment), a manual
   `/update` command, readable commit-range notes, and an approved one-click rebuild/restart path that never changes or
