@@ -11,6 +11,9 @@ feedback, and the prompt queue. `session-reconcile.mjs` owns OpenCodez event han
 recovery, session-update gating, cross-host reconcile scheduling, and the bounded watchdog. `topic-lifecycle.mjs` owns
 forum topic creation and lifecycle handling, while the small `single-flight.mjs` helper coalesces duplicate fallback
 work and lets primary SSE events wait behind active per-session recovery without being dropped.
+`logical-turn.mjs` is the one pure boundary resolver for responsive OpenCodez runs: it follows durable compaction
+`turn_id`/`replay_id` links and skips internal compaction or synthetic users. Event handling, incomplete-run detection,
+and final metadata therefore agree on which original user prompt owns a continued run.
 Global mirroring uses OpenCodez `/global/event`, not one workspace stream per directory. On connection, bound-session
 catch-up considers only recent bindings, open leases, and non-empty queues. It is sequential per server, limited to the
 normal active window, cursor-bounded, and capped at five pages per binding; this keeps recovery deterministic without
@@ -18,7 +21,9 @@ stale Telegram floods, continuous polling, or reconnect request bursts. `OpenCod
 `{ directory, payload }` envelope once at the transport boundary, so downstream event handlers share the same shape in
 both mirror scopes.
 `final-notifications.mjs` owns final-answer DMs. `commands.mjs` owns Telegram command handlers. `render.mjs` coordinates
-Telegram message rendering while `render-side-effects.mjs` owns pin/final/mirror side effects. `tool-formatting.mjs` and
+Telegram message rendering, including best-effort removal of rolled-back text and tool parts, while
+`render-side-effects.mjs` owns pin/final/mirror side effects. `prompt-routing.mjs` also owns the one mutable prompt-status
+message that moves from accepted to provider retry information and disappears when output resumes. `tool-formatting.mjs` and
 `rich-markdown.mjs` hold pure formatting helpers; `rich-list-normalization.mjs` uses mdast to isolate Telegram's
 nested-list workaround from general rich-message preparation.
 

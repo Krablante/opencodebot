@@ -214,6 +214,12 @@ explanation, such as running `/compact` after context overflow. Telegram output 
 provider response bodies, headers, metadata, or arbitrary nested fields. Expected abort fallout from `/kill`, reset,
 rewind, and queue interruption remains suppressed.
 
+When OpenCodez reports `session.status=retry`, the acknowledgement becomes one concise warning with the provider message,
+attempt number, time until the next attempt, and an action button when OpenCodez supplies a safe web link. Later retries
+edit that same message instead of adding topic noise. The warning disappears as soon as assistant/tool output resumes,
+the session becomes idle, or a terminal error replaces it. This uses the existing event stream and prompt-feedback
+message; it adds no polling timer or persistent retry state.
+
 Telegram-origin prompts can include attachments. The bot downloads supported files into its local staging uploads
 directory. Small files are sent to OpenCodez as data URL file parts next to the prompt text. Larger accepted files are
 copied to the selected server's configured `uploadRoot`, and the prompt receives that server-local path. Files with
@@ -304,7 +310,7 @@ prompts instead of writing full user prompts into `state.json`.
 The bot observes a new `message.updated` user message as the practical start of a run; `session.next.prompted` remains
 supported but is not required because classic OpenCodez prompt flows do not reliably emit it. On every bound-session
 idle event, the bot waits briefly and treats freshly fetched OpenCodez message history as authoritative. The latest
-assistant after the latest user counts as a successful answer only when it ends with `finish=stop` and contains visible
+assistant in the latest logical user turn counts as a successful answer only when it ends with `finish=stop` and contains visible
 non-synthetic text, or when it is a known internal summary. A missing assistant, `finish=unknown`, a tool-call-only
 ending, an output-limit ending, or another non-terminal ending produces one `OpenCodez run was interrupted` warning with
 an `Open session` button. A terminal stop with no visible text produces the more precise
@@ -319,7 +325,7 @@ scheduled grace check instead of postponing it indefinitely. Reconciliation may 
 that real Telegram message then follows the ordinary final-notification path. It never creates a DM for an already
 mirrored historical answer or without an exact Telegram `message_id`. Repeated user updates, duplicate idle events, and
 reconnect reconciliation are idempotent. `state.json` keeps a bounded handling ledger keyed by server, session, and
-latest user message; once an outcome is handled, this prevents duplicate warnings across later reconnects or restarts
+originating user message; once an outcome is handled, this prevents duplicate warnings across later reconnects or restarts
 without storing prompt text. Expected stops initiated by `/kill`, queue interruption, rewind, or reset are recorded in
 the same ledger when their idle outcome is handled and do not generate an interrupted-run warning. Pending OpenCodez
 questions continue to suppress the check while user input is required.
@@ -364,7 +370,9 @@ stop the active run and do not launch another queued prompt automatically.
 ## Final Notifications
 
 Final-summary metadata is read from the exact completed assistant message and paged backward only to the current turn's
-user message. If the exact-message or paginated API path fails, the bot uses a full-history recovery lookup;
+originating user message. A responsive compaction marker's durable `turn_id`/`replay_id` lineage makes replay and
+synthetic continuation messages part of that same logical turn, so wall-clock duration, model calls, token usage, tools,
+diagnostics, and the quoted prompt do not restart at an internal user record. If the exact-message or paginated API path fails, the bot uses a full-history recovery lookup;
 notification content is unchanged.
 
 `/notify_on`, `/notify_off`, and `/notify_status` control private DM notifications for `finalNotifications.userIds`.
@@ -373,7 +381,7 @@ mirrored into Telegram and has an exact Telegram `message_id`. Delivery is dedup
 final assistant message. Restart reconciliation never backfills a DM for an already mirrored historical answer or links
 only to a topic root. The DM includes a source `Topic:` line from the topic's current canonical Telegram
 metadata, not the stale session snapshot that happened to finish, with the Telegram topic name and topic custom emoji
-when Telegram provides it. A compact `⏱️ … · 🤖 model (variant)` line reports wall-clock time from the preceding user
+when Telegram provides it. A compact `⏱️ … · 🤖 model (variant)` line reports wall-clock time from the originating external user
 message to the completed final assistant message plus the main model metadata for that turn. The following
 `🪙 Tokens: total · in … · out … · cache …` line sums every assistant model call in the same main-session turn: `out`
 combines output and reasoning tokens, while `cache` combines cache reads and writes. Child/subagent sessions and their
@@ -407,12 +415,21 @@ ordinary-message chunks without truncating prompt text. Telegram-origin prompts 
 them to its own pending send. Consuming that pending marker also binds the canonical OpenCodez message id to the
 original Telegram message for reply-to-rewind.
 
+OpenCodez compaction markers, replayed users, and synthetic continuation prompts are backend control records, not new
+human prompts. The mirror follows the compaction lineage and marks those records handled without posting a
+`💬 Web prompt`, including after reconnect reconciliation. Repeated compactions resolve back to the original external
+user turn.
+
 Assistant text is accumulated until OpenCodez completes the text block. The bot does not edit Telegram token-by-token.
 Each completed assistant progress note is mirrored once using its OpenCodez message id as the durable dedupe key.
 Completed/final assistant text is sent as Telegram Rich Message markdown when the Bot API accepts it, with fallback for
 local Markdown links and formatting errors. Real final answers are identified by `finish=stop` and marked with `🏁 `.
 The bot pins the user prompt that started the run: the original Telegram message for Telegram-origin prompts, or the
 mirrored user message for web-origin prompts.
+
+Responsive retries can roll back already emitted OpenCodez parts. A `message.part.removed` event removes the matching
+Telegram progress text or tool line best-effort and clears its short-lived renderer index, so a replacement attempt does
+not leave stale output beside the new branch. Removal never rewrites OpenCodez history or durable bot state.
 
 Telegram Rich Message currently loses the parent list level after a nested Markdown or HTML list: a following top-level
 item is rendered as another child, and each later nested list can push subsequent siblings deeper. Before sending rich
@@ -451,7 +468,7 @@ is stored, so a transient topic-creation failure remains retryable. Binding reco
 coordination, and delayed reconcile requests are debounced, so concurrent periodic and event-driven recovery attempts
 are coalesced instead of duplicating mirror output. Reconcile reads recent OpenCodez message pages and follows the
 `before` cursor only until it reaches the durable high-water message from the previous complete scan, the active window
-boundary, or the current user prompt; it no longer downloads a long session's complete history on every pass. A restart
+boundary, or the current logical user turn; it no longer downloads a long session's complete history on every pass. A restart
 reuses that checkpoint and conservatively rescans only any uncheckpointed tail, while message markers remain
 authoritative for dedupe. Every successful SSE connection also runs one ordered catch-up pass for that server's recent
 bindings, open reconcile leases, and non-empty queues. This reconnect pass is limited to the ordinary active-window
@@ -461,7 +478,7 @@ The session-list `time.updated` value gates unchanged bindings, while a bounded 
 verifies the small session object before fetching message pages. Different OpenCodez hosts reconcile concurrently, but
 bindings on one host remain ordered to avoid host-local request bursts. If an already-bound web session is updated after
 its reconcile window expired, the session-list pass reopens a fresh user-prompt catch-up window so missed web prompts
-still reach Telegram. Encountering the current user prompt ends that catch-up even when the prompt already has a durable
+still reach Telegram. Encountering the current logical user turn ends that catch-up even when its prompt already has a durable
 mirror marker; this prevents long-running sessions from muting their assistant output when a reconcile window is
 refreshed after several hours. Old assistant/tool backlog before the recovered user prompt is marked processed in one
 durable batch instead of being replayed into the topic; assistant output after the recovered prompt mirrors normally.

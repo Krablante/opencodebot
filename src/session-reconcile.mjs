@@ -1,4 +1,6 @@
 import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
+import { formatDuration } from "./backend-backoff.mjs"
+import { isInternalUserMessage, logicalTurnRootID, logicalTurnSliceReady, logicalTurnStartIndex } from "./logical-turn.mjs"
 import { textFromPrompt, visibleTextFromParts } from "./opencode.mjs"
 import { formatToolLine } from "./render.mjs"
 import { runAfterFlight, runSingleFlight } from "./single-flight.mjs"
@@ -22,6 +24,8 @@ export function createSessionReconciler({
   isInternalSession,
   activateBindingForPrompt,
   maybeExtendBindingActivity,
+  clearPromptFeedback = async () => {},
+  showPromptFeedback = async () => {},
   logError,
   shouldStop,
   onSessionStatusChange = () => {},
@@ -48,6 +52,9 @@ export function createSessionReconciler({
   const sessionScanWatermarks = new Map()
   const lastWatchdogAt = new Map()
   const connectionRecoveries = new Map()
+  const compactionReplayRoots = new Map()
+  const activeLogicalTurns = new Map()
+  const retryStatuses = new Map()
 
   function activeBinding(binding) {
     const current = state.findBinding(binding.serverID, binding.sessionID)
@@ -126,6 +133,7 @@ export function createSessionReconciler({
     }
     if (!binding || binding.disabled) return
     const key = bindingKey(binding)
+    rememberCompactionPart(binding, properties.part)
     if (isManualCompactionPart(properties.part)) {
       manualCompactions.add(key)
       logInfo("compact.detected", { source: server.id, sessionID, topicId: binding.topicId })
@@ -148,7 +156,10 @@ export function createSessionReconciler({
       assistantMessageID: properties.assistantMessageID,
       messageID: properties.messageID,
       partID: properties.partID,
+      status: properties.status?.type,
+      retryAttempt: properties.status?.type === "retry" ? properties.status.attempt : undefined,
     })
+    let retryStatusChanged = false
 
     try {
       switch (event.type) {
@@ -156,6 +167,11 @@ export function createSessionReconciler({
           startRun(binding, properties.messageID)
           promptQueue.clearExpectedStop(binding)
           promptQueue.markBusy(binding)
+          if (isCompactionReplay(binding, properties.messageID)) {
+            latestUserMessages.set(key, compactionReplayRoots.get(`${key}:${properties.messageID}`))
+            if (properties.messageID) await state.markUserMirrored(server.id, sessionID, properties.messageID)
+            break
+          }
           const text = textFromPrompt(properties.prompt)
           if (!text) {
             if (properties.messageID) await state.markUserMirrored(server.id, sessionID, properties.messageID)
@@ -211,18 +227,22 @@ export function createSessionReconciler({
           }
           break
         case "session.status":
+          if (properties.status?.type === "retry") retryStatusChanged = await handleRetryStatus(binding, properties.status)
           if (properties.status?.type === "idle") {
+            await clearRetryStatus(binding, { clearFeedback: true })
             await handleSessionIdle(server, binding)
             clearManualCompaction(binding, "session-status-idle")
           }
           onSessionStatusChange(binding, properties.status)
           break
         case "session.idle":
+          await clearRetryStatus(binding, { clearFeedback: true })
           await handleSessionIdle(server, binding)
           clearManualCompaction(binding, "session-idle")
           onSessionStatusChange(binding, { type: "idle" })
           break
         case "session.next.step.failed":
+          await clearRetryStatus(binding, { clearFeedback: true })
           clearRunCheck(binding)
           await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
           if (manualCompaction) {
@@ -243,6 +263,7 @@ export function createSessionReconciler({
           }
           break
         case "session.error":
+          await clearRetryStatus(binding, { clearFeedback: true })
           clearRunCheck(binding)
           if (manualCompaction) {
             clearManualCompaction(binding, "session-error")
@@ -278,13 +299,16 @@ export function createSessionReconciler({
           if (manualCompaction) break
           await mirrorToolPartUpdate(binding, properties)
           break
+        case "message.part.removed":
+          await renderer.removePart(binding, properties)
+          break
       }
     } catch (error) {
       logErrorEvent("mirror.event.failed", error, fields())
       await handleMirrorError(binding, error)
     }
     const elapsedMs = durationMs(startedAt)
-    if (isMirrorMilestone(event.type) || shouldLogSlow(elapsedMs)) logInfo("mirror.event.handled", { ...fields(), durationMs: elapsedMs })
+    if (isMirrorMilestone(event, retryStatusChanged) || shouldLogSlow(elapsedMs)) logInfo("mirror.event.handled", { ...fields(), durationMs: elapsedMs })
   }
 
   function scheduleTargetedMessageReconcile(binding, event, manualCompaction) {
@@ -344,20 +368,32 @@ export function createSessionReconciler({
       scheduleReconcile(binding, 1_000)
       return
     }
+    rememberCompactionMessages(binding, [message])
     const info = message?.info || message
     if (!info?.id || !info?.role) {
       scheduleReconcile(binding, 500)
       return
     }
     if (info.role === "user") {
-      if (state.isUserMirrored(binding.serverID, binding.sessionID, info.id)) return
+      const internal = isCompactionReplay(binding, info.id) || isInternalUserMessage(message)
+      const rootID = internalLogicalRoot(binding, message, [message])
+      if (state.isUserMirrored(binding.serverID, binding.sessionID, info.id)) {
+        if (internal && rootID) latestUserMessages.set(bindingKey(binding), rootID)
+        else if (!internal) latestUserMessages.set(bindingKey(binding), info.id)
+        return
+      }
       const mirrored = await mirrorTargetedUserMessage(binding, message)
       if (!mirrored) {
         scheduleReconcile(binding, 500)
         return
       }
       await state.markUserMirrored(binding.serverID, binding.sessionID, info.id)
-      latestUserMessages.set(bindingKey(binding), info.id)
+      if (internal) {
+        if (rootID) latestUserMessages.set(bindingKey(binding), rootID)
+      } else {
+        latestUserMessages.set(bindingKey(binding), info.id)
+        activeLogicalTurns.delete(bindingKey(binding))
+      }
       return
     }
     scheduleReconcile(binding, 500)
@@ -365,6 +401,7 @@ export function createSessionReconciler({
 
   async function mirrorTargetedUserMessage(binding, message) {
     const info = message?.info || message
+    if (isCompactionReplay(binding, info.id) || isInternalUserMessage(message)) return true
     const text = textFromStoredMessage(message)
     if (!text) return false
     const consumed = await state.consumePendingPrompt(binding.serverID, binding.sessionID, text)
@@ -411,6 +448,79 @@ export function createSessionReconciler({
     if (userMessageID) latestUserMessages.set(key, userMessageID)
     clearRunCheck(binding)
     return true
+  }
+
+  async function handleRetryStatus(binding, status) {
+    const key = bindingKey(binding)
+    const signature = JSON.stringify([
+      status.attempt,
+      status.message,
+      status.next,
+      status.action?.title,
+      status.action?.message,
+      status.action?.label,
+      status.action?.link,
+    ])
+    if (retryStatuses.get(key) === signature) return false
+    const feedback = retryFeedback(status)
+    await showPromptFeedback(binding, feedback.text, { replyMarkup: feedback.replyMarkup })
+    retryStatuses.set(key, signature)
+    logInfo("session.retry", {
+      source: binding.serverID,
+      sessionID: binding.sessionID,
+      topicId: binding.topicId,
+      attempt: status.attempt,
+      nextInMs: Math.max(0, Number(status.next) - Date.now()),
+      action: Boolean(feedback.replyMarkup),
+    })
+    return true
+  }
+
+  async function clearRetryStatus(binding, { clearFeedback = false } = {}) {
+    const active = retryStatuses.delete(bindingKey(binding))
+    if (active && clearFeedback) await clearPromptFeedback(binding, { force: true })
+    return active
+  }
+
+  function rememberCompactionPart(binding, part) {
+    if (part?.type !== "compaction" || !part.turn_id) return
+    const key = bindingKey(binding)
+    const directTurn = String(part.turn_id)
+    const rootID = compactionReplayRoots.get(`${key}:${directTurn}`) || directTurn
+    activeLogicalTurns.set(key, rootID)
+    if (latestUserMessages.get(key) === part.messageID) latestUserMessages.set(key, rootID)
+    if (part.replay_id) rememberCompactionReplay(binding, part.replay_id, rootID)
+  }
+
+  function rememberCompactionMessages(binding, messages) {
+    for (const message of messages) {
+      for (const part of message?.parts || []) rememberCompactionPart(binding, part)
+    }
+  }
+
+  function rememberCompactionReplay(binding, replayID, turnID) {
+    const replay = String(replayID || "")
+    const directTurn = String(turnID || "")
+    const turn = compactionReplayRoots.get(`${bindingKey(binding)}:${directTurn}`) || directTurn
+    if (!replay || !turn) return
+    compactionReplayRoots.set(`${bindingKey(binding)}:${replay}`, turn)
+    while (compactionReplayRoots.size > 2_000) compactionReplayRoots.delete(compactionReplayRoots.keys().next().value)
+    if (latestUserMessages.get(bindingKey(binding)) === replay) latestUserMessages.set(bindingKey(binding), turn)
+  }
+
+  function isCompactionReplay(binding, messageID) {
+    return Boolean(messageID && compactionReplayRoots.has(`${bindingKey(binding)}:${messageID}`))
+  }
+
+  function internalLogicalRoot(binding, message, history) {
+    const key = bindingKey(binding)
+    const messageID = String(message?.info?.id || message?.id || "")
+    const linkedRoot = compactionReplayRoots.get(`${key}:${messageID}`)
+    if (linkedRoot) return linkedRoot
+    const resolvedRoot = logicalTurnRootID(history, messageID)
+    if (resolvedRoot && resolvedRoot !== messageID) return resolvedRoot
+    const markerRoot = (message?.parts || []).find((part) => part?.type === "compaction" && part.turn_id)?.turn_id
+    return String(markerRoot || activeLogicalTurns.get(key) || "")
   }
 
   function clearRunCheck(binding) {
@@ -544,6 +654,7 @@ export function createSessionReconciler({
     const input = part.state?.input || part.input || {}
     const payload = {
       callID: part.callID || part.id || properties.partID,
+      partID: part.id || properties.partID,
       tool: part.tool || part.name || properties.tool || "tool",
       input,
       output: part.state?.output || part.output,
@@ -751,7 +862,7 @@ export function createSessionReconciler({
       messages = [...items, ...messages]
 
       const reachedWindowStart = items.some((message) => !messageInReconcileWindow(message.info || message, window))
-      const reachedUser = items.some((message) => (message.info || message).role === "user")
+      const reachedUser = logicalTurnSliceReady(messages, undefined, Boolean(page.before), messagePageSize)
       const reachedCursor = reconcileCursor && items.some((message) => (message.info || message).id === reconcileCursor)
       if (!page.before || reachedWindowStart || (usersOnlyCatchup ? reachedUser : reachedCursor) || pages >= maxPages) break
       if (cursors.has(page.before)) break
@@ -777,7 +888,7 @@ export function createSessionReconciler({
       if (page === skippedBackendRequest) return skippedBackendRequest
       const items = Array.isArray(page.messages) ? page.messages : []
       messages = [...items, ...messages]
-      if (items.some((message) => (message.info || message).role === "user") || !page.before || cursors.has(page.before)) break
+      if (logicalTurnSliceReady(messages, undefined, Boolean(page.before), messagePageSize) || !page.before || cursors.has(page.before)) break
       cursors.add(page.before)
       before = page.before
     }
@@ -833,12 +944,16 @@ export function createSessionReconciler({
     if (pageResult === skippedBackendRequest) return
     const { messages, pages } = pageResult
     if (!activeBinding(binding)) return
-    for (const message of messages) {
+    rememberCompactionMessages(binding, messages)
+    for (const [messageIndex, message] of messages.entries()) {
       if (!activeBinding(binding)) return
       const info = message.info || message
       if (!messageInReconcileWindow(info, window)) continue
       if (info.role === "user") {
         const text = textFromStoredMessage(message)
+        const internal = isCompactionReplay(binding, info.id) || isInternalUserMessage(message)
+        const logicalRootID = internal ? internalLogicalRoot(binding, message, messages.slice(0, messageIndex + 1)) : info.id
+        if (logicalRootID) latestUserMessages.set(bindingKey(binding), logicalRootID)
         if (info.id && state.isUserMirrored(binding.serverID, binding.sessionID, info.id)) {
           if (usersOnlyCatchup && !catchupUserSeen) {
             await activateBindingForPrompt(binding, "reconcile-user-prompt")
@@ -850,6 +965,15 @@ export function createSessionReconciler({
           continue
         }
         if (info.id && !state.isUserMirrored(binding.serverID, binding.sessionID, info.id)) {
+          if (internal) {
+            if (usersOnlyCatchup) {
+              await activateBindingForPrompt(binding, "reconcile-user-prompt")
+              usersOnlyCatchup = false
+              catchupUserSeen = true
+            }
+            await state.markUserMirrored(binding.serverID, binding.sessionID, info.id)
+            continue
+          }
           if (!text) {
             await state.markUserMirrored(binding.serverID, binding.sessionID, info.id)
             continue
@@ -1058,6 +1182,12 @@ export function createSessionReconciler({
   function detachBinding(binding) {
     clearRunCheck(binding)
     const key = bindingKey(binding)
+    retryStatuses.delete(key)
+    activeLogicalTurns.delete(key)
+    renderer.resetSession?.(binding)
+    for (const replayKey of compactionReplayRoots.keys()) {
+      if (replayKey.startsWith(`${key}:`)) compactionReplayRoots.delete(replayKey)
+    }
     const timer = reconcileTimers.get(key)
     if (timer) {
       clearTimeout(timer)
@@ -1075,6 +1205,7 @@ export function createSessionReconciler({
   }
 
   return {
+    clearRetryStatus,
     handleOpenCodeEvent,
     reconcileBinding,
     reconcileLoop,
@@ -1189,8 +1320,11 @@ function compactStoredToolLine(part, renderer) {
   return formatToolLine(tool, input, ok, failed ? part.state?.error?.message || "failed" : "")
 }
 
-function isMirrorMilestone(type) {
-  return type === "session.next.step.ended" || type === "session.next.step.failed" || type === "session.status" || type === "session.idle"
+function isMirrorMilestone(event, retryStatusChanged) {
+  return event.type === "session.next.step.ended"
+    || event.type === "session.next.step.failed"
+    || event.type === "session.idle"
+    || (event.type === "session.status" && (event.properties?.status?.type === "idle" || retryStatusChanged))
 }
 
 function reconcileWindow(binding) {
@@ -1285,13 +1419,7 @@ function eventSessionID(event = {}) {
 
 function latestRunOutcome(messages) {
   const normalized = messages.map((message) => ({ info: message.info || message, parts: message.parts || [] }))
-  let userIndex = -1
-  for (let index = normalized.length - 1; index >= 0; index -= 1) {
-    if (normalized[index]?.info?.role === "user" && normalized[index].info.summary !== true) {
-      userIndex = index
-      break
-    }
-  }
+  const userIndex = logicalTurnStartIndex(normalized)
   if (userIndex < 0) return null
 
   const userMessageID = normalized[userIndex]?.info?.id || null
@@ -1320,6 +1448,35 @@ function latestRunOutcome(messages) {
     finish: "missing",
     reason: "missing",
     userMessageID,
+  }
+}
+
+export function retryFeedback(status, nowMs = Date.now()) {
+  const attempt = Number.isFinite(status?.attempt) ? status.attempt : 0
+  const nextInMs = Math.max(0, Number(status?.next) - nowMs)
+  const duration = nextInMs > 0 ? formatDuration(nextInMs) : ""
+  const detail = status?.action?.message
+    ? [status.action.title, status.action.message].filter(Boolean).join(": ")
+    : String(status?.message || "").trim()
+  const clipped = detail.length > 900 ? `${detail.slice(0, 899).trimEnd()}…` : detail
+  const text = [
+    `⚠️ <b>${escapeHtml(t("prompt.retry.title"))}</b>`,
+    `<code>${escapeHtml(t("prompt.retry.meta", { attempt, duration }))}</code>`,
+    clipped ? `<blockquote>${escapeHtml(clipped)}</blockquote>` : "",
+  ].filter(Boolean).join("\n")
+  const link = safeActionLink(status?.action?.link)
+  return {
+    text,
+    replyMarkup: link ? { inline_keyboard: [[{ text: t("prompt.retry.openDetails"), url: link }]] } : undefined,
+  }
+}
+
+function safeActionLink(value) {
+  try {
+    const url = new URL(String(value || ""))
+    return url.protocol === "https:" ? url.toString() : ""
+  } catch {
+    return ""
   }
 }
 

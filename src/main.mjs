@@ -38,11 +38,15 @@ const finalNotifier = createFinalNotifier({ config, state, telegram, opencode })
 const notifyFinalAnswerReady = finalNotifier.notifyFinalAnswerReady
 let promptRouter
 let finalVoice
+let sessionReconciler
 const renderer = new MirrorRenderer({
   telegram,
   state,
   config,
-  onMirrorMessage: (...args) => promptRouter.clearPromptFeedback(...args),
+  onMirrorMessage: async (...args) => {
+    sessionReconciler?.clearRetryStatus(args[0])
+    await promptRouter.clearPromptFeedback(...args)
+  },
   onFinalMessage: async (binding, details) => {
     finalVoice?.enqueueAutomatic({
       ...details,
@@ -60,7 +64,6 @@ const renderer = new MirrorRenderer({
     await promptRouter.promptQueue.markTerminalMirrored(binding)
   },
 })
-let sessionReconciler
 let controlMenu
 promptRouter = createPromptRouter({
   config,
@@ -82,6 +85,7 @@ const {
   promptContext,
   promptQueue,
   queueTelegramPrompt,
+  showPromptFeedback,
 } = promptRouter
 const topicLifecycle = createTopicLifecycle({ config, state, telegram, opencode, activateBindingForPrompt, clearPromptFeedback })
 const { createTopicForSession, createTopicForWebSession, handleTopicLifecycleMessage, isInternalSession, randomTopicIcon } = topicLifecycle
@@ -125,6 +129,7 @@ sessionReconciler = createSessionReconciler({
   activateBindingForPrompt,
   maybeExtendBindingActivity,
   clearPromptFeedback,
+  showPromptFeedback,
   logError,
   shouldStop: () => shutdownRequested,
   onSessionStatusChange: () => controlMenu?.scheduleStatusRefresh(),

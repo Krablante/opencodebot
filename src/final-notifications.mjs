@@ -2,6 +2,7 @@ import { textFromPrompt } from "./opencode.mjs"
 import { escapeMarkdownV2, toolQuoteMarkdownV2 } from "./rich-markdown.mjs"
 import { escapeHtml, telegramMessageLink } from "./telegram.mjs"
 import { logErrorEvent, logInfo } from "./logger.mjs"
+import { logicalTurnSliceReady, logicalTurnStartIndex } from "./logical-turn.mjs"
 import { t } from "./i18n/index.mjs"
 import { changedFilesForTool, isHiddenTool, isTaskTool, toolNameSet, toolSummaryLabel } from "./tool-formatting.mjs"
 
@@ -314,14 +315,15 @@ function normalizeTopicIconEmoji(value) {
 async function finalSessionSummary({ opencode, binding, assistantMessageID, hiddenTools, debugEnabled = false }) {
   try {
     const messages = await loadCurrentTurnMessages(opencode, binding, assistantMessageID)
-    const turnMetadata = turnMetadataBeforeAssistant(messages, assistantMessageID)
+    const startIndex = logicalTurnStartIndex(messages, assistantMessageID)
+    const turnMetadata = turnMetadataBeforeAssistant(messages, assistantMessageID, startIndex)
     return {
-      promptText: promptTextBeforeAssistant(messages, assistantMessageID),
-      completedTodos: completedTodosBeforeAssistant(messages, assistantMessageID),
-      ...toolSummaryBeforeAssistant(messages, assistantMessageID, hiddenTools),
+      promptText: promptTextBeforeAssistant(messages, assistantMessageID, startIndex),
+      completedTodos: completedTodosBeforeAssistant(messages, assistantMessageID, startIndex),
+      ...toolSummaryBeforeAssistant(messages, assistantMessageID, hiddenTools, startIndex),
       ...turnMetadata,
-      tokenUsage: turnTokenUsageBeforeAssistant(messages, assistantMessageID),
-      debugDiagnostics: debugEnabled ? runDiagnosticsBeforeAssistant(messages, assistantMessageID) : null,
+      tokenUsage: turnTokenUsageBeforeAssistant(messages, assistantMessageID, startIndex),
+      debugDiagnostics: debugEnabled ? runDiagnosticsBeforeAssistant(messages, assistantMessageID, startIndex) : null,
     }
   } catch (error) {
     logErrorEvent("final_notification.session_summary_lookup_failed", error, {
@@ -364,13 +366,14 @@ export async function loadCurrentTurnMessages(opencode, binding, assistantMessag
       } else {
         messages = [...items, ...messages]
       }
-      if (targetFound) {
-        const userIndex = findLastUserMessageIndex(messages)
-        if (userIndex >= 0) return messages.slice(userIndex)
+      if (targetFound && logicalTurnSliceReady(messages, assistantMessageID, Boolean(page?.before))) {
+        const startIndex = logicalTurnStartIndex(messages, assistantMessageID)
+        return startIndex >= 0 ? messages.slice(startIndex) : messages
       }
       if (!page?.before || cursors.has(page.before)) {
         if (!targetFound) throw new Error("Target assistant message is outside the paginated history")
-        return messages
+        const startIndex = logicalTurnStartIndex(messages, assistantMessageID)
+        return startIndex >= 0 ? messages.slice(startIndex) : messages
       }
       cursors.add(page.before)
       before = page.before
@@ -385,23 +388,11 @@ export async function loadCurrentTurnMessages(opencode, binding, assistantMessag
   }
 }
 
-function findLastUserMessageIndex(messages) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messageRole(messages[index]) === "user") return index
-  }
-  return -1
-}
-
-export function turnMetadataBeforeAssistant(messages, assistantMessageID) {
+export function turnMetadataBeforeAssistant(messages, assistantMessageID, startIndex = logicalTurnStartIndex(messages, assistantMessageID)) {
   if (!Array.isArray(messages) || !messages.length) return { durationMs: null, modelID: "", variant: "" }
   const stopIndex = assistantMessageIndex(messages, assistantMessageID)
   const assistant = messageInfo(messages[stopIndex])
-  let user = null
-  for (let index = stopIndex - 1; index >= 0; index -= 1) {
-    if (messageRole(messages[index]) !== "user") continue
-    user = messageInfo(messages[index])
-    break
-  }
+  const user = messageInfo(messages[startIndex])
   const startedAt = timestampMs(user?.time?.created)
   const completedAt = timestampMs(assistant?.time?.completed)
   const assistantModel = assistant?.model || {}
@@ -413,15 +404,9 @@ export function turnMetadataBeforeAssistant(messages, assistantMessageID) {
   }
 }
 
-export function turnTokenUsageBeforeAssistant(messages, assistantMessageID) {
+export function turnTokenUsageBeforeAssistant(messages, assistantMessageID, startIndex = logicalTurnStartIndex(messages, assistantMessageID)) {
   if (!Array.isArray(messages) || !messages.length) return null
   const stopIndex = assistantMessageIndex(messages, assistantMessageID)
-  let startIndex = -1
-  for (let index = stopIndex - 1; index >= 0; index -= 1) {
-    if (messageRole(messages[index]) !== "user") continue
-    startIndex = index
-    break
-  }
   const usage = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0, calls: 0 }
   for (let index = startIndex + 1; index <= stopIndex; index += 1) {
     if (messageRole(messages[index]) !== "assistant") continue
@@ -439,15 +424,9 @@ export function turnTokenUsageBeforeAssistant(messages, assistantMessageID) {
   return usage
 }
 
-export function runDiagnosticsBeforeAssistant(messages, assistantMessageID) {
+export function runDiagnosticsBeforeAssistant(messages, assistantMessageID, startIndex = logicalTurnStartIndex(messages, assistantMessageID)) {
   if (!Array.isArray(messages) || !messages.length) return null
   const stopIndex = assistantMessageIndex(messages, assistantMessageID)
-  let startIndex = -1
-  for (let index = stopIndex - 1; index >= 0; index -= 1) {
-    if (messageRole(messages[index]) !== "user") continue
-    startIndex = index
-    break
-  }
   const stepDurations = []
   const stepTps = []
   let tpsTokens = 0
@@ -552,15 +531,9 @@ function timestampMs(value) {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-export function toolSummaryBeforeAssistant(messages, assistantMessageID, hiddenToolNames = []) {
+export function toolSummaryBeforeAssistant(messages, assistantMessageID, hiddenToolNames = [], startIndex = logicalTurnStartIndex(messages, assistantMessageID)) {
   if (!Array.isArray(messages) || !messages.length) return { tools: [], patchedFiles: [] }
   const stopIndex = assistantMessageIndex(messages, assistantMessageID)
-  let startIndex = -1
-  for (let index = stopIndex - 1; index >= 0; index -= 1) {
-    if (messageRole(messages[index]) !== "user") continue
-    startIndex = index
-    break
-  }
   const hiddenTools = toolNameSet(hiddenToolNames)
   const counts = new Map()
   const patchedFiles = []
@@ -611,13 +584,10 @@ function messageInfo(message) {
   return message?.info || message || {}
 }
 
-function promptTextBeforeAssistant(messages, assistantMessageID) {
+function promptTextBeforeAssistant(messages, assistantMessageID, startIndex = logicalTurnStartIndex(messages, assistantMessageID)) {
   if (!Array.isArray(messages) || !messages.length) return ""
-  let stopIndex = messages.length
-  if (assistantMessageID) {
-    const index = messages.findIndex((message) => message?.info?.id === assistantMessageID || message?.id === assistantMessageID)
-    if (index >= 0) stopIndex = index
-  }
+  if (startIndex >= 0) return textFromMessagePrompt(messages[startIndex]) || ""
+  const stopIndex = assistantMessageIndex(messages, assistantMessageID)
   for (let index = stopIndex - 1; index >= 0; index -= 1) {
     const message = messages[index]
     if (message?.info?.role !== "user" && message?.role !== "user") continue
@@ -635,14 +605,14 @@ function textFromMessagePrompt(message) {
   return textFromPrompt(message?.content)
 }
 
-export function completedTodosBeforeAssistant(messages, assistantMessageID) {
+export function completedTodosBeforeAssistant(messages, assistantMessageID, startIndex = logicalTurnStartIndex(messages, assistantMessageID)) {
   if (!Array.isArray(messages) || !messages.length) return []
   let stopIndex = messages.length
   if (assistantMessageID) {
     const index = messages.findIndex((message) => message?.info?.id === assistantMessageID || message?.id === assistantMessageID)
     if (index >= 0) stopIndex = index
   }
-  for (let messageIndex = stopIndex - 1; messageIndex >= 0; messageIndex -= 1) {
+  for (let messageIndex = stopIndex - 1; messageIndex > startIndex; messageIndex -= 1) {
     const parts = Array.isArray(messages[messageIndex]?.parts) ? messages[messageIndex].parts : []
     for (let partIndex = parts.length - 1; partIndex >= 0; partIndex -= 1) {
       const todos = todosFromToolPart(parts[partIndex])

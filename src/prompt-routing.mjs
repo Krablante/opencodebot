@@ -318,6 +318,43 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     return true
   }
 
+  async function showPromptFeedback(binding, text, { replyMarkup } = {}) {
+    const key = promptFeedbackKey(binding)
+    const item = promptFeedbackMessages.get(key)
+    const signature = JSON.stringify([text, replyMarkup || null])
+    if (item?.signature === signature) return true
+    if (item) {
+      try {
+        await telegram.editMessageText({
+          chatId: item.chatId,
+          messageId: item.messageId,
+          text,
+          replyMarkup: replyMarkup || { inline_keyboard: [] },
+        })
+        Object.assign(item, { sticky: false, signature })
+        return true
+      } catch (error) {
+        if (!/message to edit not found|message not found/i.test(error.message)) throw error
+        promptFeedbackMessages.delete(key)
+      }
+    }
+    const message = await telegram.sendMessage({
+      chatId: binding.chatId,
+      topicId: binding.topicId,
+      text,
+      replyMarkup,
+    })
+    if (message?.message_id) {
+      promptFeedbackMessages.set(key, {
+        chatId: binding.chatId,
+        messageId: message.message_id,
+        sticky: false,
+        signature,
+      })
+    }
+    return Boolean(message)
+  }
+
   async function reportPromptFeedbackError(binding, error) {
     const text = t("prompt.notAccepted", { errorHtml: escapeHtml(error.message) })
     const updated = await updatePromptFeedback(binding, text).catch(() => false)
@@ -375,6 +412,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     promptContext,
     promptQueue,
     queueTelegramPrompt,
+    showPromptFeedback,
   }
 }
 

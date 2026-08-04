@@ -122,6 +122,7 @@ export class MirrorRenderer {
 
   async toolCalled(binding, properties) {
     const session = this.ensureSession(this.key(binding))
+    if (properties.partID && properties.callID) rememberMapBounded(session.partToolCalls, properties.partID, properties.callID, 500)
     if (session.tools.closed) session.tools = newToolBatch()
     const input = properties.input || {}
     const tool = properties.tool || "tool"
@@ -148,6 +149,10 @@ export class MirrorRenderer {
 
   async toolResult(binding, properties, ok) {
     const session = this.ensureSession(this.key(binding))
+    if (properties.partID && properties.callID) {
+      rememberMapBounded(session.partToolCalls, properties.partID, properties.callID, 500)
+      this.attachPartToToolLine(session, properties.partID, properties.callID)
+    }
     if (properties.callID && session.hiddenToolCalls.has(properties.callID)) {
       session.hiddenToolCalls.delete(properties.callID)
       rememberBounded(session.finishedToolCalls, properties.callID, 500)
@@ -160,7 +165,10 @@ export class MirrorRenderer {
     if (!this.shouldMirrorTool(call.tool, call.input)) return
     if (call.reportedOnStart && ok) return
     const suffix = ok ? shortUsefulResult(properties) : shortError(properties)
-    await this.appendToolLine(binding, formatToolLine(call.tool, call.input, ok, suffix))
+    await this.appendToolLine(binding, formatToolLine(call.tool, call.input, ok, suffix), {
+      callID: properties.callID,
+      partID: properties.partID,
+    })
   }
 
   async flushText(binding, block, force) {
@@ -292,12 +300,25 @@ export class MirrorRenderer {
     }
   }
 
-  async appendToolLine(binding, line) {
+  async appendToolLine(binding, line, { callID, partID } = {}) {
     const session = this.ensureSession(this.key(binding))
     if (session.tools.closed) session.tools = newToolBatch()
     session.tools.lines.push(line)
+    session.tools.callIDs.push(callID || null)
+    session.tools.partIDs.push(partID || null)
+    if (callID) rememberMapBounded(session.toolBatchesByCall, callID, session.tools, 500)
+    if (partID) rememberMapBounded(session.partToolBatches, partID, session.tools, 500)
     if (session.tools.lines.length > this.config.mirror.toolBatchMaxLines) {
-      session.tools.lines = session.tools.lines.slice(-this.config.mirror.toolBatchMaxLines)
+      const removed = session.tools.lines.length - this.config.mirror.toolBatchMaxLines
+      for (const removedCallID of session.tools.callIDs.slice(0, removed)) {
+        if (removedCallID) session.toolBatchesByCall.delete(removedCallID)
+      }
+      for (const removedPartID of session.tools.partIDs.slice(0, removed)) {
+        if (removedPartID) session.partToolBatches.delete(removedPartID)
+      }
+      session.tools.lines = session.tools.lines.slice(removed)
+      session.tools.callIDs = session.tools.callIDs.slice(removed)
+      session.tools.partIDs = session.tools.partIDs.slice(removed)
       session.tools.truncated = true
     }
     const startedAt = Date.now()
@@ -309,6 +330,84 @@ export class MirrorRenderer {
         durationMs: elapsedMs,
       })
     }
+  }
+
+  attachPartToToolLine(session, partID, callID) {
+    const tools = session.toolBatchesByCall.get(callID)
+    if (!tools) return
+    const index = tools.callIDs.indexOf(callID)
+    if (index < 0) return
+    tools.partIDs[index] = partID
+    rememberMapBounded(session.partToolBatches, partID, tools, 500)
+  }
+
+  async removePart(binding, properties) {
+    const session = this.sessions.get(this.key(binding))
+    const partID = String(properties?.partID || "")
+    if (!session || !partID) return false
+    let removed = false
+    const block = session.texts.get(partID)
+    if (block) {
+      if (block.timer) clearTimeout(block.timer)
+      session.texts.delete(partID)
+      if (block.messageId) {
+        await this.telegram.deleteMessage({
+          chatId: binding.chatId,
+          messageId: block.messageId,
+          suppressFailureLog: true,
+        }).catch((error) => logErrorEvent("mirror.rollback.text_delete_failed", error, {
+          source: binding.serverID,
+          sessionID: binding.sessionID,
+          topicId: binding.topicId,
+          partID,
+          messageId: block.messageId,
+        }))
+      }
+      if (session.assistantLastMessageIds.get(block.assistantMessageID) === block.messageId) {
+        const replacement = [...session.texts.values()].reverse().find((item) => item.assistantMessageID === block.assistantMessageID && item.messageId)
+        if (replacement) session.assistantLastMessageIds.set(block.assistantMessageID, replacement.messageId)
+        else session.assistantLastMessageIds.delete(block.assistantMessageID)
+      }
+      removed = true
+    }
+
+    const callID = session.partToolCalls.get(partID) || partID
+    if (callID) {
+      session.partToolCalls.delete(partID)
+      session.hiddenToolCalls.delete(callID)
+      session.finishedToolCalls.delete(callID)
+      session.tools.calls.delete(callID)
+    }
+    const tools = session.partToolBatches.get(partID) || session.toolBatchesByCall.get(partID)
+    const partIndex = tools?.partIDs.indexOf(partID) ?? -1
+    const lineIndex = partIndex >= 0 ? partIndex : tools?.callIDs.indexOf(partID) ?? -1
+    if (tools && lineIndex >= 0) {
+      const removedCallID = tools.callIDs[lineIndex]
+      tools.lines.splice(lineIndex, 1)
+      tools.callIDs.splice(lineIndex, 1)
+      tools.partIDs.splice(lineIndex, 1)
+      session.partToolBatches.delete(partID)
+      if (removedCallID) session.toolBatchesByCall.delete(removedCallID)
+      if (tools.lines.length) await this.flushTools(binding, tools)
+      else if (tools.messageId) {
+        await this.telegram.deleteMessage({
+          chatId: binding.chatId,
+          messageId: tools.messageId,
+          suppressFailureLog: true,
+        }).catch((error) => logErrorEvent("mirror.rollback.tools_delete_failed", error, {
+          source: binding.serverID,
+          sessionID: binding.sessionID,
+          topicId: binding.topicId,
+          partID,
+          messageId: tools.messageId,
+        }))
+        tools.messageId = null
+      }
+      if (!tools.lines.length && session.tools === tools) session.tools = newToolBatch()
+      removed = true
+    }
+    if (removed) logMirrorFlush("mirror.rollback.part_removed", binding, { partID, messageID: properties?.messageID })
+    return removed
   }
 
   async announceSubagentSpawn(binding, input = {}) {
@@ -323,6 +422,15 @@ export class MirrorRenderer {
   closeToolBatch(binding) {
     const session = this.sessions.get(this.key(binding))
     if (session?.tools) session.tools.closed = true
+  }
+
+  resetSession(binding) {
+    const session = this.sessions.get(this.key(binding))
+    if (!session) return
+    for (const block of session.texts.values()) {
+      if (block.timer) clearTimeout(block.timer)
+    }
+    this.sessions.delete(this.key(binding))
   }
 
   async pinMessage(binding, messageId, fields = {}) {
@@ -412,7 +520,10 @@ export class MirrorRenderer {
         hiddenToolCalls: new Set(),
         announcedTaskCalls: new Set(),
         finishedToolCalls: new Set(),
+        partToolBatches: new Map(),
+        partToolCalls: new Map(),
         pendingFinalAssistantIds: new Set(),
+        toolBatchesByCall: new Map(),
       }
       this.sessions.set(key, session)
     }
@@ -492,12 +603,18 @@ function splitEscapedText(text, maxEscapedChars) {
 }
 
 function newToolBatch() {
-  return { calls: new Map(), lines: [], messageId: null, truncated: false, closed: false, formatFallback: false }
+  return { calls: new Map(), lines: [], callIDs: [], partIDs: [], messageId: null, truncated: false, closed: false, formatFallback: false }
 }
 
 function rememberBounded(set, value, maxSize) {
   set.add(value)
   while (set.size > maxSize) set.delete(set.values().next().value)
+}
+
+function rememberMapBounded(map, key, value, maxSize) {
+  map.delete(key)
+  map.set(key, value)
+  while (map.size > maxSize) map.delete(map.keys().next().value)
 }
 
 function subagentSpawnMessage(input = {}) {

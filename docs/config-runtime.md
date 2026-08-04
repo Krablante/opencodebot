@@ -369,11 +369,11 @@ time may exceed overall duration for overlapping calls.
 The final DM is intentionally short and mode-neutral: it includes a source `Topic:` line from the topic's current
 canonical Telegram metadata rather than a finishing session's retained binding snapshot, with the Telegram topic name
 and topic custom emoji when Telegram provides it. The next line uses the compact form
-`⏱️ 2h 18m 14s · 🤖 gpt-5.6-sol-fast (max)`: duration is wall-clock time from the preceding user message to the
+`⏱️ 2h 18m 14s · 🤖 gpt-5.6-sol-fast (max)`: duration is wall-clock time from the logical turn's originating external user message to the
 completed final assistant message, while model and variant come from that main turn's message metadata rather than
 current binding or browser state. A second compact line uses `🪙 Tokens: 60.6M · in 24.0M · out 120.5K · cache 36.5M`.
-It sums normalized token usage from every assistant model call between the preceding user message and final assistant
-message; `out` includes reasoning and `cache` includes reads plus writes. Missing metadata is omitted cleanly.
+It sums normalized token usage from every assistant model call in that logical turn, including work before a responsive
+compaction/replay boundary; `out` includes reasoning and `cache` includes reads plus writes. Missing metadata is omitted cleanly.
 Child/subagent sessions and their models or token usage are not included. The DM also provides an `Open topic` button,
 quotes the original user prompt in an expandable block for orientation, includes a compact quoted `📋 Tasks [n/n]:`
 checklist when the agent closed one, and adds a separate quoted `Tools:` / `Patched:` block with compact tool counts and
