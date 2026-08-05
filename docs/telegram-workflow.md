@@ -214,11 +214,12 @@ explanation, such as running `/compact` after context overflow. Telegram output 
 provider response bodies, headers, metadata, or arbitrary nested fields. Expected abort fallout from `/kill`, reset,
 rewind, and queue interruption remains suppressed.
 
-When OpenCodez reports `session.status=retry`, the acknowledgement becomes one concise warning with the provider message,
-attempt number, time until the next attempt, and an action button when OpenCodez supplies a safe web link. Later retries
-edit that same message instead of adding topic noise. The warning disappears as soon as assistant/tool output resumes,
-the session becomes idle, or a terminal error replaces it. This uses the existing event stream and prompt-feedback
-message; it adds no polling timer or persistent retry state.
+The first two `session.status=retry` events stay silent so brief provider recovery does not create Telegram noise. From
+attempt three, the acknowledgement becomes one concise warning with the provider message, attempt number, time until the
+next attempt, and an action button when OpenCodez supplies a safe web link. Later retries edit that same message instead
+of adding topic noise. The warning disappears as soon as assistant/tool output resumes, the session becomes idle, or a
+terminal error replaces it. This uses the existing event stream and prompt-feedback message; it adds no polling timer or
+persistent retry state.
 
 Telegram-origin prompts can include attachments. The bot downloads supported files into its local staging uploads
 directory. Small files are sent to OpenCodez as data URL file parts next to the prompt text. Larger accepted files are

@@ -23,8 +23,8 @@ both mirror scopes.
 `final-notifications.mjs` owns final-answer DMs. `commands.mjs` owns Telegram command handlers. `render.mjs` coordinates
 Telegram message rendering, including best-effort removal of rolled-back text and tool parts, while
 `render-side-effects.mjs` owns pin/final/mirror side effects. `prompt-routing.mjs` also owns the one mutable prompt-status
-message that moves from accepted to provider retry information and disappears when output resumes. `tool-formatting.mjs` and
-`rich-markdown.mjs` hold pure formatting helpers; `rich-list-normalization.mjs` uses mdast to isolate Telegram's
+message that moves from accepted to provider retry information starting at attempt three and disappears when output
+resumes. `tool-formatting.mjs` and `rich-markdown.mjs` hold pure formatting helpers; `rich-list-normalization.mjs` uses mdast to isolate Telegram's
 nested-list workaround from general rich-message preparation.
 
 ## Checks

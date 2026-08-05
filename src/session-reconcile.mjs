@@ -8,6 +8,8 @@ import { escapeHtml } from "./telegram.mjs"
 import { managedTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
 import { t } from "./i18n/index.mjs"
 
+const RETRY_FEEDBACK_MIN_ATTEMPT = 3
+
 export function createSessionReconciler({
   config,
   state,
@@ -452,8 +454,9 @@ export function createSessionReconciler({
 
   async function handleRetryStatus(binding, status) {
     const key = bindingKey(binding)
+    const attempt = Number.isFinite(status.attempt) ? status.attempt : 0
     const signature = JSON.stringify([
-      status.attempt,
+      attempt,
       status.message,
       status.next,
       status.action?.title,
@@ -462,6 +465,17 @@ export function createSessionReconciler({
       status.action?.link,
     ])
     if (retryStatuses.get(key) === signature) return false
+    if (attempt < RETRY_FEEDBACK_MIN_ATTEMPT) {
+      retryStatuses.set(key, signature)
+      logInfo("session.retry.suppressed", {
+        source: binding.serverID,
+        sessionID: binding.sessionID,
+        topicId: binding.topicId,
+        attempt,
+        notifyFromAttempt: RETRY_FEEDBACK_MIN_ATTEMPT,
+      })
+      return true
+    }
     const feedback = retryFeedback(status)
     await showPromptFeedback(binding, feedback.text, { replyMarkup: feedback.replyMarkup })
     retryStatuses.set(key, signature)
@@ -469,7 +483,7 @@ export function createSessionReconciler({
       source: binding.serverID,
       sessionID: binding.sessionID,
       topicId: binding.topicId,
-      attempt: status.attempt,
+      attempt,
       nextInMs: Math.max(0, Number(status.next) - Date.now()),
       action: Boolean(feedback.replyMarkup),
     })
