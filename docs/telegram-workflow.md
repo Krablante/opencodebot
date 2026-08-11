@@ -322,10 +322,12 @@ Recent periodic reconciliation performs the same status-and-history check, so a 
 not permanently disable detection. A periodic message snapshot that appears incomplete is never treated as terminal
 immediately: it enters the same short grace path and is fetched again after the backend reports idle, preventing a
 just-completed `finish=stop` update from racing with an older snapshot. Repeated reconcile passes reuse the already
-scheduled grace check instead of postponing it indefinitely. Reconciliation may mirror a genuinely missing final answer;
-that real Telegram message then follows the ordinary final-notification path. It never creates a DM for an already
-mirrored historical answer or without an exact Telegram `message_id`. Repeated user updates, duplicate idle events, and
-reconnect reconciliation are idempotent. `state.json` keeps a bounded handling ledger keyed by server, session, and
+scheduled grace check instead of postponing it indefinitely. When that authoritative idle snapshot contains an
+unmirrored final answer, the bot sends that exact stored assistant message directly; this also covers a final produced
+immediately after compaction when its live text/step events were missed. The real Telegram message then follows the
+ordinary final-notification path. It never creates a DM for an already mirrored historical answer or without an exact
+Telegram `message_id`. Repeated user updates, duplicate idle events, and reconnect reconciliation are idempotent.
+`state.json` keeps a bounded handling ledger keyed by server, session, and
 originating user message; once an outcome is handled, this prevents duplicate warnings across later reconnects or restarts
 without storing prompt text. Expected stops initiated by `/kill`, queue interruption, rewind, or reset are recorded in
 the same ledger when their idle outcome is handled and do not generate an interrupted-run warning. Pending OpenCodez

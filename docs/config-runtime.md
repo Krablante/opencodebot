@@ -530,8 +530,9 @@ persists the current in-memory state. A restart still loses any mutations that n
 If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and
 lists the cleared items by number plus the same first-words summary used by `/q status`. The queue releases the next
 prompt only after OpenCodez reports the session idle and the terminal assistant answer is mirrored to Telegram. Idle
-triggers a history reconcile when the terminal event has not arrived yet, and repeated idle events cannot release more
-than one prompt.
+loads the current logical-turn history when the terminal event has not arrived yet and directly mirrors its exact
+unmirrored final, including after compaction, without a second general reconcile request. Repeated idle events cannot
+release more than one prompt.
 
 Every bound-session idle starts a short grace check; a user `message.updated` event also records the start early but is
 not required. If status and current message history still show no terminal visible answer, the bot sends one warning

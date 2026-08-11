@@ -13,7 +13,9 @@ forum topic creation and lifecycle handling, while the small `single-flight.mjs`
 work and lets primary SSE events wait behind active per-session recovery without being dropped.
 `logical-turn.mjs` is the one pure boundary resolver for responsive OpenCodez runs: it follows durable compaction
 `turn_id`/`replay_id` links and skips internal compaction or synthetic users. Event handling, incomplete-run detection,
-and final metadata therefore agree on which original user prompt owns a continued run.
+and final metadata therefore agree on which original user prompt owns a continued run. The idle outcome check reuses its
+already-fetched logical-turn history to deliver an unmirrored `finish=stop` message directly, so a post-compaction final
+does not depend on receiving every live text/step event or on a second general reconcile pass.
 Global mirroring uses OpenCodez `/global/event`, not one workspace stream per directory. On connection, bound-session
 catch-up considers only recent bindings, open leases, and non-empty queues. It is sequential per server, limited to the
 normal active window, cursor-bounded, and capped at five pages per binding; this keeps recovery deterministic without

@@ -605,8 +605,26 @@ export function createSessionReconciler({
       return
     }
     if (outcome.complete) {
-      if (!messages) await reconcileBinding(binding)
-      if (!state.isAssistantMirrored(server.id, binding.sessionID, outcome.assistantMessageID)) return
+      let mirrored = state.isAssistantMirrored(server.id, binding.sessionID, outcome.assistantMessageID)
+      if (!mirrored && outcome.finalAnswer) {
+        const finalMessage = history.find((message) => (message.info || message).id === outcome.assistantMessageID)
+        if (finalMessage && await renderStoredAssistantMessage(binding, finalMessage)) {
+          await state.markAssistantMirrored(server.id, binding.sessionID, outcome.assistantMessageID)
+          mirrored = true
+          logInfo("reconcile.final.recovered", {
+            serverID: binding.serverID,
+            sessionID: binding.sessionID,
+            topicId: binding.topicId,
+            assistantMessageID: outcome.assistantMessageID,
+            source,
+          })
+        }
+      }
+      if (!mirrored && !messages) {
+        await reconcileBinding(binding)
+        mirrored = state.isAssistantMirrored(server.id, binding.sessionID, outcome.assistantMessageID)
+      }
+      if (!mirrored) return
       clearRunCheck(binding)
       await promptQueue.markTerminalMirrored(binding)
       return
@@ -1170,7 +1188,7 @@ export function createSessionReconciler({
       if (toolLine) toolLines.push(toolLine)
     }
     await renderer.compactTools(binding, toolLines)
-    await renderer.assistantMessage(binding, textParts.join("\n\n"), { final: info.finish === "stop", assistantMessageID: info.id })
+    return renderer.assistantMessage(binding, textParts.join("\n\n"), { final: info.finish === "stop", assistantMessageID: info.id })
   }
 
   async function pinConsumedTelegramPrompt(binding, marker) {
