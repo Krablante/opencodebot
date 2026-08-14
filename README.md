@@ -169,6 +169,9 @@ The Telegram self-updater also rebuilds and restarts only opencodebot. If an exa
 `plugins/opencodebot-artifacts/` or `skills/telegram-artifact-send/`, its offer and success card report that manual
 follow-up. It never refreshes installed OpenCodez copies or restarts OpenCodez.
 
+The `/update` command always performs a manual check. `updates.enabled` controls only the optional scheduled check, so an
+older local config without an `updates` block can still use the command after one revision-aware manual deployment.
+
 One-click update is also disabled when a range changes Compose or the host updater itself. Telegram then shows the exact
 control-plane paths and the required `git pull` plus revision-aware manual deployment command; this keeps rollback honest
 instead of running an old image through a new Compose contract.

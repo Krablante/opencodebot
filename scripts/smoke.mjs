@@ -1494,6 +1494,71 @@ async function smokeUpdateManager() {
       message: { message_id: 77, chat: { id: -100 } },
     })
     assert.match(calls.at(-1)[1].text, /must be installed manually/)
+
+    changedFiles = []
+    const manualRuntimeDir = path.join(tempRoot, "manual")
+    const manualUpdates = normalizeUpdatesConfig({
+      enabled: false,
+      runtimeDir: manualRuntimeDir,
+    }, {
+      statePath: path.join(tempRoot, "manual-state.json"),
+      env: { OPENCODEBOT_BUILD_SHA: baseSha },
+    })
+    const manualData = {
+      updates: {
+        lastScheduledDate: null,
+        lastCheckedAt: null,
+        lastCheckKind: null,
+        lastNotifiedSha: null,
+        lastNotifiedDate: null,
+        dismissedSha: null,
+        dismissedDate: null,
+        offers: [],
+        activeRun: null,
+      },
+    }
+    const manualCalls = []
+    const manualManager = createUpdateManager({
+      config: { updates: manualUpdates, telegram: { chatId: -100 } },
+      state: {
+        data: manualData,
+        chatId: -100,
+        async update(mutator) { await mutator(manualData) },
+      },
+      telegram: {
+        async sendMessage(payload) {
+          manualCalls.push(["send", payload])
+          return { message_id: 88 }
+        },
+        async editMessageText(payload) {
+          manualCalls.push(["edit", payload])
+          return { message_id: payload.messageId }
+        },
+        async answerCallbackQuery(payload) {
+          manualCalls.push(["answer", payload])
+          return true
+        },
+      },
+      fetchImpl,
+      now: () => new Date("2026-07-24T06:00:00.000Z"),
+    })
+    try {
+      await manualManager.start()
+      assert.equal(manualManager.scheduleTimer, null)
+      await manualManager.checkNow({ chatId: -100, topicId: 5 })
+      assert.ok(manualCalls.some(([kind, payload]) => kind === "edit" && payload.replyMarkup?.inline_keyboard?.length))
+      assert.equal(manualData.updates.offers.length, 1)
+      await manualManager.handleCallback({
+        id: "manual-callback",
+        data: `upd:later:${targetSha}`,
+        message: { message_id: 88, chat: { id: -100 } },
+      })
+      assert.match(manualCalls.at(-1)[1].text, /Run \/update/)
+      assert.equal(manualData.updates.dismissedDate, null)
+      assert.equal(manualData.updates.offers.length, 0)
+    } finally {
+      manualManager.stop()
+    }
   } finally {
     manager.stop()
     await rm(tempRoot, { recursive: true, force: true })

@@ -37,12 +37,13 @@ class UpdateManager {
   }
 
   async start() {
-    if (!this.config.updates.enabled) return
     await fs.mkdir(this.runtimeDir, { recursive: true })
     await this.reconcileStatus()
-    this.scheduleTimer = setInterval(() => void this.runScheduledCheck(), SCHEDULE_INTERVAL_MS)
-    this.scheduleTimer.unref?.()
-    void this.runScheduledCheck()
+    if (this.config.updates.enabled) {
+      this.scheduleTimer = setInterval(() => void this.runScheduledCheck(), SCHEDULE_INTERVAL_MS)
+      this.scheduleTimer.unref?.()
+      void this.runScheduledCheck()
+    }
     if (this.state.data.updates?.activeRun) this.startStatusPolling()
   }
 
@@ -54,10 +55,6 @@ class UpdateManager {
   }
 
   async checkNow({ chatId, topicId = 0 }) {
-    if (!this.config.updates.enabled) {
-      await this.telegram.sendMessage({ chatId, topicId, text: t("updates.disabled") })
-      return
-    }
     if (!isGitRevision(this.config.updates.currentRevision)) {
       await this.telegram.sendMessage({
         chatId,
@@ -120,13 +117,12 @@ class UpdateManager {
     }
 
     if (action === "later") {
-      await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("updates.deferredCallback") })
-      const localDate = scheduledCheckDue({
-        now: this.now(),
-        timeZone: this.config.updates.timeZone,
-        hour: 0,
-        minute: 0,
-      }).date
+      const scheduled = this.config.updates.enabled
+      await this.telegram.answerCallbackQuery({
+        callbackQueryId: query.id,
+        text: t(scheduled ? "updates.deferredCallback" : "updates.deferredManualCallback"),
+      })
+      const localDate = updateCalendarDate(this.config.updates, this.now())
       await this.state.update((data) => {
         data.updates.dismissedSha = targetSha
         data.updates.dismissedDate = localDate
@@ -135,7 +131,9 @@ class UpdateManager {
       await this.telegram.editMessageText({
         chatId,
         messageId,
-        text: t("updates.deferred", { from: shortRevision(offer.baseSha), to: shortRevision(targetSha), checkAt: escapeHtml(this.config.updates.checkAt), timeZone: escapeHtml(this.config.updates.timeZone) }),
+        text: scheduled
+          ? t("updates.deferred", { from: shortRevision(offer.baseSha), to: shortRevision(targetSha), checkAt: escapeHtml(this.config.updates.checkAt), timeZone: escapeHtml(this.config.updates.timeZone) })
+          : t("updates.deferredManual", { from: shortRevision(offer.baseSha), to: shortRevision(targetSha) }),
         replyMarkup: EMPTY_KEYBOARD,
       })
       return true
@@ -314,12 +312,7 @@ class UpdateManager {
     } else {
       message = await this.telegram.sendMessage({ chatId, topicId, text, replyMarkup })
     }
-    const localDate = scheduledCheckDue({
-      now: this.now(),
-      timeZone: this.config.updates.timeZone,
-      hour: 0,
-      minute: 0,
-    }).date
+    const localDate = updateCalendarDate(this.config.updates, this.now())
     const offer = {
       baseSha: result.baseSha,
       targetSha: result.targetSha,
@@ -434,6 +427,16 @@ function offerKeyboard(result) {
       ],
     ],
   }
+}
+
+function updateCalendarDate(updates, now) {
+  if (!updates.timeZone) return null
+  return scheduledCheckDue({
+    now,
+    timeZone: updates.timeZone,
+    hour: 0,
+    minute: 0,
+  }).date
 }
 
 function formatOfferMessage(result) {

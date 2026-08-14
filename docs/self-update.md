@@ -2,8 +2,9 @@
 
 With the example and current private config, opencodebot checks its public GitHub `main` branch every day at
 `07:00 Europe/London`. The schedule comes from `updates.checkAt` and `updates.timeZone`. When a newer commit exists, it
-posts one concise update card in the Telegram General topic. `/update` performs the same check immediately and reports
-in the topic where the command was used. A manual check does not move or disable the daily schedule.
+posts one concise update card in the Telegram General topic. `/update` performs an immediate check and reports in the
+topic where the command was used even when scheduled checks are disabled. A manual check does not move or enable the
+daily schedule.
 
 The feature deliberately owns only opencodebot. It never deploys bundled OpenCodez plugin or skill copies, never calls
 the Politia harness, and never restarts OpenCodez. If the exact Git range includes
@@ -17,6 +18,9 @@ link, and two actions:
 
 - `Update & restart` queues the exact displayed target revision.
 - `Not now` removes the buttons and suppresses the same revision until the next London calendar day.
+
+When scheduled checks are disabled, `Not now` only closes the current manual offer; `/update` can show it again whenever
+the operator asks.
 
 One-click update is deliberately unavailable when the range changes `docker-compose*.yml`,
 `scripts/apply-update.mjs`, or `scripts/install-update-runner.mjs`. Those files define the deployment control plane;
@@ -88,8 +92,9 @@ calendar time once per minute and persists the last completed calendar date, so 
 missed check instead of waiting until the next day.
 
 There is no code-level schedule fallback. `updates.enabled` must be `true`, and both `updates.checkAt` and
-`updates.timeZone` must be present; otherwise checks stay disabled or config validation fails. This keeps the operating
-schedule visible in the private runtime config instead of hiding it in source constants.
+`updates.timeZone` must be present, to run automatic checks. When `updates.enabled` is false or the block is omitted,
+the explicit `/update` command still works but no scheduled check runs. This keeps the operating schedule visible in the
+private runtime config instead of hiding it in source constants.
 
 The running Git revision comes from `OPENCODEBOT_BUILD_SHA`. Do not set it by hand in runtime config. `npm run deploy:bot`
 derives it from the clean checkout and supplies it to Docker. An image with missing or malformed revision metadata can
