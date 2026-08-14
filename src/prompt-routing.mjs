@@ -252,7 +252,24 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       }
       await promptQueue.markBackendIdle(binding)
       await promptQueue.markTerminalMirrored(binding)
-      await opencode.revertSession(binding.serverID, binding.sessionID, rewind.origin.opencodeMessageID, { directory: binding.directory })
+      const revertedSession = await opencode.revertSession(
+        binding.serverID,
+        binding.sessionID,
+        rewind.origin.opencodeMessageID,
+        { directory: binding.directory },
+      )
+      if (
+        String(revertedSession?.id || "") !== String(binding.sessionID) ||
+        String(revertedSession?.revert?.messageID || "") !== String(rewind.origin.opencodeMessageID) ||
+        revertedSession?.revert?.partID !== undefined
+      ) {
+        logInfo("prompt.rewind.unconfirmed", {
+          serverID: binding.serverID,
+          sessionID: binding.sessionID,
+          topicId: binding.topicId,
+        })
+        throw new Error("OpenCodez did not confirm the requested revert")
+      }
       reverted = true
       await state.markPromptOriginsRewound(binding.serverID, binding.sessionID, rewind.origin.opencodeMessageID)
       await promptQueue.sendNow(binding, text, files, { sourceMessageId: message.message_id, feedbackMode: "rewind" })

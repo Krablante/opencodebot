@@ -1436,8 +1436,6 @@ export function isManualCompactionPart(part) {
 function isRollbackRemovalEvent(type) {
   return type === "message.removed"
     || type === "message.part.removed"
-    || type === "session.next.revert.started"
-    || type === "session.next.revert.completed"
 }
 
 function eventSessionID(event = {}) {

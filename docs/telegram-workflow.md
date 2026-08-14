@@ -255,8 +255,12 @@ OpenCodez user and assistant output, then is cleared only when the next ordinary
 reset supersedes it. The bot discards later queued prompts, aborts an active run when necessary, waits for the OpenCodez
 session to become idle, calls OpenCodez's session-revert API at the replied user message, and sends the reply as the
 replacement prompt. OpenCodez restores the saved working-tree state and removes the reverted branch as it accepts that
-replacement prompt. If the revert itself fails, the message becomes `🔴 Revert failed`; if the revert succeeds but its
-replacement prompt cannot be sent, it becomes `🟠 Reverted · replacement not sent`.
+replacement prompt. Before changing its durable origin links or sending the replacement, the bot requires the returned
+session to confirm both the bound session id and the exact reverted user-message id, with no partial-revert marker. A
+missing or stale target therefore leaves the branch and origin links unchanged and does not send the replacement. If the
+backend response is absent or ambiguous, the status says that the revert was not confirmed and the replacement was not
+sent; inspect the current session before retrying. If the revert succeeds but its replacement prompt cannot be sent, it
+becomes `🟠 Reverted · replacement not sent`.
 
 The guard is intentionally strict: the replied prompt must belong to the same active `(server, session, Telegram topic)`
 binding. A reply to a prompt from before `/reset`, another topic, a closed session, or a branch already rewound is
@@ -267,8 +271,8 @@ cannot trigger a rewind.
 OpenCodez is the sole owner of message ids. Telegram prompts are submitted without a client-generated id. The bot keeps
 a short pending marker and records the reply-to-rewind origin only after `session.next.prompted` reports the canonical
 OpenCodez user-message id; full reconcile provides the same fallback when the live event was missed. Client ids such as
-`msg_tg_*` must never be introduced because OpenCodez relies on ordered ids for prompt-loop termination and Web UI
-message grouping.
+`msg_tg_*` must never be introduced: imported or migrated histories may contain non-monotonic ids, and only OpenCodez can
+preserve the canonical message identity and Web UI grouping for its session history.
 
 ```text
 dima upload root: /home/dima/.opencodebot/uploads

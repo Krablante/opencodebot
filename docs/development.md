@@ -11,6 +11,10 @@ feedback, and the prompt queue. `session-reconcile.mjs` owns OpenCodez event han
 recovery, session-update gating, cross-host reconcile scheduling, and the bounded watchdog. `topic-lifecycle.mjs` owns
 forum topic creation and lifecycle handling, while the small `single-flight.mjs` helper coalesces duplicate fallback
 work and lets primary SSE events wait behind active per-session recovery without being dropped.
+Reply-to-rewind remains inside `prompt-routing.mjs`: after any required abort it accepts the existing session-revert
+response only when that response confirms the bound session and exact user-message id. An unconfirmed or stale target
+must not consume origin links or send a replacement prompt. This uses the response already returned by OpenCodez and
+adds no extra backend request.
 `logical-turn.mjs` is the one pure boundary resolver for responsive OpenCodez runs: it follows durable compaction
 `turn_id`/`replay_id` links and skips internal compaction or synthetic users. Event handling, incomplete-run detection,
 and final metadata therefore agree on which original user prompt owns a continued run. The idle outcome check reuses its

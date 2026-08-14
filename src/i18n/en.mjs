@@ -401,7 +401,7 @@ export const en = {
   "prompt.feedback.accepted": "🟢 Accepted by OpenCodez\n🧠 Waiting for the first events",
   "prompt.feedback.reverting": "🟡 Reverting…",
   "prompt.feedback.reverted": "🟢 Reverted",
-  "prompt.feedback.revertFailed": "🔴 Revert failed",
+  "prompt.feedback.revertFailed": "🔴 Revert was not confirmed\nThe replacement prompt was not sent. Check the current session in OpenCodez, then reply to an available prompt and try again.",
   "prompt.feedback.replacementNotSent": "🟠 Reverted · replacement not sent",
   "prompt.retry.title": "OpenCodez is retrying",
   "prompt.retry.meta": ({ attempt, duration }) => `Attempt #${attempt}${duration ? ` · next try in ${duration}` : ""}`,

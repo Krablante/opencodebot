@@ -401,7 +401,7 @@ export const ru = {
   "prompt.feedback.accepted": "🟢 Принято OpenCodez\n🧠 Ожидаю первые события",
   "prompt.feedback.reverting": "🟡 Выполняю откат…",
   "prompt.feedback.reverted": "🟢 Откат выполнен",
-  "prompt.feedback.revertFailed": "🔴 Не удалось выполнить откат",
+  "prompt.feedback.revertFailed": "🔴 Откат не подтверждён\nНовый запрос не отправлен. Проверьте текущую сессию в OpenCodez, затем ответьте на доступный запрос и повторите попытку.",
   "prompt.feedback.replacementNotSent": "🟠 Откат выполнен · новый запрос не отправлен",
   "prompt.retry.title": "OpenCodez повторяет запрос",
   "prompt.retry.meta": ({ attempt, duration }) => `Попытка №${attempt}${duration ? ` · следующая через ${duration}` : ""}`,

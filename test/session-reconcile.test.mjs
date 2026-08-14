@@ -228,6 +228,8 @@ test("final notification history stops at the current turn user message", async 
       calls.push(options)
       return {
         messages: [
+          userMessage("user-previous", "Previous prompt"),
+          assistantMessage("assistant-previous", "Previous answer"),
           userMessage("user-current", "Current prompt"),
           assistantMessage("assistant-step", "Working"),
           assistantMessage("assistant-final", "Done"),
