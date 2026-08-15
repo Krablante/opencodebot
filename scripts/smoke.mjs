@@ -104,6 +104,7 @@ async function smokeLocalInvariants() {
   await smokeOpenCodeSummarizeClient()
   await smokeQueueDrainsOnSessionIdle()
   await smokeIncompleteRunNotice()
+  await smokeConcurrentFinalRecovery()
   await smokePeriodicIncompleteRunGrace()
   await smokePeriodicReconcileDoesNotPostponeIncompleteWarning()
 }
@@ -789,6 +790,41 @@ async function smokeFinalNotificationDelivery() {
   const attemptsAfterRetry = attempts.length
   await notifier.notifyFinalAnswerReady(binding, { assistantMessageID: "msg_final", messageId: 789 })
   assert.equal(attempts.length, attemptsAfterRetry)
+
+  const raceMarked = new Set()
+  let raceAttempts = 0
+  const raceNotifier = createFinalNotifier({
+    config: { finalNotifications: { enabled: true, userIds: ["user-1"], maxSentMarkers: 1000 } },
+    state: {
+      finalNotificationUserIds: () => ["user-1"],
+      finalNotificationSent: (userID, serverID, sessionID, assistantMessageID) => raceMarked.has(`${userID}:${serverID}:${sessionID}:${assistantMessageID}`),
+      markFinalNotificationSent: async (userID, serverID, sessionID, assistantMessageID) => raceMarked.add(`${userID}:${serverID}:${sessionID}:${assistantMessageID}`),
+      debugEnabled: () => false,
+    },
+    telegram: {
+      async sendMessage() {
+        raceAttempts += 1
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        return { message_id: raceAttempts }
+      },
+    },
+    opencode: {
+      async getSession() { return { id: "ses_race", title: "Concurrent final notification" } },
+      async messages() {
+        return [
+          { info: { id: "msg_race_user", role: "user", time: { created: 1000 } }, parts: [{ type: "text", text: "finish once" }] },
+          { info: { id: "msg_race", role: "assistant", parentID: "msg_race_user", finish: "stop", time: { created: 2000, completed: 3000 } }, parts: [{ type: "text", text: "done once" }] },
+        ]
+      },
+    },
+  })
+  const raceBinding = { ...binding, sessionID: "ses_race" }
+  await Promise.all([
+    raceNotifier.notifyFinalAnswerReady(raceBinding, { assistantMessageID: "msg_race", messageId: 901 }),
+    raceNotifier.notifyFinalAnswerReady(raceBinding, { assistantMessageID: "msg_race", messageId: 902 }),
+  ])
+  assert.equal(raceAttempts, 1)
+  assert.equal(raceMarked.size, 1)
 
   const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-final-notification-state-"))
   try {
@@ -3304,6 +3340,80 @@ async function smokeIncompleteRunNotice() {
   await new Promise((resolve) => setTimeout(resolve, 10))
   assert.equal(notices.length, 2)
   assert.equal(alerts.length, 2)
+}
+
+async function smokeConcurrentFinalRecovery() {
+  const now = Date.now()
+  const binding = {
+    chatId: 123,
+    topicId: 456,
+    serverID: "nuc",
+    sessionID: "ses_concurrent_final",
+    directory: "/tmp/work",
+    createdAt: new Date(now - 60_000).toISOString(),
+    reconcileAfter: new Date(now - 60_000).toISOString(),
+    reconcileUntil: new Date(now + 60_000).toISOString(),
+  }
+  const user = {
+    info: { id: "msg_concurrent_user", role: "user", sessionID: binding.sessionID, time: { created: now - 2_000 } },
+    parts: [{ type: "text", text: "finish once" }],
+  }
+  const assistant = {
+    info: { id: "msg_concurrent_final", role: "assistant", sessionID: binding.sessionID, parentID: user.info.id, finish: "stop", time: { created: now - 1_000, completed: now } },
+    parts: [{ type: "text", text: "done once" }],
+  }
+  const mirroredUsers = new Set([user.info.id])
+  const mirroredAssistants = new Set()
+  let renderedFinals = 0
+  const promptQueue = new PromptQueue(async () => {})
+  const reconciler = createSessionReconciler({
+    config: { telegram: { autocreateTopics: false }, opencode: { servers: [{ id: "nuc", url: "http://127.0.0.1:4096" }] }, reconcile: {} },
+    state: {
+      mirrorEnabled: () => true,
+      findBinding: (serverID, sessionID) => (serverID === binding.serverID && sessionID === binding.sessionID ? binding : null),
+      isUserMirrored: (_serverID, _sessionID, messageID) => mirroredUsers.has(messageID),
+      markUserMirrored: async (_serverID, _sessionID, messageID) => mirroredUsers.add(messageID),
+      consumePendingPrompt: async () => null,
+      isAssistantMirrored: (_serverID, _sessionID, messageID) => mirroredAssistants.has(messageID),
+      markAssistantMirrored: async (_serverID, _sessionID, messageID) => mirroredAssistants.add(messageID),
+      incompleteRunHandled: () => false,
+      markIncompleteRunHandled: async () => {},
+    },
+    telegram: { async sendMessage() { assert.fail("complete recovery must not send an interruption notice") } },
+    opencode: {
+      async request() { return { [binding.sessionID]: { type: "idle" } } },
+      async messages() { return [user, assistant] },
+    },
+    renderer: {
+      async userPrompt() {},
+      async compactTools() {},
+      async assistantMessage() {
+        renderedFinals += 1
+        await new Promise((resolve) => setTimeout(resolve, 30))
+        return { message_id: renderedFinals }
+      },
+      shouldMirrorTool: () => false,
+      shouldPinUserPrompts: () => false,
+    },
+    promptQueue,
+    backendRequest: async (_serverID, _label, request) => request(),
+    skippedBackendRequest: Symbol("skipped"),
+    createTopicForSession: async () => null,
+    createTopicForWebSession: async () => null,
+    isInternalSession: () => false,
+    activateBindingForPrompt: async () => {},
+    maybeExtendBindingActivity: async () => {},
+    logError: (error) => { throw error },
+    shouldStop: () => false,
+    incompleteRunGraceMs: 5,
+  })
+
+  await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.idle", properties: { sessionID: binding.sessionID } })
+  await reconciler.reconcileBinding(binding)
+  await new Promise((resolve) => setTimeout(resolve, 60))
+
+  assert.equal(renderedFinals, 1)
+  assert.equal(mirroredAssistants.has(assistant.info.id), true)
 }
 
 async function smokePeriodicIncompleteRunGrace() {

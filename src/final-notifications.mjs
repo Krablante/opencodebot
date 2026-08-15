@@ -4,6 +4,7 @@ import { escapeHtml, telegramMessageLink } from "./telegram.mjs"
 import { logErrorEvent, logInfo } from "./logger.mjs"
 import { logicalTurnSliceReady, logicalTurnStartIndex } from "./logical-turn.mjs"
 import { t } from "./i18n/index.mjs"
+import { runSingleFlight } from "./single-flight.mjs"
 import { changedFilesForTool, isHiddenTool, isTaskTool, toolNameSet, toolSummaryLabel } from "./tool-formatting.mjs"
 
 const FINAL_NOTIFICATION_SAFE_CHARS = 3800
@@ -12,55 +13,61 @@ const FINAL_NOTIFICATION_TODO_ITEMS = 12
 const FINAL_NOTIFICATION_TODO_CHARS = 140
 
 export function createFinalNotifier({ config, state, telegram, opencode }) {
+  const deliveries = new Map()
   return {
-    async notifyFinalAnswerReady(binding, { assistantMessageID, messageId }) {
+    notifyFinalAnswerReady(binding, { assistantMessageID, messageId }) {
       if (config.finalNotifications?.enabled === false) return
       if (!assistantMessageID) return
       // A final DM must point to a final answer that the bot actually mirrored
       // into Telegram. Historical OpenCodez outcomes discovered by reconcile
       // have no exact Telegram message and must never create a new DM.
       if (!messageId) return
-      const configuredUserIds = new Set((config.finalNotifications?.userIds || []).map(String))
-      const userIds = state.finalNotificationUserIds().filter((userId) => (
-        configuredUserIds.has(String(userId))
-        && !state.finalNotificationSent(userId, binding.serverID, binding.sessionID, assistantMessageID)
-      ))
-      if (!userIds.length) return
-      const link = telegramMessageLink(binding.chatId, messageId)
-      const topicSource = finalNotificationTopicSource(state.topicRecord?.(binding.chatId, binding.topicId) || binding)
-      const summary = await finalSessionSummary({
-        opencode,
-        binding,
-        assistantMessageID,
-        hiddenTools: config.mirror?.hiddenTools,
-        debugEnabled: state.debugEnabled(),
-      })
-      const replyMarkup = finalNotificationReplyMarkup(link)
-      const text = finalNotificationMarkdown({ topicSource, serverID: binding.serverID, ...summary })
-      const fallbackText = finalNotificationFallbackHtml({ topicSource, serverID: binding.serverID, ...summary })
-      const compactText = finalNotificationCompactHtml({ topicSource, serverID: binding.serverID, ...summary })
-      for (const userId of userIds) {
-        try {
-          await sendFinalNotificationMessage({ telegram, userId, text, fallbackText, compactText, replyMarkup })
-          await state.markFinalNotificationSent(userId, binding.serverID, binding.sessionID, assistantMessageID, config.finalNotifications.maxSentMarkers)
-          logInfo("final_notification.sent", {
-            userId,
-            serverID: binding.serverID,
-            sessionID: binding.sessionID,
-            topicId: binding.topicId,
-            messageId,
-          })
-        } catch (error) {
-          logErrorEvent("final_notification.failed", error, {
-            userId,
-            serverID: binding.serverID,
-            sessionID: binding.sessionID,
-            topicId: binding.topicId,
-            messageId,
-          })
-        }
-      }
+      const deliveryKey = JSON.stringify([binding.serverID, binding.sessionID, assistantMessageID])
+      return runSingleFlight(deliveries, deliveryKey, () => deliverFinalAnswerReady(binding, { assistantMessageID, messageId }))
     },
+  }
+
+  async function deliverFinalAnswerReady(binding, { assistantMessageID, messageId }) {
+    const configuredUserIds = new Set((config.finalNotifications?.userIds || []).map(String))
+    const userIds = state.finalNotificationUserIds().filter((userId) => (
+      configuredUserIds.has(String(userId))
+      && !state.finalNotificationSent(userId, binding.serverID, binding.sessionID, assistantMessageID)
+    ))
+    if (!userIds.length) return
+    const link = telegramMessageLink(binding.chatId, messageId)
+    const topicSource = finalNotificationTopicSource(state.topicRecord?.(binding.chatId, binding.topicId) || binding)
+    const summary = await finalSessionSummary({
+      opencode,
+      binding,
+      assistantMessageID,
+      hiddenTools: config.mirror?.hiddenTools,
+      debugEnabled: state.debugEnabled(),
+    })
+    const replyMarkup = finalNotificationReplyMarkup(link)
+    const text = finalNotificationMarkdown({ topicSource, serverID: binding.serverID, ...summary })
+    const fallbackText = finalNotificationFallbackHtml({ topicSource, serverID: binding.serverID, ...summary })
+    const compactText = finalNotificationCompactHtml({ topicSource, serverID: binding.serverID, ...summary })
+    for (const userId of userIds) {
+      try {
+        await sendFinalNotificationMessage({ telegram, userId, text, fallbackText, compactText, replyMarkup })
+        await state.markFinalNotificationSent(userId, binding.serverID, binding.sessionID, assistantMessageID, config.finalNotifications.maxSentMarkers)
+        logInfo("final_notification.sent", {
+          userId,
+          serverID: binding.serverID,
+          sessionID: binding.sessionID,
+          topicId: binding.topicId,
+          messageId,
+        })
+      } catch (error) {
+        logErrorEvent("final_notification.failed", error, {
+          userId,
+          serverID: binding.serverID,
+          sessionID: binding.sessionID,
+          topicId: binding.topicId,
+          messageId,
+        })
+      }
+    }
   }
 }
 

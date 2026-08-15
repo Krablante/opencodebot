@@ -557,7 +557,15 @@ export function createSessionReconciler({
     incompleteChecks.set(key, timer)
   }
 
-  async function verifyRunOutcome(server, binding, { expectedStop = false, messages, source = "reconcile" } = {}) {
+  function verifyRunOutcome(server, binding, options = {}) {
+    return runAfterFlight(
+      bindingOperations,
+      bindingKey(binding),
+      () => verifyRunOutcomeNow(server, binding, options),
+    )
+  }
+
+  async function verifyRunOutcomeNow(server, binding, { expectedStop = false, messages, source = "reconcile" } = {}) {
     const originalBinding = binding
     binding = activeBinding(binding)
     if (!binding) {
@@ -621,7 +629,7 @@ export function createSessionReconciler({
         }
       }
       if (!mirrored && !messages) {
-        await reconcileBinding(binding)
+        await reconcileBindingNow(binding)
         mirrored = state.isAssistantMirrored(server.id, binding.sessionID, outcome.assistantMessageID)
       }
       if (!mirrored) return

@@ -382,7 +382,9 @@ file names from successful structured file mutations. It does not include the fi
 targets the exact mirrored final answer. Durable dedupe markers are capped and keyed per recipient plus final assistant
 message. Notifications without a concrete Telegram `message_id` are rejected, so restart reconciliation cannot backfill
 historical DMs or link only to a topic root. Legacy message-id-based markers remain accepted so rollout does not resend
-already delivered DMs.
+already delivered DMs. In-process delivery is additionally single-flight per server, session, and final assistant
+message. Idle outcome verification shares the binding operation lane with ordinary reconcile, preventing concurrent
+recovery paths from mirroring the same final twice before either path can persist its durable marker.
 
 The same configured `userIds` receive blocking OpenCodez question alerts with a direct link to the topic message. These
 alerts do not follow the per-user final-notification toggle because a pending question stops the active run. No

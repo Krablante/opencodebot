@@ -83,7 +83,9 @@ sessions, send prompts, or print tokens.
 Incremental-reconcile checks cover `limit`/`before` cursor propagation, a durable restart cursor, parallel overlapping
 session discovery, the lightweight unchanged-session watchdog, exact-message recovery, bounded current-turn final
 summaries with a full-history fallback, and an incomplete-run grace timer that still fires while frequent reconcile
-passes continue. Telegram `/new` smoke also fixes the setup order contract: bind and mark the new session seen before
+passes continue. Final-recovery smoke overlaps a delayed binding reconcile with idle verification and requires one
+mirrored final, while final-notification smoke overlaps two callbacks for the same assistant and requires one DM.
+Telegram `/new` smoke also fixes the setup order contract: bind and mark the new session seen before
 profile model/System mutations can emit session events. Queue recovery smoke additionally covers a terminal message that
 was already mirrored and an authoritative idle status discovered without a live SSE event. Compact-command smoke must
 keep live OpenCodez `sessionStatus` authoritative over a stale local queue-busy hint while separately rejecting a
