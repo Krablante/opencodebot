@@ -79,8 +79,10 @@ host runner uses the source side of that same state bind mount. See [Self-Update
 `telegram.allowChatBootstrap` is useful only during first setup: if no chat is configured yet, the first allowed message
 can bind the bot to that chat. After setup, set the chat id and turn bootstrap off.
 
-The bot always autocreates Telegram forum topics for new OpenCodez sessions discovered through Telegram commands,
-OpenCodez events, or bounded reconcile. Topic creation is part of the product model, not a runtime mode.
+The bot autocreates Telegram forum topics for ordinary new OpenCodez sessions discovered through Telegram commands,
+OpenCodez events, or bounded reconcile. Topic creation is part of the product model, not a runtime mode. Short-lived
+sessions whose exact normalized title is `opencode-see delegate` are an internal exception on every server and are not
+tracked or mirrored.
 
 `telegram.botApi` controls which Bot API endpoint the bot uses. If it is omitted, the bot uses the normal cloud endpoint
 at `https://api.telegram.org`. Local mode is explicit:

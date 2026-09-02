@@ -19,6 +19,11 @@ prompt materializes a `/new` topic, its new OpenCodez session is bound to that T
 model/System settings are applied; setup events therefore cannot be mistaken for an unbound web session and create a
 second forum topic.
 
+Short-lived vision sessions whose exact normalized OpenCodez title is `opencode-see delegate` are internal and ignored
+on every configured server. They do not create Telegram topics, bindings, pending-topic records, seen markers, or
+reconcile/accounting entries. Startup removes legacy bot state for previously discovered delegates but deliberately does
+not delete or close existing Telegram topics; topic deletion remains an explicit operator action.
+
 Deleting or closing a Telegram topic is treated as an explicit stop for that topic's mirror binding. The bot disables
 the binding and must not continue mirroring that session into `#General` or any other fallback topic.
 

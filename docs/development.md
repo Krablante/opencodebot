@@ -20,6 +20,12 @@ adds no extra backend request.
 and final metadata therefore agree on which original user prompt owns a continued run. The idle outcome check reuses its
 already-fetched logical-turn history to deliver an unmirrored `finish=stop` message directly, so a post-compaction final
 does not depend on receiving every live text/step event or on a second general reconcile pass.
+`internal-sessions.mjs` owns session visibility. Parent/subagent sessions remain hidden through the established internal
+path, while an exact normalized `opencode-see delegate` title is ignored more strongly: no topic, seen marker, observed
+update, or reconcile entry is created on any server. State loading removes legacy bindings and pending-topic records for
+that title without deleting Telegram topics. Event-driven web-topic creation waits for authoritative session metadata;
+if the exact-session read is temporarily unavailable, bounded reconcile retries discovery instead of creating a topic
+without knowing whether the session is internal.
 Global mirroring uses OpenCodez `/global/event`, not one workspace stream per directory. On connection, bound-session
 catch-up considers only recent bindings, open leases, and non-empty queues. It is sequential per server, limited to the
 normal active window, cursor-bounded, and capped at five pages per binding; this keeps recovery deterministic without

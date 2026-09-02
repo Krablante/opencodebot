@@ -1,4 +1,5 @@
 import { logInfo } from "./logger.mjs"
+import { isIgnoredSession, isInternalSession } from "./internal-sessions.mjs"
 import { titleFromText } from "./opencode.mjs"
 import { runSingleFlight } from "./single-flight.mjs"
 import { topicId } from "./telegram.mjs"
@@ -72,24 +73,12 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
 
   async function createTopicForWebSessionNow(serverID, sessionID, promptText) {
     const session = await opencode.getSession(serverID, sessionID).catch(() => null)
-    if (session) {
-      if (isInternalSession(session)) {
-        await state.markSeenSession(serverID, sessionID)
-        return null
-      }
-      return createTopicForSessionNow(serverID, session, promptText)
+    if (!session) return null
+    if (isInternalSession(session)) {
+      if (!isIgnoredSession(session)) await state.markSeenSession(serverID, sessionID)
+      return null
     }
-    const chatId = state.chatId || config.telegram.chatId
-    if (!chatId) return null
-    const title = titleFromText(promptText, `${serverID} ${sessionID}`)
-    const titleFields = managedTopicTitle(title, serverID, opencode.servers)
-    const topicIcon = await randomTopicIcon()
-    const topic = await telegram.createForumTopic({ chatId, name: titleFields.topicTitle, iconCustomEmojiId: topicIcon?.customEmojiId })
-    const binding = { chatId, topicId: topic.message_thread_id, ...titleFields, topicIconCustomEmojiId: topic.icon_custom_emoji_id || topicIcon?.customEmojiId, topicIconEmoji: topicIcon?.emoji, serverID, sessionID, title: titleFields.topicBaseTitle, titleSource: "auto" }
-    await state.bindTopic(binding)
-    await state.markSeenSession(serverID, sessionID)
-    await activateBindingForPrompt(binding, "web-topic-created")
-    return binding
+    return createTopicForSessionNow(serverID, session, promptText)
   }
 
   function createTopicForSession(serverID, session, fallbackText = "") {
@@ -98,7 +87,7 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
 
   async function createTopicForSessionNow(serverID, session, fallbackText = "") {
     if (isInternalSession(session)) {
-      await state.markSeenSession(serverID, session.id)
+      if (!isIgnoredSession(session)) await state.markSeenSession(serverID, session.id)
       return null
     }
     const chatId = state.chatId || config.telegram.chatId
@@ -166,10 +155,6 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
     isInternalSession,
     randomTopicIcon,
   }
-}
-
-export function isInternalSession(session) {
-  return Boolean(session?.parentID || /\(@.+ subagent\)/i.test(session?.title || ""))
 }
 
 function bindingKey(serverID, sessionID) {

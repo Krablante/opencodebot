@@ -46,6 +46,8 @@ workspace-scoped `/event` stream.
   normally.
 - Both modes announce task/subagent spawns with a short robot notice that uses the web-visible task title; child-session
   prompts, tool logs, and results stay hidden.
+- Short-lived `opencode-see delegate` sessions are ignored on every configured server: they create no Telegram topic,
+  mirror state, seen marker, or reconcile/accounting entry.
 - Attachments and Telegram media groups attached to the next prompt; large files are copied to the target server's
   configured upload root and referenced by server-local path.
 - Optional Telegram artifact gateway for sending agent-created files, screenshots, logs, and text into one dedicated

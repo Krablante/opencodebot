@@ -1,6 +1,7 @@
 import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
 import { formatDuration } from "./backend-backoff.mjs"
 import { isInternalUserMessage, logicalTurnRootID, logicalTurnSliceReady, logicalTurnStartIndex } from "./logical-turn.mjs"
+import { isIgnoredSession } from "./internal-sessions.mjs"
 import { isOpenCodeSessionNotFound, textFromPrompt, visibleTextFromParts } from "./opencode.mjs"
 import { formatToolLine } from "./render.mjs"
 import { runAfterFlight, runSingleFlight } from "./single-flight.mjs"
@@ -910,8 +911,9 @@ export function createSessionReconciler({
       if (sessions === skippedBackendRequest) return []
       await removeMissingBindingsAbsentFromList(server, sessions)
       rememberSessionScanWatermark(server.id, sessions)
-      for (const session of sessions) observedSessionUpdates.set(`${server.id}:${session.id}`, sessionUpdatedMs(session))
-      return sessions.map((session) => [server.id, session.id])
+      const visible = sessions.filter((session) => !isIgnoredSession(session))
+      for (const session of visible) observedSessionUpdates.set(`${server.id}:${session.id}`, sessionUpdatedMs(session))
+      return visible.map((session) => [server.id, session.id])
     }))
     const seen = batches.flat()
     const seeded = await state.seedSeenSessions(seen)
@@ -948,11 +950,18 @@ export function createSessionReconciler({
       if (sessions === skippedBackendRequest) return
       rememberSessionScanWatermark(server.id, sessions)
       for (const session of sessions) {
-        observedSessionUpdates.set(`${server.id}:${session.id}`, sessionUpdatedMs(session))
         const binding = state.findBinding(server.id, session.id)
+        if (isIgnoredSession(session)) {
+          if (binding && typeof state.removeIgnoredSessionBinding === "function") {
+            const removed = await state.removeIgnoredSessionBinding(server.id, session.id, session.title)
+            if (removed) detachBinding(binding)
+          }
+          continue
+        }
+        observedSessionUpdates.set(`${server.id}:${session.id}`, sessionUpdatedMs(session))
         if (isInternalSession(session)) {
           await state.markSeenSession(server.id, session.id)
-          if (binding && !binding.disabled) await state.disableBinding(server.id, session.id, "internal subagent session")
+          if (binding && !binding.disabled) await state.disableBinding(server.id, session.id, "internal session")
           continue
         }
         if (binding) {

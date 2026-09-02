@@ -1,6 +1,8 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 
+import { isIgnoredSessionTitle } from "./internal-sessions.mjs"
+
 const MIRRORED_SESSION_BUCKET_LIMIT = 250
 const MAX_PROMPT_ORIGINS = 5_000
 const TOPIC_TITLE_FIELDS = [
@@ -49,11 +51,15 @@ export class StateStore {
       this.data.updates = normalizeUpdatesState(this.data.updates)
       await this.loadMirrorMarkerJournal()
       const removedMissingBindings = removeLegacyMissingSessionBindings(this.data, promptProfiles)
+      const removedIgnoredRecords = removeIgnoredSessionRecords(this.data)
       const reconciledTopicMetadata = reconcileTopicMetadata(this.data)
       const pruned = pruneState(this.data)
       await this.compactMirrorMarkerJournal()
-      if (removedMissingBindings || reconciledTopicMetadata || pruned) await this.save()
+      if (removedMissingBindings || removedIgnoredRecords.total || reconciledTopicMetadata || pruned) await this.save()
       if (removedMissingBindings) console.info(`[opencodebot] removed ${removedMissingBindings} legacy missing-session binding${removedMissingBindings === 1 ? "" : "s"}`)
+      if (removedIgnoredRecords.total) {
+        console.info(`[opencodebot] removed ${removedIgnoredRecords.bindings} ignored-session binding${removedIgnoredRecords.bindings === 1 ? "" : "s"} and ${removedIgnoredRecords.pendingTopics} pending topic${removedIgnoredRecords.pendingTopics === 1 ? "" : "s"}`)
+      }
     } catch (error) {
       if (error.code !== "ENOENT") throw error
       this.data = defaultState()
@@ -838,6 +844,22 @@ export class StateStore {
     this.markerQueue = cleanup.catch(() => undefined)
     return cleanup
   }
+
+  async removeIgnoredSessionBinding(serverID, sessionID, title) {
+    if (!isIgnoredSessionTitle(title)) return false
+    const cleanup = this.markerQueue.then(async () => {
+      const removed = await this.update((data) => {
+        const binding = data.bindings.find((item) => item.serverID === serverID && item.sessionID === sessionID)
+        if (!binding) return false
+        return removeBindingState(data, binding)
+      })
+      if (!removed) return false
+      await this.compactMirrorMarkerJournal()
+      return removed
+    })
+    this.markerQueue = cleanup.catch(() => undefined)
+    return cleanup
+  }
 }
 
 export function promptHash(text) {
@@ -978,6 +1000,18 @@ function removeLegacyMissingSessionBindings(data, promptProfiles = {}) {
     })
   }
   return missing.length
+}
+
+function removeIgnoredSessionRecords(data) {
+  const bindings = data.bindings.filter((binding) => isIgnoredSessionTitle(binding.topicBaseTitle || binding.title))
+  for (const binding of bindings) removeBindingState(data, binding)
+  let pendingTopics = 0
+  for (const [topicID, topic] of Object.entries(data.pendingTopics || {})) {
+    if (!isIgnoredSessionTitle(topic.topicBaseTitle || topic.title)) continue
+    delete data.pendingTopics[topicID]
+    pendingTopics += 1
+  }
+  return { bindings: bindings.length, pendingTopics, total: bindings.length + pendingTopics }
 }
 
 function removeBindingState(data, binding, { createPending = false, promptProfile } = {}) {
