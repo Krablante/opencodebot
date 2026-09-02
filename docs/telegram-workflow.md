@@ -432,10 +432,13 @@ human prompts. The mirror follows the compaction lineage and marks those records
 `💬 Web prompt`, including after reconnect reconciliation. Repeated compactions resolve back to the original external
 user turn.
 
-Assistant text is accumulated from standard OpenCodez `message.part.delta` events until the matching text part receives
-a completed `message.part.updated` event. The bot does not edit Telegram token-by-token. Each completed assistant
-progress note is mirrored once using its OpenCodez message id as the durable dedupe key. A completed assistant
-`message.updated` event finalizes the message; an exact-message lookup runs only when live part delivery was missing.
+Assistant text is accumulated from standard OpenCodez `message.part.delta` events only after `message.updated` has
+identified the message as assistant-owned and a full part event has identified the same part id as `type=text`. OpenCodez
+reasoning also uses `field=text`, so field name alone is never treated as proof of visible output; reasoning and unknown
+parts cannot enter the Telegram renderer. Accumulation ends when the matching text part receives a completed
+`message.part.updated` event. The bot does not edit Telegram token-by-token. Each completed assistant progress note is
+mirrored once using its OpenCodez message id as the durable dedupe key. A completed assistant `message.updated` event
+finalizes the message; an exact-message lookup runs only when live part delivery was missing.
 Completed/final assistant text is sent as Telegram Rich Message markdown when the Bot API accepts it, with fallback for
 local Markdown links and formatting errors. Real final answers are identified by `finish=stop` and marked with `🏁 `.
 The bot pins the user prompt that started the run: the original Telegram message for Telegram-origin prompts, or the

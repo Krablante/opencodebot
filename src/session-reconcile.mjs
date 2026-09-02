@@ -48,6 +48,7 @@ export function createSessionReconciler({
   const reconcileTimers = new Map()
   const targetedMessageTimers = new Map()
   const targetedMessageRoles = new Map()
+  const targetedPartTypes = new Map()
   const observedSessionUpdates = new Map()
   const reconciledSessionUpdates = new Map()
   const reconcileCursors = new Map()
@@ -137,6 +138,13 @@ export function createSessionReconciler({
     if (!binding || binding.disabled) return
     const key = bindingKey(binding)
     rememberCompactionPart(binding, properties.part)
+    if (event.type === "message.part.updated" || event.type === "message.part.added") {
+      rememberTargetedPartType(binding, properties)
+    }
+    if (event.type === "message.part.removed") forgetTargetedPartType(binding, properties)
+    if (event.type === "message.updated" && properties.info?.id && properties.info?.role) {
+      rememberTargetedMessageRole(`${key}:${properties.info.id}`, properties.info.role)
+    }
     if (isManualCompactionPart(properties.part)) {
       manualCompactions.add(key)
       logInfo("compact.detected", { source: server.id, sessionID, topicId: binding.topicId })
@@ -329,7 +337,6 @@ export function createSessionReconciler({
     if (event.type === "message.updated") {
       messageID = properties.info?.id
       role = properties.info?.role
-      if (messageID && role) rememberTargetedMessageRole(`${bindingKey(binding)}:${messageID}`, role)
       if (role !== "assistant" || !isCompleted(properties.info)) return
     } else if (event.type === "message.part.updated" || event.type === "message.part.added") {
       const part = properties.part || properties
@@ -365,6 +372,20 @@ export function createSessionReconciler({
   function rememberTargetedMessageRole(key, role) {
     targetedMessageRoles.set(key, role)
     while (targetedMessageRoles.size > 1_000) targetedMessageRoles.delete(targetedMessageRoles.keys().next().value)
+  }
+
+  function rememberTargetedPartType(binding, properties) {
+    const part = properties.part || properties
+    const messageID = part?.messageID || properties.messageID
+    const partID = part?.id || properties.partID
+    if (!messageID || !partID || !part?.type) return
+    targetedPartTypes.set(`${bindingKey(binding)}:${messageID}:${partID}`, part.type)
+    while (targetedPartTypes.size > 2_000) targetedPartTypes.delete(targetedPartTypes.keys().next().value)
+  }
+
+  function forgetTargetedPartType(binding, properties) {
+    if (!properties.messageID || !properties.partID) return
+    targetedPartTypes.delete(`${bindingKey(binding)}:${properties.messageID}:${properties.partID}`)
   }
 
   async function reconcileMessageByID(binding, messageID) {
@@ -760,7 +781,7 @@ export function createSessionReconciler({
     if (part.type === "text") {
       const messageID = part.messageID || properties.messageID
       const role = targetedMessageRoles.get(`${bindingKey(binding)}:${messageID}`)
-      if (role === "user" || part.synthetic === true || part.ignored === true || !Number.isFinite(part.time?.end)) return
+      if (role !== "assistant" || part.synthetic === true || part.ignored === true || !Number.isFinite(part.time?.end)) return
       if (state.isAssistantMirrored(binding.serverID, binding.sessionID, messageID)) return
       await renderer.textEnded(binding, {
         textID: part.id || properties.partID,
@@ -789,7 +810,9 @@ export function createSessionReconciler({
   async function mirrorTextPartDelta(binding, properties) {
     if (properties.field !== "text" || !properties.messageID || !properties.partID || !properties.delta) return
     const role = targetedMessageRoles.get(`${bindingKey(binding)}:${properties.messageID}`)
-    if (role === "user" || state.isAssistantMirrored(binding.serverID, binding.sessionID, properties.messageID)) return
+    const partType = targetedPartTypes.get(`${bindingKey(binding)}:${properties.messageID}:${properties.partID}`)
+    // Both text and reasoning stream through field="text"; only the full part event establishes the safe boundary.
+    if (role !== "assistant" || partType !== "text" || state.isAssistantMirrored(binding.serverID, binding.sessionID, properties.messageID)) return
     await renderer.textDelta(binding, {
       textID: properties.partID,
       assistantMessageID: properties.messageID,
@@ -1376,6 +1399,9 @@ export function createSessionReconciler({
     }
     for (const messageKey of targetedMessageRoles.keys()) {
       if (messageKey.startsWith(`${key}:`)) targetedMessageRoles.delete(messageKey)
+    }
+    for (const partKey of targetedPartTypes.keys()) {
+      if (partKey.startsWith(`${key}:`)) targetedPartTypes.delete(partKey)
     }
   }
 

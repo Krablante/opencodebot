@@ -26,9 +26,13 @@ normal active window, cursor-bounded, and capped at five pages per binding; this
 stale Telegram floods, continuous polling, or reconnect request bursts. `OpenCodeClient` unwraps the global
 `{ directory, payload }` envelope once at the transport boundary, so downstream event handlers share the same shape in
 both mirror scopes.
-Standard OpenCodez text transport is `message.part.delta` followed by a text `message.part.updated` whose `time.end` is
-present; `message.updated` owns assistant completion. The renderer buffers deltas and sends only completed blocks. Exact
-message reads and paginated reconcile are recovery paths and must not become an API request per healthy live message.
+Standard OpenCodez text transport identifies a part with `message.part.updated` or `message.part.added`, streams its
+content through `message.part.delta`, and ends it with an updated text part whose `time.end` is present;
+`message.updated` owns assistant completion. Because both visible text and private reasoning use `field=text` deltas,
+event handling admits a delta to the renderer only after the same message has been identified as assistant-owned and the
+same part id as `type=text`.
+Unknown or reasoning parts stay out of Telegram. The renderer buffers admitted deltas and sends only completed blocks.
+Exact message reads and paginated reconcile are recovery paths and must not become an API request per healthy live message.
 HTTP `404` for a specific session is likewise session-scoped: it removes the binding through `StateStore`, while only
 network/timeouts, `408`, `429`, and `5xx` responses enter shared host backoff.
 `final-notifications.mjs` owns final-answer DMs. `commands.mjs` owns Telegram command handlers. `render.mjs` coordinates
