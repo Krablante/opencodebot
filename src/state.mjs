@@ -23,7 +23,7 @@ export class StateStore {
     this.deferredDirty = false
   }
 
-  async load() {
+  async load({ promptProfiles = {} } = {}) {
     try {
       const text = await fs.readFile(this.filePath, "utf8")
       this.data = { ...defaultState(), ...JSON.parse(text) }
@@ -48,10 +48,12 @@ export class StateStore {
       this.data.runtime ||= {}
       this.data.updates = normalizeUpdatesState(this.data.updates)
       await this.loadMirrorMarkerJournal()
+      const removedMissingBindings = removeLegacyMissingSessionBindings(this.data, promptProfiles)
       const reconciledTopicMetadata = reconcileTopicMetadata(this.data)
       const pruned = pruneState(this.data)
       await this.compactMirrorMarkerJournal()
-      if (reconciledTopicMetadata || pruned) await this.save()
+      if (removedMissingBindings || reconciledTopicMetadata || pruned) await this.save()
+      if (removedMissingBindings) console.info(`[opencodebot] removed ${removedMissingBindings} legacy missing-session binding${removedMissingBindings === 1 ? "" : "s"}`)
     } catch (error) {
       if (error.code !== "ENOENT") throw error
       this.data = defaultState()
@@ -821,6 +823,21 @@ export class StateStore {
       return true
     })
   }
+
+  async removeMissingBinding(serverID, sessionID, { promptProfile } = {}) {
+    const cleanup = this.markerQueue.then(async () => {
+      const removed = await this.update((data) => {
+        const binding = data.bindings.find((item) => item.serverID === serverID && item.sessionID === sessionID)
+        if (!binding) return false
+        return removeBindingState(data, binding, { createPending: true, promptProfile })
+      })
+      if (!removed) return false
+      await this.compactMirrorMarkerJournal()
+      return removed
+    })
+    this.markerQueue = cleanup.catch(() => undefined)
+    return cleanup
+  }
 }
 
 export function promptHash(text) {
@@ -837,6 +854,7 @@ function defaultState() {
     bindings: [],
     pendingTopics: {},
     pendingPrompts: [],
+    promptOrigins: [],
     mirroredAssistantBySession: {},
     mirroredUserBySession: {},
     debugEnabled: false,
@@ -946,6 +964,71 @@ function pruneMirroredBuckets(bySession) {
     changed = true
   }
   return changed
+}
+
+function removeLegacyMissingSessionBindings(data, promptProfiles = {}) {
+  const missing = data.bindings.filter((binding) => (
+    binding?.disabled === true
+    && /(?:stale|missing).*OpenCodez session|OpenCodez session.*not found/i.test(String(binding.disabledReason || ""))
+  ))
+  for (const binding of missing) {
+    removeBindingState(data, binding, {
+      createPending: true,
+      promptProfile: promptProfiles?.[binding.promptProfileName],
+    })
+  }
+  return missing.length
+}
+
+function removeBindingState(data, binding, { createPending = false, promptProfile } = {}) {
+  const serverID = String(binding.serverID)
+  const sessionID = String(binding.sessionID)
+  const mirrorKey = sessionMirrorKey(serverID, sessionID)
+  const topicKey = String(binding.topicId ?? 0)
+  const activeReplacement = data.bindings.some((item) => (
+    item !== binding
+    && !item.disabled
+    && topicMatches(item, binding.chatId, binding.topicId)
+  ))
+  const specialTopic = [data.telegram?.artifactsTopic, data.telegram?.soundsTopic].some((topic) => topicMatches(topic, binding.chatId, binding.topicId))
+  let pendingCreated = false
+
+  if (createPending && !activeReplacement && !specialTopic && !data.pendingTopics?.[topicKey]) {
+    const fallbackProfile = compactObject({ agent: binding.agent, model: binding.model })
+    const nextProfile = promptProfile || binding.promptProfile || (Object.keys(fallbackProfile).length ? fallbackProfile : undefined)
+    const now = new Date().toISOString()
+    data.pendingTopics ||= {}
+    data.pendingTopics[topicKey] = compactObject({
+      chatId: binding.chatId,
+      topicTitle: binding.topicTitle || binding.title,
+      topicBaseTitle: binding.topicBaseTitle || binding.title,
+      topicServerSuffixManaged: binding.topicServerSuffixManaged === true,
+      topicIconCustomEmojiId: binding.topicIconCustomEmojiId,
+      topicIconEmoji: binding.topicIconEmoji,
+      title: binding.topicBaseTitle || binding.title || "New session",
+      titleSource: "user",
+      serverID,
+      directory: binding.directory,
+      promptProfileName: binding.promptProfileName,
+      promptProfile: nextProfile,
+      createdAt: now,
+      missingSessionAt: now,
+    })
+    pendingCreated = true
+  }
+
+  data.bindings = data.bindings.filter((item) => !(item.serverID === serverID && item.sessionID === sessionID))
+  data.pendingPrompts = (data.pendingPrompts || []).filter((item) => !(item.serverID === serverID && item.sessionID === sessionID))
+  data.promptOrigins = (data.promptOrigins || []).filter((item) => !(item.serverID === serverID && item.sessionID === sessionID))
+  data.questionMessages = (data.questionMessages || []).filter((item) => !(item.serverID === serverID && item.sessionID === sessionID))
+  data.incompleteRunHistory = (data.incompleteRunHistory || []).filter((item) => !(item.serverID === serverID && item.sessionID === sessionID))
+  data.seenSessions = (data.seenSessions || []).filter((key) => key !== sessionKey(serverID, sessionID))
+  data.finalNotifications ||= { enabledUserIds: [], sentMessages: [] }
+  data.finalNotifications.sentMessages = (data.finalNotifications.sentMessages || []).filter((key) => !key.includes(`:${serverID}:${sessionID}:`))
+  data.runAlerts = (data.runAlerts || []).filter((key) => !key.includes(`:${serverID}:${sessionID}:`))
+  delete data.mirroredAssistantBySession[mirrorKey]
+  delete data.mirroredUserBySession[mirrorKey]
+  return { binding: { ...binding }, pendingCreated }
 }
 
 function toIso(value) {

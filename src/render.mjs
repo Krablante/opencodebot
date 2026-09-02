@@ -433,6 +433,10 @@ export class MirrorRenderer {
     this.sessions.delete(this.key(binding))
   }
 
+  hasAssistantMessage(binding, assistantMessageID) {
+    return Boolean(assistantMessageID && this.sessions.get(this.key(binding))?.assistantLastMessageIds.has(assistantMessageID))
+  }
+
   async pinMessage(binding, messageId, fields = {}) {
     return this.effects.pinMessage(binding, messageId, fields)
   }

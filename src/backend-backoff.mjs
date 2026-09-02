@@ -4,6 +4,9 @@ export function createBackendRequester({ logger = console } = {}) {
 
   return {
     skipped,
+    retryAfterMs(serverID) {
+      return Math.max(0, (backoffs.get(serverID)?.nextRetryAt || 0) - Date.now())
+    },
     async request(serverID, operation, request) {
       if (!canTryBackend(backoffs, serverID)) return skipped
       try {
@@ -11,11 +14,21 @@ export function createBackendRequester({ logger = console } = {}) {
         markBackendSuccess(backoffs, serverID, logger)
         return result
       } catch (error) {
+        if (!shouldBackoff(error)) {
+          markBackendSuccess(backoffs, serverID, logger)
+          throw error
+        }
         markBackendFailure(backoffs, serverID, operation, error, logger)
         return skipped
       }
     },
   }
+}
+
+function shouldBackoff(error) {
+  const status = Number(error?.status)
+  if (!Number.isFinite(status)) return true
+  return status === 408 || status === 429 || status >= 500
 }
 
 export function formatDuration(ms) {

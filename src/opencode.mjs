@@ -2,6 +2,23 @@ import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
 
 export const OPENCODE_REQUEST_TIMEOUT_MS = 120_000
 
+export class OpenCodeHttpError extends Error {
+  constructor({ serverID, pathname, status, detail = "" }) {
+    const suffix = detail ? ` ${detail}` : ""
+    super(`OpenCodez ${serverID} ${pathname} failed: ${status}${suffix}`)
+    this.name = "OpenCodeHttpError"
+    this.serverID = serverID
+    this.pathname = pathname
+    this.status = status
+  }
+}
+
+export function isOpenCodeSessionNotFound(error, sessionID) {
+  if (!(error instanceof OpenCodeHttpError) || error.status !== 404 || !sessionID) return false
+  const sessionPath = `/session/${encodeURIComponent(sessionID)}`
+  return error.pathname === sessionPath || error.pathname === `${sessionPath}/message` || error.pathname === `${sessionPath}/prompt_async`
+}
+
 export class OpenCodeClient {
   constructor(config) {
     this.config = config
@@ -176,7 +193,7 @@ export class OpenCodeClient {
     }, OPENCODE_REQUEST_TIMEOUT_MS, `OpenCodez ${server.id} ${pathname}`)
     if (!response.ok) {
       const text = await response.text().catch(() => "")
-      throw new Error(`OpenCodez ${server.id} ${pathname} failed: ${response.status} ${text.slice(0, 200)}`)
+      throw new OpenCodeHttpError({ serverID: server.id, pathname, status: response.status, detail: text.slice(0, 200) })
     }
     if (response.status === 204) return options.includeHeaders ? { data: null, headers: response.headers } : null
     const contentType = response.headers.get("content-type") || ""

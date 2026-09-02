@@ -397,6 +397,7 @@ export const ru = {
   "prompt.rewind.oldSession": "Откат недоступен · старая сессия",
   "prompt.rewind.sessionChanged": "Откат недоступен · сессия изменилась",
   "prompt.notAccepted": ({ errorHtml }) => `🔴 Запрос не принят\n🧯 ${errorHtml}`,
+  "prompt.missingSession": "🟠 Сессия OpenCodez больше не существует\nТопик готов к новой сессии. Отправьте запрос ещё раз.",
   "prompt.feedback.starting": "🟡 Запрос получен\n🚀 Отправляю его в OpenCodez",
   "prompt.feedback.accepted": "🟢 Принято OpenCodez\n🧠 Ожидаю первые события",
   "prompt.feedback.reverting": "🟡 Выполняю откат…",

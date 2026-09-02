@@ -39,6 +39,11 @@ workspace-scoped `/event` stream.
   event/recovery duplicates.
 - Global `/mode full|economy` mirror modes: full keeps compact expandable tool quotes, while economy shows assistant
   progress and final answers without Telegram tool traffic.
+- Current OpenCodez `message.part.delta` / `message.part.updated` events drive progress delivery directly; reconcile stays
+  a bounded recovery path rather than the normal text transport.
+- A binding whose OpenCodez session is confirmed missing is physically removed with its session-scoped bot state. The
+  Telegram topic becomes ready to create a fresh session on the next prompt, while other sessions on that host continue
+  normally.
 - Both modes announce task/subagent spawns with a short robot notice that uses the web-visible task title; child-session
   prompts, tool logs, and results stay hidden.
 - Attachments and Telegram media groups attached to the next prompt; large files are copied to the target server's

@@ -214,6 +214,11 @@ explanation, such as running `/compact` after context overflow. Telegram output 
 provider response bodies, headers, metadata, or arbitrary nested fields. Expected abort fallout from `/kill`, reset,
 rewind, and queue interruption remains suppressed.
 
+If a prompt receives an authoritative session-level `404`, the stale binding and all bot state scoped to that OpenCodez
+session are deleted instead of being retained as disabled history. The existing Telegram topic is converted to a clean
+pending topic with its server, directory, title, and launch profile preserved. Telegram explains that the prompt was not
+accepted and asks the user to send it once more; that retry creates a fresh OpenCodez session in the same topic.
+
 The first two `session.status=retry` events stay silent so brief provider recovery does not create Telegram noise. From
 attempt three, the acknowledgement becomes one concise warning with the provider message, attempt number, time until the
 next attempt, and an action button when OpenCodez supplies a safe web link. Later retries edit that same message instead
@@ -427,8 +432,10 @@ human prompts. The mirror follows the compaction lineage and marks those records
 `💬 Web prompt`, including after reconnect reconciliation. Repeated compactions resolve back to the original external
 user turn.
 
-Assistant text is accumulated until OpenCodez completes the text block. The bot does not edit Telegram token-by-token.
-Each completed assistant progress note is mirrored once using its OpenCodez message id as the durable dedupe key.
+Assistant text is accumulated from standard OpenCodez `message.part.delta` events until the matching text part receives
+a completed `message.part.updated` event. The bot does not edit Telegram token-by-token. Each completed assistant
+progress note is mirrored once using its OpenCodez message id as the durable dedupe key. A completed assistant
+`message.updated` event finalizes the message; an exact-message lookup runs only when live part delivery was missing.
 Completed/final assistant text is sent as Telegram Rich Message markdown when the Bot API accepts it, with fallback for
 local Markdown links and formatting errors. Real final answers are identified by `finish=stop` and marked with `🏁 `.
 The bot pins the user prompt that started the run: the original Telegram message for Telegram-origin prompts, or the
@@ -494,6 +501,8 @@ Outside recent activity, old topics stay quiet.
 The lower bound is stored on the binding as `reconcileAfter`, the expiry as `reconcileUntil`, and the last complete scan
 as `reconcileCursorMessageID`. Cursor checkpoints and high-frequency activity leases update the live state immediately
 but share one deferred atomic save bounded to one minute; durable message markers remain authoritative for dedupe.
+Assistant window membership uses the latest of creation, completion, and failure time, so a message created before the
+window but completed inside it remains recoverable.
 Session discovery queries each OpenCodez host from its previous `time.updated` high-water with a five-minute overlap and
 runs independent hosts concurrently. The watchdog first verifies the small session object and fetches message pages only
 when it changed. Stable user-part events may use the exact message endpoint, while assistant output remains on the
@@ -502,5 +511,10 @@ existing paginated scan. The lookback, active window, page size, change gate, wa
 fixed conservative defaults. Mirrored message markers are tracked per session so a busy session cannot evict markers for
 another one and cause phantom replays.
 
-Backend hosts may be off. Event streams and reconcile API calls use exponential backoff up to two minutes with
-rate-limited offline logs and recovery logs, so a powered-off server does not spam the service journal.
+Backend hosts may be off. Event streams and retryable reconcile failures (network errors, timeouts, `408`, `429`, and
+server `5xx` responses) use exponential backoff up to two minutes with rate-limited offline and recovery logs. A
+resource-level `404` never marks the whole host offline. On startup, active bindings absent from the session list receive
+one exact session lookup; a confirmed missing session is physically removed together with its prompt links, question and
+notification records, incomplete-run ledger entries, seen marker, and mirror-marker buckets. The topic becomes pending
+for a fresh session. Recovery checks skipped during a real backend backoff are scheduled once at the backoff deadline
+instead of being silently abandoned or polled rapidly.

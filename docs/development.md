@@ -26,6 +26,11 @@ normal active window, cursor-bounded, and capped at five pages per binding; this
 stale Telegram floods, continuous polling, or reconnect request bursts. `OpenCodeClient` unwraps the global
 `{ directory, payload }` envelope once at the transport boundary, so downstream event handlers share the same shape in
 both mirror scopes.
+Standard OpenCodez text transport is `message.part.delta` followed by a text `message.part.updated` whose `time.end` is
+present; `message.updated` owns assistant completion. The renderer buffers deltas and sends only completed blocks. Exact
+message reads and paginated reconcile are recovery paths and must not become an API request per healthy live message.
+HTTP `404` for a specific session is likewise session-scoped: it removes the binding through `StateStore`, while only
+network/timeouts, `408`, `429`, and `5xx` responses enter shared host backoff.
 `final-notifications.mjs` owns final-answer DMs. `commands.mjs` owns Telegram command handlers. `render.mjs` coordinates
 Telegram message rendering, including best-effort removal of rolled-back text and tool parts, while
 `render-side-effects.mjs` owns pin/final/mirror side effects. `prompt-routing.mjs` also owns the one mutable prompt-status
@@ -162,6 +167,10 @@ local/manual runs.
 Prefer small modules with clear ownership over broad rewrites. Good extraction targets are pure parsing, formatting,
 short-lived buffers, and retry helpers. Be more careful with event flow, prompt sending, state updates, and Telegram
 message editing; those paths are where small behavior changes become visible.
+
+Missing-session cleanup is intentionally destructive and centralized. It must remove all server/session keyed state and
+compact the marker journal, then retain only a pending topic launch record. Do not replace it with another disabled
+binding or let one session-level error suppress work for neighboring bindings on the same host.
 
 Do not introduce TypeScript as a build pipeline by default. A useful future step would be lightweight JSDoc or
 `tsc --checkJs` style checking if it can run without changing the Compose runtime shape.

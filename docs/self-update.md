@@ -39,6 +39,11 @@ If the host runner stops reporting progress, the bot marks the run interrupted a
 files, and releases the update lock so `/update` can retry. The systemd service timeout remains 30 minutes, leaving a
 five-minute recovery margin.
 
+Startup migrations are part of the bot process, so one-click updates need no manual state editing. In particular,
+legacy bindings already marked as stale/missing are physically removed with their session-scoped markers, and an active
+binding omitted from the backend session list is removed only after an exact lookup confirms `404`. Its Telegram topic
+remains available as a pending fresh session.
+
 ## Architecture
 
 The bot container has no Docker socket and no source checkout. Approval is passed through two atomic JSON files in the

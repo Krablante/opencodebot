@@ -1,7 +1,7 @@
 import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
 import { formatDuration } from "./backend-backoff.mjs"
 import { isInternalUserMessage, logicalTurnRootID, logicalTurnSliceReady, logicalTurnStartIndex } from "./logical-turn.mjs"
-import { textFromPrompt, visibleTextFromParts } from "./opencode.mjs"
+import { isOpenCodeSessionNotFound, textFromPrompt, visibleTextFromParts } from "./opencode.mjs"
 import { formatToolLine } from "./render.mjs"
 import { runAfterFlight, runSingleFlight } from "./single-flight.mjs"
 import { escapeHtml } from "./telegram.mjs"
@@ -21,6 +21,7 @@ export function createSessionReconciler({
   runAlerter,
   backendRequest,
   skippedBackendRequest,
+  backendRetryDelay = () => 0,
   createTopicForSession,
   createTopicForWebSession,
   isInternalSession,
@@ -202,6 +203,9 @@ export function createSessionReconciler({
           if (manualCompaction) break
           await renderer.textEnded(binding, properties)
           break
+        case "message.updated":
+          if (properties.info?.role === "assistant") await handleAssistantMessageUpdated(binding, properties.info)
+          break
         case "session.next.step.ended":
           if (manualCompaction) {
             await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
@@ -299,7 +303,11 @@ export function createSessionReconciler({
         case "message.part.updated":
         case "message.part.added":
           if (manualCompaction) break
-          await mirrorToolPartUpdate(binding, properties)
+          await mirrorPartUpdate(binding, properties)
+          break
+        case "message.part.delta":
+          if (manualCompaction) break
+          await mirrorTextPartDelta(binding, properties)
           break
         case "message.part.removed":
           await renderer.removePart(binding, properties)
@@ -321,8 +329,8 @@ export function createSessionReconciler({
     if (event.type === "message.updated") {
       messageID = properties.info?.id
       role = properties.info?.role
-      if (messageID && role === "user") rememberTargetedMessageRole(`${bindingKey(binding)}:${messageID}`, role)
-      return
+      if (messageID && role) rememberTargetedMessageRole(`${bindingKey(binding)}:${messageID}`, role)
+      if (role !== "assistant" || !isCompleted(properties.info)) return
     } else if (event.type === "message.part.updated" || event.type === "message.part.added") {
       const part = properties.part || properties
       messageID = part?.messageID || properties.messageID
@@ -339,6 +347,10 @@ export function createSessionReconciler({
       targetedMessageTimers.delete(key)
       const current = state.findBinding(binding.serverID, binding.sessionID)
       if (!current) return
+      if (role === "assistant" && state.isAssistantMirrored(current.serverID, current.sessionID, messageID)) {
+        targetedMessageRoles.delete(key)
+        return
+      }
       runAfterFlight(bindingOperations, bindingKey(current), () => reconcileMessageByID(current, messageID))
         .catch((error) => {
           logErrorEvent("reconcile.message.failed", error, { source: current.serverID, sessionID: current.sessionID, topicId: current.topicId, messageID })
@@ -358,7 +370,16 @@ export function createSessionReconciler({
   async function reconcileMessageByID(binding, messageID) {
     let message
     try {
-      message = await opencode.message(binding.serverID, binding.sessionID, messageID, { directory: binding.directory })
+      message = await backendRequest(binding.serverID, "exact session message", () => opencode.message(
+        binding.serverID,
+        binding.sessionID,
+        messageID,
+        { directory: binding.directory },
+      ))
+      if (message === skippedBackendRequest) {
+        scheduleReconcile(binding, backendRetryMs(binding.serverID))
+        return
+      }
     } catch (error) {
       logInfo("reconcile.message.fallback", {
         source: binding.serverID,
@@ -398,7 +419,24 @@ export function createSessionReconciler({
       }
       return
     }
-    scheduleReconcile(binding, 500)
+    if (info.role !== "assistant") return
+    if (!isCompleted(info)) {
+      scheduleReconcile(binding, 500)
+      return
+    }
+    if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
+      if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding)
+      return
+    }
+    if (info.summary !== true && !await renderStoredAssistantMessage(binding, message)) {
+      scheduleReconcile(binding, 500)
+      return
+    }
+    await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
+    if (info.finish === "stop") {
+      clearRunCheck(binding)
+      await promptQueue.markTerminalMirrored(binding)
+    }
   }
 
   async function mirrorTargetedUserMessage(binding, message) {
@@ -544,15 +582,16 @@ export function createSessionReconciler({
     incompleteChecks.delete(key)
   }
 
-  function scheduleIncompleteRunCheck(server, binding, { expectedStop = false, source } = {}) {
+  function scheduleIncompleteRunCheck(server, binding, { expectedStop = false, source, delayMs = incompleteRunGraceMs } = {}) {
     const key = bindingKey(binding)
     const existing = incompleteChecks.get(key)
     if (existing) return
     const verificationSource = source || (expectedStop ? "expected-stop" : "idle")
     const timer = setTimeout(() => {
       incompleteChecks.delete(key)
-      verifyRunOutcome(server, binding, { expectedStop, source: verificationSource }).catch((error) => logError(error))
-    }, incompleteRunGraceMs)
+      verifyRunOutcome(server, binding, { expectedStop, source: verificationSource })
+        .catch((error) => handleMirrorError(binding, error).catch(logError))
+    }, delayMs)
     timer.unref?.()
     incompleteChecks.set(key, timer)
   }
@@ -575,7 +614,10 @@ export function createSessionReconciler({
     if (questionManager?.hasPending(server.id, binding.sessionID)) return
 
     const statuses = await backendRequest(server.id, "incomplete-run-status", () => opencode.request(server, "/session/status", { directory: binding.directory }))
-    if (statuses === skippedBackendRequest) return
+    if (statuses === skippedBackendRequest) {
+      scheduleIncompleteRunCheck(server, binding, { expectedStop, source, delayMs: backendRetryMs(server.id) })
+      return
+    }
     const statusType = statuses?.[binding.sessionID]?.type
     if (statusType && statusType !== "idle") return
 
@@ -583,7 +625,10 @@ export function createSessionReconciler({
     if (!history?.some((message) => (message.info || message).role === "user")) {
       history = await loadLatestRunMessages(server, binding)
     }
-    if (history === skippedBackendRequest) return
+    if (history === skippedBackendRequest) {
+      scheduleIncompleteRunCheck(server, binding, { expectedStop, source, delayMs: backendRetryMs(server.id) })
+      return
+    }
     if (!activeBinding(binding)) {
       clearRunCheck(binding)
       return
@@ -687,9 +732,44 @@ export function createSessionReconciler({
     }
   }
 
-  async function mirrorToolPartUpdate(binding, properties) {
+  async function handleAssistantMessageUpdated(binding, info) {
+    if (!info?.id || !isCompleted(info) || state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
+      if (info?.finish === "stop" && state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
+        clearRunCheck(binding)
+        await promptQueue.markTerminalMirrored(binding)
+      }
+      return
+    }
+    if (info.summary === true) {
+      await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
+      return
+    }
+    if (info.finish === "stop") {
+      const mirrored = await renderer.finalAssistantMessageReady(binding, info.id)
+      if (mirrored) clearRunCheck(binding)
+      return
+    }
+    if (renderer.hasAssistantMessage?.(binding, info.id) || info.finish === "tool-calls") {
+      await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
+    }
+  }
+
+  async function mirrorPartUpdate(binding, properties) {
     const part = properties.part || properties
-    if (!part || part.type !== "tool") return
+    if (!part) return
+    if (part.type === "text") {
+      const messageID = part.messageID || properties.messageID
+      const role = targetedMessageRoles.get(`${bindingKey(binding)}:${messageID}`)
+      if (role === "user" || part.synthetic === true || part.ignored === true || !Number.isFinite(part.time?.end)) return
+      if (state.isAssistantMirrored(binding.serverID, binding.sessionID, messageID)) return
+      await renderer.textEnded(binding, {
+        textID: part.id || properties.partID,
+        assistantMessageID: messageID,
+        text: part.text,
+      })
+      return
+    }
+    if (part.type !== "tool") return
     const status = part.state?.status || part.status
     const input = part.state?.input || part.input || {}
     const payload = {
@@ -706,6 +786,21 @@ export function createSessionReconciler({
     else if (status === "error" || status === "failed") await renderer.toolResult(binding, payload, false)
   }
 
+  async function mirrorTextPartDelta(binding, properties) {
+    if (properties.field !== "text" || !properties.messageID || !properties.partID || !properties.delta) return
+    const role = targetedMessageRoles.get(`${bindingKey(binding)}:${properties.messageID}`)
+    if (role === "user" || state.isAssistantMirrored(binding.serverID, binding.sessionID, properties.messageID)) return
+    await renderer.textDelta(binding, {
+      textID: properties.partID,
+      assistantMessageID: properties.messageID,
+      delta: properties.delta,
+    })
+  }
+
+  function backendRetryMs(serverID) {
+    return Math.max(incompleteRunGraceMs, Number(backendRetryDelay(serverID) || 0) + 250)
+  }
+
   function scheduleReconcile(binding, delayMs) {
     if (config.reconcile.enabled === false) return
     const key = bindingKey(binding)
@@ -716,7 +811,7 @@ export function createSessionReconciler({
       reconcileTimers.delete(key)
       const current = activeBinding(binding)
       if (!current) return
-      reconcileBinding(current).catch(logError)
+      reconcileBinding(current).catch((error) => handleMirrorError(current, error).catch(logError))
     }, delayMs)
     timer.unref?.()
     reconcileTimers.set(key, timer)
@@ -790,6 +885,7 @@ export function createSessionReconciler({
     const batches = await Promise.all(config.opencode.servers.map(async (server) => {
       const sessions = await backendRequest(server.id, "seed sessions", () => opencode.listSessions(server.id, { mirror: true }))
       if (sessions === skippedBackendRequest) return []
+      await removeMissingBindingsAbsentFromList(server, sessions)
       rememberSessionScanWatermark(server.id, sessions)
       for (const session of sessions) observedSessionUpdates.set(`${server.id}:${session.id}`, sessionUpdatedMs(session))
       return sessions.map((session) => [server.id, session.id])
@@ -797,6 +893,23 @@ export function createSessionReconciler({
     const seen = batches.flat()
     const seeded = await state.seedSeenSessions(seen)
     if (seeded) console.log(`[opencodebot] seeded ${seeded} existing OpenCodez sessions`)
+  }
+
+  async function removeMissingBindingsAbsentFromList(server, sessions) {
+    if (typeof opencode.getSession !== "function" || typeof state.removeMissingBinding !== "function") return
+    const listed = new Set(sessions.map((session) => session.id))
+    const candidates = state.bindings().filter((binding) => binding.serverID === server.id && !listed.has(binding.sessionID))
+    for (const binding of candidates) {
+      try {
+        const session = await backendRequest(server.id, "verify absent binding", () => opencode.getSession(server.id, binding.sessionID, {
+          directory: binding.directory,
+        }))
+        if (session === skippedBackendRequest) break
+      } catch (error) {
+        if (!isOpenCodeSessionNotFound(error, binding.sessionID)) throw error
+        await removeMissingSessionBinding(binding, "startup-verification")
+      }
+    }
   }
 
   async function reconcileSessions() {
@@ -1110,12 +1223,34 @@ export function createSessionReconciler({
   }
 
   async function handleMirrorError(binding, error) {
+    if (isOpenCodeSessionNotFound(error, binding.sessionID)) {
+      await removeMissingSessionBinding(binding, "backend-404")
+      return
+    }
     if (isUnavailableTopicError(error)) {
       await state.disableBinding(binding.serverID, binding.sessionID, error.message || "Telegram topic unavailable")
       console.warn(`[opencodebot] disabled unavailable Telegram topic binding ${binding.serverID}/${binding.sessionID}: ${error.message}`)
       return
     }
     throw error
+  }
+
+  async function removeMissingSessionBinding(binding, source) {
+    const current = state.findBinding(binding.serverID, binding.sessionID)
+    if (!current) return false
+    const promptProfile = config.promptProfiles?.[current.promptProfileName]
+    const removed = await state.removeMissingBinding(current.serverID, current.sessionID, { promptProfile })
+    if (!removed) return false
+    promptQueue.clear(current)
+    detachBinding(current)
+    logInfo("binding.removed.missing_session", {
+      source: current.serverID,
+      sessionID: current.sessionID,
+      topicId: current.topicId,
+      detectedBy: source,
+      pendingCreated: removed.pendingCreated,
+    })
+    return true
   }
 
   async function notifyRunFailed(binding, properties, clearedQueue) {
@@ -1391,8 +1526,11 @@ function messageInReconcileWindow(info, window) {
 }
 
 function messageTimeMs(info) {
-  const direct = info?.time?.created || info?.time?.completed
-  if (Number.isFinite(direct)) return direct
+  const direct = Math.max(
+    ...[info?.time?.created, info?.time?.completed, info?.time?.failed].filter(Number.isFinite),
+    0,
+  )
+  if (direct > 0) return direct
   for (const value of [info?.createdAt, info?.created, info?.updatedAt]) {
     const parsed = Date.parse(value || "")
     if (Number.isFinite(parsed)) return parsed

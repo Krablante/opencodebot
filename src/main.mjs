@@ -27,7 +27,7 @@ const config = loadConfig()
 assertRuntimeConfig(config)
 
 const state = new StateStore(config.paths.statePath)
-await state.load()
+await state.load({ promptProfiles: config.promptProfiles })
 configureI18n({ state, defaultLanguage: config.ui.defaultLanguage })
 if (config.telegram.chatId && !state.chatId) await state.setChatId(config.telegram.chatId)
 
@@ -72,6 +72,7 @@ promptRouter = createPromptRouter({
   opencode,
   renderer,
   scheduleReconcile: (...args) => sessionReconciler.scheduleReconcile(...args),
+  onBindingRemoved: (...args) => sessionReconciler?.detachBinding(...args),
   logError,
 })
 const {
@@ -123,6 +124,7 @@ sessionReconciler = createSessionReconciler({
   runAlerter,
   backendRequest,
   skippedBackendRequest,
+  backendRetryDelay: backendRequester.retryAfterMs,
   createTopicForSession,
   createTopicForWebSession,
   isInternalSession,

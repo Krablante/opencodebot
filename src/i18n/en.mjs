@@ -397,6 +397,7 @@ export const en = {
   "prompt.rewind.oldSession": "Revert unavailable · old session",
   "prompt.rewind.sessionChanged": "Revert unavailable · session changed",
   "prompt.notAccepted": ({ errorHtml }) => `🔴 Prompt was not accepted\n🧯 ${errorHtml}`,
+  "prompt.missingSession": "🟠 The OpenCodez session no longer exists\nThis topic is ready for a new session. Send the prompt again.",
   "prompt.feedback.starting": "🟡 Prompt received\n🚀 Sending it to OpenCodez",
   "prompt.feedback.accepted": "🟢 Accepted by OpenCodez\n🧠 Waiting for the first events",
   "prompt.feedback.reverting": "🟡 Reverting…",

@@ -3,7 +3,7 @@ import { AttachmentBuffer, cleanupFiles, downloadTelegramFiles } from "./attachm
 import { applyPromptProfile } from "./prompt-profiles.mjs"
 import { logErrorEvent, logInfo } from "./logger.mjs"
 import { MultipartPromptBuffer } from "./multipart-prompts.mjs"
-import { promptPayload, resolveSessionProfile, titleFromText } from "./opencode.mjs"
+import { isOpenCodeSessionNotFound, promptPayload, resolveSessionProfile, titleFromText } from "./opencode.mjs"
 import { PromptQueue } from "./prompt-queue.mjs"
 import { promptHash } from "./state.mjs"
 import { escapeHtml, topicId } from "./telegram.mjs"
@@ -36,7 +36,7 @@ export async function bindPendingTopicSession({ state, opencode, pending, messag
   return binding
 }
 
-export function createPromptRouter({ config, state, telegram, opencode, renderer, scheduleReconcile, logError }) {
+export function createPromptRouter({ config, state, telegram, opencode, renderer, scheduleReconcile, onBindingRemoved = () => {}, logError }) {
   const promptFeedbackMessages = new Map()
   const activityPersistedAt = new Map()
   const multipartPrompts = new MultipartPromptBuffer(config.multipartPrompts, flushTelegramPrompt, logError)
@@ -213,7 +213,22 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       promptQueue.markSendFailed(binding)
       await state.removePendingPrompt(binding.serverID, binding.sessionID, text).catch(logError)
       if (feedbackMode === "rewind") await reportRewindStatus(binding, rewindFeedbackReplacementNotSentText()).catch(logError)
-      else await reportPromptFeedbackError(binding, error).catch(logError)
+      else if (isOpenCodeSessionNotFound(error, binding.sessionID)) {
+        promptQueue.clear(binding)
+        const promptProfile = config.promptProfiles?.[binding.promptProfileName]
+        const removed = await state.removeMissingBinding(binding.serverID, binding.sessionID, { promptProfile })
+        if (removed) {
+          onBindingRemoved(binding)
+          logInfo("binding.removed.missing_session", {
+            source: binding.serverID,
+            sessionID: binding.sessionID,
+            topicId: binding.topicId,
+            detectedBy: "prompt",
+            pendingCreated: removed.pendingCreated,
+          })
+        }
+        await reportMissingSession(binding).catch(logError)
+      } else await reportPromptFeedbackError(binding, error).catch(logError)
       throw error
     }
   }
@@ -374,6 +389,12 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
 
   async function reportPromptFeedbackError(binding, error) {
     const text = t("prompt.notAccepted", { errorHtml: escapeHtml(error.message) })
+    const updated = await updatePromptFeedback(binding, text).catch(() => false)
+    if (!updated) await sendPromptFeedback({ binding, text, kind: "error" })
+  }
+
+  async function reportMissingSession(binding) {
+    const text = t("prompt.missingSession")
     const updated = await updatePromptFeedback(binding, text).catch(() => false)
     if (!updated) await sendPromptFeedback({ binding, text, kind: "error" })
   }

@@ -500,6 +500,14 @@ queue text. The `/q` queue, multipart prompt buffer, attachment buffer, and acti
 cleared or disappear on service restart by design; idle and recent reconcile checks recover from losing an active
 tracker.
 
+A session-level OpenCodez `404` has different semantics from `/reset`: the backend session no longer exists, so retaining
+its bot-side identity would be misleading. OpenCodeBot deletes that binding plus every state record keyed to the missing
+server/session and compacts the mirror-marker journal. It preserves only topic launch metadata in `pendingTopics`, letting
+the next prompt create a fresh session in place. A named profile is re-resolved from current configuration so its complete
+launch settings survive the replacement. Startup also migrates older bindings already marked as stale or missing through
+this same destructive cleanup. Intentionally preserved `/reset` history and bindings disabled because a Telegram topic was
+closed remain untouched.
+
 `telegram.contextTurnsByUser` is runtime-managed state for `/set_context`; it maps an allowed Telegram user id to a
 numeric default from 1 to 10. `/context` assembles completed or interruption-ledger-marked turns on demand from OpenCodez,
 including visible progress notes for interrupted turns, and never stores prompt, progress, or final answer text in
