@@ -343,11 +343,12 @@ topics.
 
 Use `/mirror_on` and `/mirror_off` when you need to pause or resume web-to-Telegram mirroring without stopping the bot.
 
-Default chat profiles are `d4flash`, `d4pro`, `luna`, `terra`, `solm`, `solh`, `sol`, and `solmax`. Each profile keeps
+Default chat profiles are `d4flash`, `d4pro`, `luna`, `terra`, `gpt6`, `gpt6m`, `solm`, `solh`, `sol`, and `solmax`. Each profile keeps
 its agent, model, variant, and OpenCodez System prompt in `promptProfiles`; local deployments can override those values
 in runtime config without changing code. DeepSeek profiles use the OpenCodez `default` System prompt, Luna and Terra
-share `codex_gpt_5_6_luna_terra`, and all four Sol profiles use `codex_gpt_5_6_sol`. They select the same Sol model with
-`medium`, `high`, `xhigh`, and `max` variants respectively.
+share `codex_gpt_5_6_luna_terra`, and all four Sol profiles use `codex_gpt_5_6_sol`. `gpt6` and `gpt6m` both use GPT-6
+Astra with its bundled `codex_gpt_6_astra` System and select `high` and `medium` reasoning respectively. The four Sol
+profiles select the same Sol model with `medium`, `high`, `xhigh`, and `max` variants respectively.
 
 `/reset [profile] [server]` may change profile, server, or both while preserving the current value when omitted.
 Same-server reset preserves the current directory; cross-server reset checks the target first and uses its configured

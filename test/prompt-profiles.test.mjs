@@ -10,7 +10,17 @@ import { baseTitleFromTelegramTitle, managedTopicTitle } from "../src/topic-titl
 test("built-in prompt profiles use current models, variants, and System prompts", () => {
   const profiles = normalizePromptProfiles()
 
-  assert.deepEqual(Object.keys(profiles).sort(), ["d4flash", "d4pro", "luna", "sol", "solh", "solm", "solmax", "terra"])
+  assert.deepEqual(Object.keys(profiles).sort(), ["d4flash", "d4pro", "gpt6", "gpt6m", "luna", "sol", "solh", "solm", "solmax", "terra"])
+  assert.deepEqual(profiles.gpt6, {
+    agent: "build",
+    model: { providerID: "openai", modelID: "gpt-6-astra", variant: "high" },
+    opencodezSystem: "codex_gpt_6_astra",
+  })
+  assert.deepEqual(profiles.gpt6m, {
+    agent: "build",
+    model: { providerID: "openai", modelID: "gpt-6-astra", variant: "medium" },
+    opencodezSystem: "codex_gpt_6_astra",
+  })
   assert.deepEqual(profiles.sol, {
     agent: "build",
     model: { providerID: "openai", modelID: "gpt-5.6-sol", variant: "xhigh" },
@@ -43,6 +53,8 @@ test("/new resolves a profile and preserves an unknown token as title text", asy
   assert.equal(parseNewTopicArgs("solm medium-work", options).promptProfile.model.variant, "medium")
   assert.equal(parseNewTopicArgs("solh high-work", options).promptProfile.model.variant, "high")
   assert.equal(parseNewTopicArgs("solmax max-work", options).promptProfile.model.variant, "max")
+  assert.equal(parseNewTopicArgs("gpt6 astra-work", options).promptProfile.model.variant, "high")
+  assert.equal(parseNewTopicArgs("gpt6m astra-medium-work", options).promptProfile.model.variant, "medium")
 
   const calls = []
   await applyPromptProfile({

@@ -19,10 +19,20 @@ const defaultPromptProfiles = {
     model: { providerID: "openai", modelID: "gpt-5.6-terra", variant: "xhigh" },
     opencodezSystem: "codex_gpt_5_6_luna_terra",
   },
+  gpt6: astraProfile("high"),
+  gpt6m: astraProfile("medium"),
   solm: solProfile("medium"),
   solh: solProfile("high"),
   sol: solProfile("xhigh"),
   solmax: solProfile("max"),
+}
+
+function astraProfile(variant) {
+  return {
+    agent: "build",
+    model: { providerID: "openai", modelID: "gpt-6-astra", variant },
+    opencodezSystem: "codex_gpt_6_astra",
+  }
 }
 
 function solProfile(variant) {

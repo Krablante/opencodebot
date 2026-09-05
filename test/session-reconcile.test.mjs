@@ -284,7 +284,7 @@ test("a stable message event uses the exact message endpoint before page fallbac
   assert.deepEqual(harness.renderedUsers, ["Web prompt"])
 })
 
-test("a completed assistant event stays on the established lifecycle renderer path", async () => {
+test("a completed assistant event recovers through the exact-message path when lifecycle rendering missed it", async () => {
   const harness = createHarness({ targetedMessage: assistantMessage("assistant-exact", "Exact answer"), usersOnly: false })
 
   await harness.reconciler.handleOpenCodeEvent({ id: "dima" }, {
@@ -300,8 +300,8 @@ test("a completed assistant event stays on the established lifecycle renderer pa
   })
   await new Promise((resolve) => setTimeout(resolve, 200))
 
-  assert.equal(harness.messageCalls, 0)
-  assert.deepEqual(harness.renderedAssistants, [])
+  assert.equal(harness.messageCalls, 1)
+  assert.deepEqual(harness.renderedAssistants, ["Exact answer"])
 })
 
 test("context export counts interrupted prompts, keeps completed answers, and omits the active turn", () => {

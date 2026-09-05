@@ -195,11 +195,12 @@ Examples:
 /reset solh dima
 ```
 
-The default profiles are `d4flash`, `d4pro`, `luna`, `terra`, `solm`, `solh`, `sol`, and `solmax`. They are
-host-independent Telegram-created-session profiles. `solm`, `solh`, `sol`, and `solmax` use the same configured Sol
-model and System prompt with `medium`, `high`, `xhigh`, and `max` variants respectively. Each profile keeps its agent,
-model, variant, and OpenCodez System prompt in config. After creating the session and before sending the first prompt,
-the bot switches the session's next model and selects that System.
+The default profiles are `d4flash`, `d4pro`, `luna`, `terra`, `gpt6`, `gpt6m`, `solm`, `solh`, `sol`, and `solmax`. They
+are host-independent Telegram-created-session profiles. `gpt6` and `gpt6m` use GPT-6 Astra and its bundled OpenCodez
+System prompt with `high` and `medium` variants respectively. `solm`, `solh`, `sol`, and `solmax` use the same configured
+Sol model and System prompt with `medium`, `high`, `xhigh`, and `max` variants respectively. Each profile keeps its
+agent, model, variant, and OpenCodez System prompt in config. After creating the session and before sending the first
+prompt, the bot switches the session's next model and selects that System.
 
 ## Prompts
 

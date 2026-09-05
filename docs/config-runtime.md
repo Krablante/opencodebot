@@ -286,9 +286,10 @@ silently or turns an unknown transfer type into `local`.
 prompt metadata the bot can know before the first prompt: agent and model.
 
 `promptProfiles` are named launch profiles for `/new` and `/reset [profile] [server]`. The built-in defaults are `d4flash`,
-`d4pro`, `luna`, `terra`, `solm`, `solh`, `sol`, and `solmax`. The four Sol profiles share the same model/System
-configuration and select `medium`, `high`, `xhigh`, and `max` variants respectively. Runtime config is merged with those
-defaults, so you can add a profile or override an existing profile without copying every default. `/reset` without
+`d4pro`, `luna`, `terra`, `gpt6`, `gpt6m`, `solm`, `solh`, `sol`, and `solmax`. The Astra profiles share the bundled
+`codex_gpt_6_astra` System and select `high` and `medium` variants respectively. The four Sol profiles share the same
+model/System configuration and select `medium`, `high`, `xhigh`, and `max` variants respectively. Runtime config is
+merged with those defaults, so you can add a profile or override an existing profile without copying every default. `/reset` without
 arguments inherits profile/server/directory; one argument may select a profile or server; two arguments are profile then
 server. Same-server reset preserves the current directory, while cross-server reset preflights the target and uses its
 `newSessionDefaultDirectory` policy. On lazy session creation the bot applies the profile twice by design: it switches
