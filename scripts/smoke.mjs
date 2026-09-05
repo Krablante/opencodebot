@@ -704,7 +704,7 @@ function smokeFinalToolSummary() {
       { type: "tool", tool: "figma_metadata", state: { status: "error", time: { start: 2300, end: 3800 } } },
     ] },
     { info: { id: "assistant-meta", role: "assistant", time: { created: 5000, completed: 8_295_000 }, modelID: "gpt-5.6-sol-fast", tokens: { input: 12_000_000, output: 33_300, reasoning: 27_200, cache: { read: 18_500_000, write: 0 } } }, parts: [
-      { type: "tool", tool: "context7_query-docs", state: { status: "completed", time: { start: 6000, end: 9000 } } },
+      { type: "tool", tool: "crw_search", state: { status: "completed", time: { start: 6000, end: 9000 } } },
     ] },
   ]
   const turnMetadata = turnMetadataBeforeAssistant(turnMessages, "assistant-meta")
