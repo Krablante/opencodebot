@@ -1,8 +1,10 @@
+import { setTimeout as sleep } from "node:timers/promises"
 import { logErrorEvent, logInfo } from "./logger.mjs"
 import { isAllowedMessage, messageText, topicId } from "./telegram.mjs"
 import { formatArtifactUploadHelp } from "./artifact-uploads.mjs"
 import { normalizeTelegramRichMessage } from "./telegram-rich-message.mjs"
 import { t } from "./i18n/index.mjs"
+import { TelegramInbox } from "./telegram-inbox.mjs"
 
 export function createTelegramPolling({
   config,
@@ -24,7 +26,8 @@ export function createTelegramPolling({
   multipartPromptKey,
   flushPromptKey,
   logError,
-  maxPendingUpdates = 100,
+  maxPendingUpdates = 1000,
+  maxPendingBytes = 16 * 1024 * 1024,
   maxConcurrentUpdatesPerGroup = 2,
   slowUpdateMs = 5_000,
 }) {
@@ -52,38 +55,67 @@ export function createTelegramPolling({
   }
 
   async function poll({ shouldStop, signal, onProgress = () => {} }) {
-    let offset = state.data.runtime.telegramUpdateOffset || undefined
+    const inbox = new TelegramInbox(config.paths.statePath, state.data.runtime.telegramUpdateOffset)
+    await inbox.open()
+    const failure = new AbortController()
+    const pollSignal = signal ? AbortSignal.any([signal, failure.signal]) : failure.signal
+    let fatalError
+    const reportProgress = () => onProgress({
+      pending: inbox.pending.size,
+      bytes: inbox.pendingBytes,
+      backpressure: inbox.pending.size >= maxPendingUpdates || inbox.pendingBytes >= maxPendingBytes,
+    })
     const dispatcher = createUpdateDispatcher({
       state,
       config,
       handleUpdate,
-      persistOffset,
+      inbox,
       logError,
       maxPendingUpdates,
+      maxPendingBytes,
       maxConcurrentUpdatesPerGroup,
       slowUpdateMs,
-      signal,
+      signal: pollSignal,
+      onFatal: (error) => {
+        fatalError = error
+        failure.abort()
+      },
     })
-    while (!shouldStop()) {
-      try {
-        const updates = await telegram.getUpdates(offset, 25, { signal })
-        onProgress()
-        for (const update of updates) {
-          if (shouldStop()) break
-          await dispatcher.waitForCapacity()
-          dispatcher.enqueue(update, update.update_id + 1)
+    logInfo("telegram.inbox.opened", { pending: inbox.pending.size, bytes: inbox.pendingBytes })
+    for (const { update } of inbox.pending.values()) dispatcher.enqueue(update)
+    let failed = false
+    try {
+      while (!shouldStop() && !pollSignal.aborted) {
+        await dispatcher.waitForCapacity(reportProgress)
+        if (shouldStop() || pollSignal.aborted) break
+        let updates
+        try {
+          updates = await telegram.getUpdates(inbox.offset, 25, {
+            signal: pollSignal,
+            limit: Math.min(100, maxPendingUpdates - inbox.pending.size),
+          })
+        } catch (error) {
+          if (shouldStop() || pollSignal.aborted) break
+          logError(error)
+          await delay(2500, pollSignal)
+          continue
         }
-        // getUpdates(offset) acknowledges updates at Telegram itself. Never use
-        // the fetched cursor until every handler in this batch has settled.
-        const unfinished = await dispatcher.drain()
-        offset = state.data.runtime.telegramUpdateOffset || offset
-        onProgress()
-        if (unfinished && !shouldStop()) await delay(2500)
-      } catch (error) {
-        if (shouldStop()) break
-        logError(error)
-        await delay(2500)
+        reportProgress()
+        if (!updates.length) continue
+        // Only a synced receipt authorizes the next Telegram acknowledgement.
+        // Handler completion is independent of fetching subsequent batches.
+        const fresh = await inbox.receive(updates, updates.at(-1).update_id + 1)
+        for (const update of fresh) dispatcher.enqueue(update)
       }
+      if (fatalError) throw fatalError
+    } catch (error) {
+      failed = true
+      throw error
+    } finally {
+      failure.abort()
+      // A fatal disk error must reach main immediately so it also cancels the
+      // shared API clients and starts the bounded shutdown grace.
+      if (!failed) await dispatcher.drain()
     }
   }
 
@@ -102,13 +134,6 @@ export function createTelegramPolling({
       }
       throw error
     }
-  }
-
-  async function persistOffset(offset) {
-    await state.update((data) => {
-      data.runtime.telegramUpdateOffset = offset
-      return true
-    })
   }
 
   async function handleCallbackQuery(query) {
@@ -259,101 +284,95 @@ function createUpdateDispatcher({
   state,
   config,
   handleUpdate,
-  persistOffset,
+  inbox,
   logError,
   maxPendingUpdates,
+  maxPendingBytes,
   maxConcurrentUpdatesPerGroup,
   slowUpdateMs,
   signal,
+  onFatal,
 }) {
-  const acknowledgements = []
   const lanes = new Map()
-  const capacityWaiters = []
+  const scheduled = new Set()
+  const capacityWaiters = new Set()
   const semaphore = createKeyedSemaphore(maxConcurrentUpdatesPerGroup)
-  let persistRunning = null
-  let unfinishedUpdates = 0
 
-  async function waitForCapacity() {
-    while (unfinishedUpdates >= maxPendingUpdates) {
-      await new Promise((resolve) => capacityWaiters.push(resolve))
+  async function waitForCapacity(onProgress) {
+    let paused = false
+    while (!signal.aborted && (inbox.pending.size >= maxPendingUpdates || inbox.pendingBytes >= maxPendingBytes)) {
+      if (!paused) logInfo("telegram.inbox.backpressure", { pending: inbox.pending.size, bytes: inbox.pendingBytes })
+      paused = true
+      await new Promise((resolve) => {
+        const wake = () => {
+          clearTimeout(timer)
+          capacityWaiters.delete(wake)
+          signal.removeEventListener("abort", wake)
+          resolve()
+        }
+        const timer = setTimeout(wake, 25_000)
+        capacityWaiters.add(wake)
+        signal.addEventListener("abort", wake, { once: true })
+      })
+      onProgress()
     }
+    if (paused) logInfo("telegram.inbox.resumed", { pending: inbox.pending.size, bytes: inbox.pendingBytes })
   }
 
-  function enqueue(update, offset) {
+  function enqueue(update) {
+    if (signal.aborted || scheduled.has(update.update_id)) return
+    scheduled.add(update.update_id)
     const routing = updateRouting(update, state, config)
-    const existing = acknowledgements.find((item) => item.offset === offset)
-    if (existing?.done) return
-    const acknowledgement = existing || { offset, done: false }
-    if (!existing) acknowledgements.push(acknowledgement)
-    unfinishedUpdates += 1
-    let completed = false
-
     const previous = lanes.get(routing.lane) || Promise.resolve()
-    const task = previous.then(async () => {
-      if (signal?.aborted) return
-      const release = await semaphore.acquire(routing.group)
-      const startedAt = Date.now()
-      try {
-        if (!signal?.aborted) {
+    // Chat bootstrap can set state.chatId before its handler finishes. Later
+    // batches must not switch to normal lanes and overtake that startup work.
+    const ready = routing.lane !== "bootstrap" && lanes.has("bootstrap")
+      ? Promise.all([previous, lanes.get("bootstrap")]) : previous
+    const task = ready.then(async () => {
+      let attempt = 0
+      while (!signal.aborted) {
+        // Resolve the backend again: /new and /reset may have changed it while
+        // this update was waiting behind the preceding topic action.
+        const { group } = updateRouting(update, state, config)
+        const release = await semaphore.acquire(group)
+        const startedAt = Date.now()
+        let completed = false
+        try {
+          if (signal.aborted) return
           await handleUpdate(update)
           completed = true
+        } catch (error) {
+          if (!signal.aborted) logError(error)
+          completed = error.feedbackReported === true
+        } finally {
+          release()
+          const durationMs = Date.now() - startedAt
+          if (durationMs >= slowUpdateMs) {
+            logInfo("telegram.update.slow", { updateId: update.update_id, lane: routing.lane, group, durationMs })
+          }
         }
-      } catch (error) {
-        logError(error)
-        completed = error.feedbackReported === true
-      } finally {
-        release()
-        const durationMs = Date.now() - startedAt
-        if (durationMs >= slowUpdateMs) {
-          logInfo("telegram.update.slow", {
-            updateId: update.update_id,
-            lane: routing.lane,
-            group: routing.group,
-            durationMs,
-          })
+        if (signal.aborted) return
+        if (completed) {
+          await inbox.complete(update.update_id)
+          return
         }
+        const retryMs = Math.min(30_000, 2500 * 2 ** Math.min(attempt++, 4))
+        logInfo("telegram.update.retry", { updateId: update.update_id, attempt, retryMs })
+        // Keep order in this topic, but release the backend slot during backoff.
+        await delay(retryMs, signal)
       }
     })
-    const settled = task.catch(logError).finally(() => {
-      acknowledgement.done = completed && !signal?.aborted
-      unfinishedUpdates -= 1
-      while (capacityWaiters.length) capacityWaiters.shift()()
+    const settled = task.catch(onFatal).finally(() => {
+      scheduled.delete(update.update_id)
+      for (const wake of capacityWaiters) wake()
       if (lanes.get(routing.lane) === settled) lanes.delete(routing.lane)
-      void persistCompletedPrefix()
     })
     lanes.set(routing.lane, settled)
   }
 
   async function drain() {
     await Promise.all([...lanes.values()])
-    await persistCompletedPrefix()
-    return acknowledgements.some((item) => !item.done)
-  }
-
-  function persistCompletedPrefix() {
-    if (persistRunning) return persistRunning
-    persistRunning = (async () => {
-      while (true) {
-        let completed = 0
-        let offset
-        while (acknowledgements[completed]?.done) {
-          offset = acknowledgements[completed].offset
-          completed += 1
-        }
-        if (!completed) return
-        try {
-          await persistOffset(offset)
-        } catch (error) {
-          logError(error)
-          if (signal?.aborted) return
-          await delay(2500)
-          continue
-        }
-        acknowledgements.splice(0, completed)
-        while (capacityWaiters.length) capacityWaiters.shift()()
-      }
-    })().finally(() => { persistRunning = null })
-    return persistRunning
+    await inbox.writes
   }
 
   return { enqueue, waitForCapacity, drain }
@@ -367,9 +386,18 @@ function updateRouting(update, state, config) {
   const lane = bootstrapPending ? "bootstrap" : `${chatId}:${currentTopicId}`
   const binding = state.findBindingByTopic?.(chatId, currentTopicId)
   const pending = state.pendingTopic?.(currentTopicId)
+  const artifacts = state.isArtifactsTopic?.(chatId, currentTopicId)
+  const sounds = state.isSoundsTopic?.(chatId, currentTopicId)
+  const media = message.document || message.photo || message.video || message.animation || message.audio
+    || message.voice || message.video_note || message.rich_message
+  // Slow transcription/dropbox work must not occupy the control-menu slots.
+  const serverID = binding?.serverID || pending?.serverID
+  let group = serverID ? `backend:${serverID}` : "telegram"
+  if (artifacts && media) group = "uploads"
+  else if (message.voice || (sounds && media)) group = "speech"
   return {
     lane,
-    group: binding?.serverID || pending?.serverID || "telegram",
+    group,
   }
 }
 
@@ -417,6 +445,8 @@ function soundsTopicCommandAllowed(commandName) {
   return ["sounds_here", "sounds_off", "sounds_status", "session", "update", "lang", "help", "start", "menu", "notify_on", "notify_off", "notify_status"].includes(commandName)
 }
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+async function delay(ms, signal) {
+  try { await sleep(ms, undefined, { signal }) } catch (error) {
+    if (error.name !== "AbortError") throw error
+  }
 }

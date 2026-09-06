@@ -4,7 +4,10 @@ This codebase should stay small enough to read in one sitting. The goal is not a
 a reliable companion bot with clear source boundaries.
 
 The current split is intentionally modest. `main.mjs` wires startup, shutdown, and module composition.
-`telegram-polling.mjs` owns update polling and Telegram input routing. The pure `telegram-rich-message.mjs` normalizes
+`telegram-polling.mjs` owns update polling, ordered topic lanes, bounded group concurrency, and Telegram input routing.
+`telegram-inbox.mjs` owns the small synced append journal: durable receipts before Telegram acknowledgement, independent
+completion records, startup recovery, and atomic compaction. It is separate from downstream memory-only prompt buffers.
+The pure `telegram-rich-message.mjs` normalizes
 incoming Telegram Rich Message block trees into prompt text and embedded photo records; it owns no state, downloads, or
 routing. `prompt-routing.mjs` owns Telegram-origin prompt delivery, attachments, multipart prompt buffering, prompt
 feedback, and the prompt queue. `session-reconcile.mjs` owns OpenCodez event handling, cursor-paged incremental message
@@ -61,6 +64,13 @@ retried launch profile. Use disposable data and no second Telegram poller with t
 backend scopes with read-only API calls, and inspect startup/recovery logs after rollout. Rich Message limits and normal
 answer rendering are independent of these reliability checks.
 
+For inbox changes, manually hold one topic handler open while delivering another topic in the next fetched batch; verify
+that the latter starts before the held handler finishes and that a same-topic follower waits. Also check restart recovery
+after out-of-order completion, cancellation during a handler/retry, failed receipt/completion writes, a torn final append,
+and capacity pause/resume. Use disposable runtime state and inline probes rather than new test files, and never a second
+poller with the production token. Two busy speech handlers should leave the control-menu group available. The live health
+output and startup/retry/capacity logs expose queue status without logging input payloads.
+
 Run syntax checks:
 
 ```bash
@@ -84,8 +94,8 @@ expansion. `npm test` holds only the few contracts that benefit from a dedicated
 the OpenCodez System selection payload, the terminal-mirror/idle latch that guards queued prompts, and single-choice
 question callbacks. `npm run smoke` is the central regression check: it verifies config shape and aggregated
 server-config validation, ordered SSE event handling, OpenCode request timeouts, and Telegram update isolation: a slow
-backend group cannot delay another group within the received batch, same-backend work respects its concurrency bound, and the durable offset
-advances only after the contiguous completion prefix. It also verifies whole-session state pruning without
+backend group cannot delay another group in subsequent batches, same-backend work respects its concurrency bound, and the
+next fetch uses the durable receipt cursor while earlier handlers are still running. It also verifies whole-session state pruning without
 per-session message loss, Telegram download limits, synthetic file text filtering, nested rich-list normalization,
 `/kill`, native `/compact` request shape and internal-summary suppression, structured session-error normalization and
 history fallback without raw provider-data leakage, queued prompt release after terminal mirror and session idle, the

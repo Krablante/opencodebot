@@ -132,11 +132,13 @@ export class TelegramClient {
   }
 
   async getUpdates(offset, timeout = 25, options = {}) {
+    const { limit = 100, ...requestOptions } = options
     return this.request("getUpdates", {
       offset,
       timeout,
+      limit,
       allowed_updates: ["message", "callback_query"],
-    }, 0, { timeoutMs: (timeout + 10) * 1000, ...options })
+    }, 0, { timeoutMs: (timeout + 10) * 1000, ...requestOptions })
   }
 
   async sendMessage({ chatId, topicId, text, disablePreview = true, format = "html", replyMarkup }) {

@@ -29,9 +29,10 @@ export function createRuntimeHealth(config) {
     return pending
   }
   return {
-    beat(loop) {
+    beat(loop, inbox) {
       const first = !snapshot.loops[loop]
       snapshot.loops[loop] = Date.now()
+      if (loop === "telegram" && inbox) snapshot.telegramInbox = inbox
       save(first).catch((error) => console.error(`[opencodebot] runtime health write failed: ${error.message}`))
     },
     async stop() {
@@ -43,6 +44,7 @@ export function createRuntimeHealth(config) {
 
 export async function checkRuntimeHealth(config, { waitMs = 60_000 } = {}) {
   const deadline = Date.now() + waitMs
+  let inbox
   while (true) {
     try {
       const snapshot = JSON.parse(await fs.readFile(`${config.paths.statePath}.health.json`, "utf8"))
@@ -57,6 +59,7 @@ export async function checkRuntimeHealth(config, { waitMs = 60_000 } = {}) {
           throw new Error(`${loop} has not reported progress`)
         }
       }
+      inbox = snapshot.telegramInbox
       break
     } catch (error) {
       if (Date.now() >= deadline) throw error
@@ -71,6 +74,7 @@ export async function checkRuntimeHealth(config, { waitMs = 60_000 } = {}) {
       opencode.listSessions(server.id, { mirror: true, limit: 1, timeoutMs: 5000 })),
   ])
   console.log("Runtime healthy: Telegram polling and session recovery are progressing; required backend APIs are reachable.")
+  if (inbox) console.log(`Telegram inbox: ${inbox.pending} pending, ${inbox.bytes} bytes${inbox.backpressure ? "; intake paused at capacity" : ""}.`)
 }
 
 async function processStart(pid) {

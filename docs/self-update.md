@@ -27,6 +27,12 @@ One-click update is deliberately unavailable when the range changes `docker-comp
 using their new contents to roll back an old image would not restore the old runtime contract. The card shows the exact
 paths and one host command using `deploy:bot` or `deploy:all` instead.
 
+The release introducing the durable Telegram inbox changes the host runner and therefore takes this manual deployment
+path too. The runner also refuses a revision pair that adds or removes inbox support: an automatic image rollback must
+not strand events already acknowledged into a journal the older image cannot read. First deployment creates the inbox
+automatically; deliberate rollback to pre-inbox code requires the draining/cursor procedure in
+[Paths And State](config-runtime.md#paths-and-state).
+
 Notes come from the exact GitHub compare range. `feat:`, `fix:`, and `perf:` commit subjects become New, Fixed, and
 Performance sections. Documentation, test, refactor, build, and chore commits collapse into one technical-maintenance
 count. At most eight user-facing entries are shown; GitHub remains the full record. Keep commit subjects concise and

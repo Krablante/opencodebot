@@ -55,6 +55,13 @@ async function main() {
     if (components.controlPlane.length) {
       throw new Error(`Automatic update is blocked for deployment control-plane changes: ${components.controlPlane.join(", ")}`)
     }
+    // An image without the inbox cannot recover already acknowledged receipts.
+    // Keep automatic rollback on the same side of this storage migration.
+    const baseHasInbox = await succeeds("git", ["cat-file", "-e", `${request.baseSha}:src/telegram-inbox.mjs`])
+    const targetHasInbox = await succeeds("git", ["cat-file", "-e", `${request.targetSha}:src/telegram-inbox.mjs`])
+    if (baseHasInbox !== targetHasInbox) {
+      throw new Error("Telegram inbox migration requires manual deployment; automatic rollback cannot cross this storage boundary")
+    }
 
     const head = (await capture("git", ["rev-parse", "HEAD"])).trim()
     if (head !== request.targetSha) await run("git", ["merge", "--ff-only", request.targetSha])

@@ -36,6 +36,11 @@ GROQ_API_KEY=your-groq-api-key
 
 These files stay local and are ignored by git. The Compose file mounts them into the container read-only and mounts `state/` for durable bot state and uploads.
 
+The Telegram inbox journal lives beside the configured state file in that same writable volume; no extra service or
+mount is required. Keep the volume across rebuilds so unfinished input can resume. The journal temporarily contains
+private incoming message text: include it only in private stopped-bot backups, not diagnostic log bundles. See
+[State](config-runtime.md#paths-and-state) before deleting runtime files or rolling back to a version without inbox support.
+
 For the optional local Telegram Bot API sidecar, add app credentials from `https://my.telegram.org/apps` to the same `token.env`:
 
 ```env

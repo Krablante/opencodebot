@@ -519,18 +519,36 @@ including visible progress notes for interrupted turns, and never stores prompt,
 `state.json`. Its Rich Message chunk size, 240,000-character total ceiling, and default of three turns are fixed
 conservative behavior rather than runtime config knobs.
 
-`runtime.telegramUpdateOffset` is the durable completion watermark, not merely the most recently fetched update. The
-poller processes one Telegram batch at a time with ordered per-topic lanes and up to two active handlers per backend
-group. It requests the next batch only after the current handlers settle and uses the persisted completed prefix as
-the next offset, because that request acknowledges updates at Telegram itself. Each batch is bounded to 100 updates;
-no additional queue service or durable inbox is required. A slow handler may delay the next fetch.
+`<statePath>.telegram-inbox.ndjson` owns the Telegram receipt cursor and unfinished input events. The poller syncs one
+receipt record per non-empty fetch before acknowledging Telegram, then processes topics independently of later fetches.
+Completion records retire individual events without rewriting `state.json`; compaction replaces the journal atomically
+when obsolete data exceeds its size threshold, whenever the inbox becomes empty, and at startup. No database service,
+new dependency, or periodic queue scan is needed. See [Telegram update isolation](telegram-workflow.md#telegram-update-isolation)
+for topic ordering, concurrency limits, overload behavior, and retry semantics.
+
+The first startup creates the journal from the legacy `runtime.telegramUpdateOffset`. After that, the journal is
+authoritative and the legacy field is no longer advanced. Keep it in the same durable state volume and include it in
+stopped-bot backups. Unlike the main state file, this private journal temporarily contains received message text and
+Telegram file references (not downloaded media bytes). New journal and replacement files use owner-only permissions.
+Completed payloads are removed during compaction; an empty inbox retains only its cursor. Do not publish the journal,
+include it in diagnostic uploads, or delete it as a way to clear a stuck operation: Telegram may already have acknowledged
+its pending events.
+
+A torn final append is discarded at startup: an incomplete receipt was not acknowledged, while an incomplete completion
+leaves its event pending for replay. Malformed complete records stop startup
+instead of silently resetting the cursor. Disk-write failures stop the bot for Compose recovery, preserving unfinished
+events. Repair storage availability first; preserve a corrupt journal for deliberate recovery rather than replacing it
+with an empty file. Rolling back to code from before durable inbox support requires draining the inbox, stopping the bot,
+and copying its final checkpoint cursor into the legacy state offset before starting that older code. An old version
+cannot recover pending inbox events.
 
 An unfinished new-session profile is stored on its binding as `setupProfile` until model and System selection both
 succeed. A resend retries that setup before sending a prompt. Named profiles are resolved again from current config,
 so repairing a profile and restarting the bot is enough to retry without creating another OpenCodez session.
 
 `<statePath>.health.json` is a small replaceable operational snapshot, separate from conversation state. It contains only
-the main process PID, image revision, shutdown state, and last progress times of polling/recovery. Existing loops refresh
+the main process PID, image revision, shutdown state, last progress times of polling/recovery, and inbox count/bytes/capacity
+status (never input text). Existing loops refresh
 it at most once per 30 seconds after their first report; there is no heartbeat service or extra listener. `health:live`
 waits up to one minute for initialization, rejects missing/stopping/dead or stale processes, and checks Telegram plus
 the discovery API of required backends. `offline_ok` hosts are not required for this deployment gate. The progress

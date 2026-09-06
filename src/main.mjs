@@ -225,7 +225,11 @@ sessionReconciler.reconcileLoop().catch((error) => {
   void requestShutdown("session recovery stopped", 1)
 })
 
-await telegramPolling.poll({ shouldStop: () => shutdownRequested, signal: abort.signal, onProgress: () => health.beat("telegram") })
+await telegramPolling.poll({ shouldStop: () => shutdownRequested, signal: abort.signal, onProgress: (inbox) => health.beat("telegram", inbox) })
+  .catch(async (error) => {
+    logError(error)
+    await requestShutdown("Telegram inbox stopped", 1)
+  })
 await state.flushDeferred?.()
 
 async function createPendingTopic(message, args) {

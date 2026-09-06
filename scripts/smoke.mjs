@@ -394,6 +394,7 @@ function smokeIncomingRichMessages() {
 }
 
 async function smokeIncomingRichPolling() {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "opencodebot-rich-polling-"))
   const handled = []
   let stopped = false
   let delivered = false
@@ -420,12 +421,12 @@ async function smokeIncomingRichPolling() {
     async update(mutator) { mutator(this.data) },
   }
   const polling = createTelegramPolling({
-    config: { telegram: { allowedUserIds: [7], chatId: -1001 }, mirror: {} },
+    config: { paths: { statePath: path.join(directory, "state.json") }, telegram: { allowedUserIds: [7], chatId: -1001 }, mirror: {} },
     commands: [],
     state,
     telegram: {
       async getUpdates() {
-        if (delivered) return []
+        if (delivered) { await wait(5); return [] }
         delivered = true
         return [{ update_id: 1, message: richMessage }]
       },
@@ -446,7 +447,8 @@ async function smokeIncomingRichPolling() {
     flushPromptKey: async () => {},
     logError: (error) => { throw error },
   })
-  await polling.poll({ shouldStop: () => stopped })
+  try { await polling.poll({ shouldStop: () => stopped }) }
+  finally { await rm(directory, { recursive: true, force: true }) }
   assert.equal(handled.length, 1)
   assert.equal(handled[0].caption, "inspect this image")
   assert.equal(handled[0].files[0].fileID, "rich-image")
@@ -454,10 +456,12 @@ async function smokeIncomingRichPolling() {
 }
 
 async function smokePollingHostIsolation() {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "opencodebot-host-polling-"))
   const startedAt = Date.now()
   const starts = new Map()
   let stopped = false
-  let delivered = false
+  let fetched = 0
+  let requestedOffset
   let completed = 0
   let offsetWhileSlow
   const updates = [
@@ -475,15 +479,15 @@ async function smokePollingHostIsolation() {
     async update(mutator) { mutator(this.data) },
   }
   const polling = createTelegramPolling({
-    config: { telegram: { allowedUserIds: [7], chatId: -1001 }, mirror: {} },
+    config: { paths: { statePath: path.join(directory, "state.json") }, telegram: { allowedUserIds: [7], chatId: -1001 }, mirror: {} },
     commands: [],
     state,
     telegram: {
-      async getUpdates() {
-        if (!delivered) {
-          delivered = true
-          return updates
-        }
+      async getUpdates(offset) {
+        requestedOffset = offset
+        fetched += 1
+        if (fetched === 1) return updates.slice(0, 2)
+        if (fetched === 2) return updates.slice(2)
         await wait(5)
         return []
       },
@@ -508,16 +512,17 @@ async function smokePollingHostIsolation() {
     maxConcurrentUpdatesPerGroup: 1,
   })
   const observeWatermark = wait(150).then(() => {
-    offsetWhileSlow = state.data.runtime.telegramUpdateOffset
+    offsetWhileSlow = requestedOffset
   })
-  await polling.poll({ shouldStop: () => stopped })
+  try { await polling.poll({ shouldStop: () => stopped }) }
+  finally { await rm(directory, { recursive: true, force: true }) }
   await observeWatermark
   await wait(0)
   assert.ok(starts.get("fast one") < 100, JSON.stringify(Object.fromEntries(starts)))
   assert.ok(starts.get("fast two") - starts.get("fast one") >= 90, JSON.stringify(Object.fromEntries(starts)))
   assert.ok(starts.get("slow two") >= 200, JSON.stringify(Object.fromEntries(starts)))
-  assert.equal(offsetWhileSlow, undefined)
-  assert.equal(state.data.runtime.telegramUpdateOffset, 5)
+  assert.equal(offsetWhileSlow, 5)
+  assert.equal(requestedOffset, 5)
 }
 
 function smokeNestedRichListNormalization() {

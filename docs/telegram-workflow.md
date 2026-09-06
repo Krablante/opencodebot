@@ -296,17 +296,31 @@ clamps download size to Telegram's cloud limit; local Bot API mode can accept la
 
 ## Telegram update isolation
 
-Each received batch preserves strict order inside one chat/topic and handles different topics concurrently. Active
-bindings allow at most two handlers per OpenCodez server; unbound/control work uses a separate group. Telegram returns
-at most 100 updates per batch. The next fetch waits for the current batch to settle, so a slow handler can delay fetching
-later updates, but not independent handlers already received in that batch. There is no extra durable inbox.
+Topics are processed independently, including messages that arrive in later Telegram batches. A slow transcription or
+file upload does not hold up the next fetch. Each chat/topic keeps its input order; up to two handlers run per OpenCodez
+server. Control work, speech, and artifact dropbox uploads have separate two-handler groups, so long speech/file work
+does not occupy the control-menu slots. Work sharing a saturated group still waits for a slot. First-chat bootstrap is
+serialized until its initial handlers finish.
 
-`getUpdates(offset)` acknowledges updates at Telegram itself. The bot therefore uses only the persisted completed prefix
-for its next fetch, never the cursor of merely fetched work. Failed updates without delivered error feedback remain
-unacknowledged; already completed updates in the same in-memory batch are not dispatched twice. Shutdown cancels polling
-and network work, leaves unfinished handlers unacknowledged, and flushes deferred state. A crash after an external side
-effect but before its checkpoint can still replay that operation; this is not an exactly-once delivery promise. The
-documented memory-only `/q`, speech and multipart buffers still disappear on restart after their input was accepted.
+`getUpdates(offset)` acknowledges earlier events at Telegram itself. Before advancing that cursor, the bot saves the
+received events and cursor together in a synced local inbox journal. It then immediately continues polling while topic
+handlers work. Successful handlers retire their events individually, including out-of-order completion across topics.
+An action that failed but delivered an error notice is also finished; an error without delivered feedback retries in its
+own topic with backoff from 2.5 to 30 seconds, releasing its group slot between attempts. Later input in that topic waits
+behind the retry, while other topics continue.
+
+The inbox has a 1,000-event limit and a 16 MiB pending-payload threshold. Telegram returns at most 100 events per fetch,
+further limited by the remaining event capacity; the byte threshold may be exceeded by that final fetched batch. At
+capacity, intake pauses and Telegram retains subsequent events until there is room. This is overload backpressure, not
+a barrier after every batch. Startup, retry, and capacity transitions are logged without message contents; `health:live`
+reports pending event count, bytes, and any capacity pause through the existing health snapshot.
+
+Shutdown cancels polling and API work; unfinished inbox events survive and resume in topic order on restart. A crash
+after an external side effect but before its completion record can still replay that action: this is not an exactly-once
+delivery promise. The inbox covers input-handler lifetime, not downstream memory-only queues. Once an event has been
+handed to `/q`, multipart/attachment or media-group buffering, or an internal speech queue, those existing buffers still
+have their documented restart limits. Inbox storage, migration, and recovery are described in
+[Config And Runtime](config-runtime.md#paths-and-state).
 
 ## Queue
 
