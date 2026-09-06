@@ -17,7 +17,8 @@ The bot expects a forum-enabled Telegram chat when topic creation is used. A top
 `/new`, or autocreated for web-created OpenCodez sessions discovered through events or bounded reconcile. When the first
 prompt materializes a `/new` topic, its new OpenCodez session is bound to that Telegram topic before profile
 model/System settings are applied; setup events therefore cannot be mistaken for an unbound web session and create a
-second forum topic.
+second forum topic. Until both settings succeed, the binding keeps its unfinished launch profile. A failed setup sends
+no prompt and reports the error; resending retries setup in the same session, including after a bot restart.
 
 Short-lived vision sessions whose exact normalized OpenCodez title is `opencode-see delegate` are internal and ignored
 on every configured server. They do not create Telegram topics, bindings, pending-topic records, seen markers, or
@@ -295,21 +296,22 @@ clamps download size to Telegram's cloud limit; local Bot API mode can accept la
 
 ## Telegram update isolation
 
-Incoming updates preserve strict order inside one chat/topic but different topics are dispatched independently. Active
-bindings are grouped by OpenCodez server with at most two update handlers running per server, so a slow or overloaded
-host can delay only its own work. Unbound/control updates use a separate Telegram group. The dispatcher allows at most
-100 unfinished updates and 1,000 fetched-but-not-yet-committed updates; these are fixed safety bounds rather than runtime
-knobs.
+Each received batch preserves strict order inside one chat/topic and handles different topics concurrently. Active
+bindings allow at most two handlers per OpenCodez server; unbound/control work uses a separate group. Telegram returns
+at most 100 updates per batch. The next fetch waits for the current batch to settle, so a slow handler can delay fetching
+later updates, but not independent handlers already received in that batch. There is no extra durable inbox.
 
-The in-memory fetch cursor may advance while handlers run, but `telegramUpdateOffset` is persisted only through the
-contiguous completed prefix. A restart therefore replays unfinished work instead of losing it; as before, a crash after
-an external side effect but before offset persistence may replay that update. Existing command, marker, and binding
-idempotency remains authoritative. Outbound OpenCodez SSE streams are already independent per server and do not use this
-input dispatcher.
+`getUpdates(offset)` acknowledges updates at Telegram itself. The bot therefore uses only the persisted completed prefix
+for its next fetch, never the cursor of merely fetched work. Failed updates without delivered error feedback remain
+unacknowledged; already completed updates in the same in-memory batch are not dispatched twice. Shutdown cancels polling
+and network work, leaves unfinished handlers unacknowledged, and flushes deferred state. A crash after an external side
+effect but before its checkpoint can still replay that operation; this is not an exactly-once delivery promise. The
+documented memory-only `/q`, speech and multipart buffers still disappear on restart after their input was accepted.
 
 ## Queue
 
-`/q <prompt>` sends immediately when the bound OpenCodez session is idle. If the session is busy, the prompt is kept in
+`/q <prompt>` checks authoritative OpenCodez status on admission, including after a bot restart. It sends immediately when
+the bound session is idle and its local terminal-mirror gate is clear. If the session is busy, the prompt is kept in
 memory for that session. The same rule applies to a file or media group whose caption starts with `/q`: the prompt text
 and downloaded attachments stay together in the queue and are sent as one prompt after the current run finishes.
 
@@ -321,7 +323,11 @@ checks authoritative backend status while a queue is non-empty, so a missed idle
 waiting indefinitely. Duplicate idle events and reconcile passes are idempotent and cannot release multiple prompts. If
 OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and
 lists the cleared items by number plus the same first-words summary used by `/q status`. A service restart drops queued
-prompts instead of writing full user prompts into `state.json`.
+prompts instead of writing full user prompts into `state.json`. Standard `session.error` and step-failure events share
+the same queue-clearing behavior. While a bot-initiated `/compact` request is in flight, ordinary text and `/q` both wait
+behind its explicit queue hold, even if a terminal or idle event arrives before the summarize request returns.
+Kill, reset, and rewind cancel that same in-memory compaction operation, preventing its late completion from releasing
+or changing the queue state of a replacement run.
 
 The bot observes a new `message.updated` user message as the practical start of a run; `session.next.prompted` remains
 supported but is not required because classic OpenCodez prompt flows do not reliably emit it. On every bound-session
@@ -480,7 +486,10 @@ only announce the spawn event with the web-visible task title.
 
 ## Reconcile
 
-Live SSE is the primary path. Global mirroring consumes OpenCodez's aggregate `/global/event` endpoint through one
+Live SSE is the primary path. Session discovery uses the cursor-paged `/experimental/session` list of root sessions:
+global scope spans projects, while server-home scope supplies the configured home directory. Startup seeds historical
+sessions without replaying them; a host that cannot initialize is retried by the existing loop without terminating
+recovery for the other hosts. Global mirroring consumes OpenCodez's aggregate `/global/event` endpoint through one
 connection per configured server; `serverHome` mode keeps the workspace-scoped `/event` endpoint. Reconcile is a narrow
 fallback, not an unbounded historical backfill. A Telegram prompt, a freshly autocreated web topic, or a live web prompt
 opens a bounded reconcile window for that binding and ends any startup users-only catch-up mode, because assistant

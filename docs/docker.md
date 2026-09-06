@@ -2,7 +2,7 @@
 
 Docker Compose is the recommended deployment path for most people. It keeps the bot as one long-running process with local config and state mounted from the project directory. OpenCodez does not need to be in Docker.
 
-You need Node.js 18 or newer for helper scripts such as `npm run init-config`, plus Docker Compose for the runtime container.
+You need Node.js 22 or newer for helper scripts such as `npm run init-config`, plus Docker Compose for the runtime container.
 
 ## Files
 
@@ -206,7 +206,8 @@ npm run deploy:bot
 ```
 
 `deploy:bot` is cross-platform, refuses a dirty checkout, labels the image with the exact Git revision, runs checks,
-recreates only opencodebot, and finishes with live smoke. Use `npm run deploy:all` when Compose services or the Telegram
+recreates only opencodebot, and finishes with `health:live`. This checks the actual process and both main loops, not just
+container existence; an unavailable required backend fails deployment verification. Use `npm run deploy:all` when Compose services or the Telegram
 Bot API sidecar itself changed; it preserves the same revision metadata while rebuilding the full project.
 
 For approved Telegram-button updates on the Linux Compose host, install the user-level request watcher once:

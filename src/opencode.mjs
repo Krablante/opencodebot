@@ -1,4 +1,5 @@
 import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
+import { withRequestTimeout } from "./request-timeout.mjs"
 
 export const OPENCODE_REQUEST_TIMEOUT_MS = 120_000
 
@@ -20,8 +21,9 @@ export function isOpenCodeSessionNotFound(error, sessionID) {
 }
 
 export class OpenCodeClient {
-  constructor(config) {
+  constructor(config, { signal } = {}) {
     this.config = config
+    this.signal = signal
     this.servers = new Map(config.opencode.servers.map((server) => [server.id, server]))
   }
 
@@ -33,6 +35,24 @@ export class OpenCodeClient {
 
   async listSessions(serverID, options = {}) {
     const server = this.server(serverID)
+    if (options.mirror) {
+      const sessions = new Map()
+      const cursors = new Set()
+      let cursor
+      do {
+        const page = await this.request(server, "/experimental/session", this.requestOptions(server, {
+          ...options,
+          includeHeaders: true,
+          query: { roots: true, limit: options.limit || 100, start: options.start, cursor },
+        }))
+        for (const session of page.data) sessions.set(session.id, session)
+        cursor = page.headers.get("x-next-cursor") || undefined
+        if (options.limit || !cursor) break
+        if (cursors.has(cursor)) throw new Error(`OpenCodez ${serverID} repeated its session-list cursor`)
+        cursors.add(cursor)
+      } while (cursor)
+      return [...sessions.values()]
+    }
     return this.request(server, "/session", this.requestOptions(server, {
       ...options,
       query: {
@@ -129,7 +149,7 @@ export class OpenCodeClient {
     return this.request(this.server(serverID), "/session/status", options)
   }
 
-  async summarizeSession(serverID, sessionID, { directory = "", model, timeoutMs = 15 * 60_000 } = {}) {
+  async summarizeSession(serverID, sessionID, { directory = "", model, timeoutMs = 21 * 60_000 } = {}) {
     if (!model?.providerID || !model?.modelID) throw new Error("OpenCode session compaction requires providerID and modelID")
     return this.request(this.server(serverID), `/session/${encodeURIComponent(sessionID)}/summarize`, {
       method: "POST",
@@ -148,9 +168,9 @@ export class OpenCodeClient {
     const intervalMs = options.intervalMs || 400
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
-      const status = await this.sessionStatus(serverID, sessionID, options)
+      const status = await this.sessionStatus(serverID, sessionID, { ...options, timeoutMs: Math.max(1, deadline - Date.now()) })
       if (status.type === "idle") return
-      await delay(intervalMs, options.signal)
+      await delay(Math.min(intervalMs, Math.max(0, deadline - Date.now())), options.signal || this.signal)
     }
     throw new Error("OpenCodez session did not become idle before undo timed out")
   }
@@ -184,23 +204,25 @@ export class OpenCodeClient {
     if (options.body !== undefined) headers["content-type"] = "application/json"
     const auth = this.authHeader()
     if (auth) headers.authorization = auth
-    const response = await fetchWithTimeout(url, {
-      method: options.method || "GET",
-      headers,
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-      signal: options.signal,
-      timeoutMs: options.timeoutMs,
-    }, OPENCODE_REQUEST_TIMEOUT_MS, `OpenCodez ${server.id} ${pathname}`)
-    if (!response.ok) {
-      const text = await response.text().catch(() => "")
-      throw new OpenCodeHttpError({ serverID: server.id, pathname, status: response.status, detail: text.slice(0, 200) })
-    }
-    if (response.status === 204) return options.includeHeaders ? { data: null, headers: response.headers } : null
-    const contentType = response.headers.get("content-type") || ""
-    const data = contentType.includes("application/json")
-      ? await response.json()
-      : await response.text().then((text) => text ? JSON.parse(text) : null)
-    return options.includeHeaders ? { data, headers: response.headers } : data
+    const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : OPENCODE_REQUEST_TIMEOUT_MS
+    return withRequestTimeout({ timeoutMs, signal: options.signal || this.signal }, async (signal) => {
+      const response = await fetch(url, {
+        method: options.method || "GET",
+        headers,
+        body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+        signal,
+      })
+      if (!response.ok) {
+        const text = await response.text().catch(() => "")
+        throw new OpenCodeHttpError({ serverID: server.id, pathname, status: response.status, detail: text.slice(0, 200) })
+      }
+      if (response.status === 204) return options.includeHeaders ? { data: null, headers: response.headers } : null
+      const contentType = response.headers.get("content-type") || ""
+      const data = contentType.includes("application/json")
+        ? await response.json()
+        : await response.text().then((text) => text ? JSON.parse(text) : null)
+      return options.includeHeaders ? { data, headers: response.headers } : data
+    }, `OpenCodez ${server.id} ${pathname}`)
   }
 
   async subscribeEvents(serverID, onEvent, signal, { onConnected } = {}) {
@@ -211,12 +233,18 @@ export class OpenCodeClient {
     let offlineSince = 0
     let lastOfflineLogAt = 0
     while (!signal?.aborted) {
+      const connection = new AbortController()
+      const onAbort = () => connection.abort(signal.reason)
+      signal?.addEventListener("abort", onAbort, { once: true })
+      if (signal?.aborted) onAbort()
+      const timer = setTimeout(() => connection.abort(new Error("Event stream connection timed out")), OPENCODE_REQUEST_TIMEOUT_MS)
       try {
         const url = this.url(server, eventPath, requestOptions)
         const headers = {}
         const auth = this.authHeader()
         if (auth) headers.authorization = auth
-        const response = await fetch(url, { headers, signal })
+        const response = await fetch(url, { headers, signal: connection.signal })
+        clearTimeout(timer)
         if (!response.ok || !response.body) throw new Error(`event stream failed: ${response.status}`)
         const reconnected = Boolean(offlineSince)
         if (reconnected) console.info(`[opencodebot] ${serverID} event stream recovered`)
@@ -230,7 +258,7 @@ export class OpenCodeClient {
             console.warn(`[opencodebot] ${serverID} event stream connected recovery failed: ${error.message}`)
           }
         }
-        await readSse(response.body, (event) => onEvent(server, normalizeEventStreamEvent(event)), signal)
+        await readSse(response.body, (event) => onEvent(server, normalizeEventStreamEvent(event)), connection)
         if (!signal?.aborted) throw new Error("event stream closed")
       } catch (error) {
         if (signal?.aborted) return
@@ -243,6 +271,10 @@ export class OpenCodeClient {
         }
         await delay(retryDelayMs, signal)
         retryDelayMs = Math.min(retryDelayMs * 2, 120_000)
+      } finally {
+        clearTimeout(timer)
+        signal?.removeEventListener("abort", onAbort)
+        connection.abort()
       }
     }
   }
@@ -419,12 +451,16 @@ function normalizeModel(model) {
   }
 }
 
-async function readSse(body, onEvent, signal) {
+async function readSse(body, onEvent, connection) {
+  const signal = connection.signal
   const decoder = new TextDecoder()
   const reader = body.getReader()
   let buffer = ""
   while (!signal?.aborted) {
-    const { value, done } = await reader.read()
+    // The backend sends heartbeats. Bound only the wait for bytes, not the
+    // ordered event handler, which may legitimately wait for Telegram.
+    const timer = setTimeout(() => connection.abort(new Error("Event stream heartbeat timed out")), OPENCODE_REQUEST_TIMEOUT_MS)
+    const { value, done } = await reader.read().finally(() => clearTimeout(timer))
     if (done) break
     buffer += decoder.decode(value, { stream: true })
     let boundary
@@ -453,25 +489,6 @@ async function readSse(body, onEvent, signal) {
         if (shouldLogSlow(elapsedMs)) logInfo("opencode.event.handler.slow", { type: event.type, durationMs: elapsedMs })
       }
     }
-  }
-}
-
-async function fetchWithTimeout(url, options, defaultTimeoutMs, label) {
-  const timeoutMs = Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : defaultTimeoutMs
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(new Error(`${label} timed out after ${formatDuration(timeoutMs)}`)), timeoutMs)
-  const onAbort = () => controller.abort(options.signal?.reason)
-  if (options.signal?.aborted) onAbort()
-  else options.signal?.addEventListener("abort", onAbort, { once: true })
-  try {
-    const { timeoutMs: _timeoutMs, signal: _signal, ...fetchOptions } = options
-    return await fetch(url, { ...fetchOptions, signal: controller.signal })
-  } catch (error) {
-    if (controller.signal.aborted && !options.signal?.aborted) throw new Error(`${label} timed out after ${formatDuration(timeoutMs)}`, { cause: error })
-    throw error
-  } finally {
-    clearTimeout(timeout)
-    options.signal?.removeEventListener?.("abort", onAbort)
   }
 }
 

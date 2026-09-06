@@ -32,8 +32,10 @@ The panel labels shared and personal state explicitly:
 - `Sessions` lists the twelve most recently active bindings and links to their Telegram topics. Destructive session
   actions are intentionally not offered from General.
 
-Running/idle state comes from each OpenCodez server's `/session/status` endpoint, not from the local Telegram prompt
-queue or an external monitor. The local queue is used only if a server is unreachable. `session.status` and
+Running/idle state comes from `/session/status` in the active bindings' working directories, not from an unscoped
+host-level request. Calls are coalesced while a snapshot is in flight and use the same backend backoff as recovery.
+Unavailable hosts are displayed as having no connection rather than idle; repeated automatic refreshes do not bypass
+backoff. The local queue remains only a fallback for aggregate counts. `session.status` and
 `session.idle` events trigger one debounced refresh of the visible Home or Sessions page, while the Refresh button always
 performs a fresh on-demand lookup.
 

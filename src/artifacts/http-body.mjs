@@ -2,10 +2,18 @@ import { randomUUID } from "node:crypto"
 import { createWriteStream } from "node:fs"
 import fsp from "node:fs/promises"
 import path from "node:path"
-import { once } from "node:events"
+import { Transform } from "node:stream"
+import { pipeline } from "node:stream/promises"
 
 import { publicError } from "./errors.mjs"
 import { safeContentType, safeFilename } from "./formatting.mjs"
+
+// Ownership is process-local, never a field an HTTP client can supply.
+const spools = new WeakMap()
+
+export function isStreamPayload(payload) {
+  return spools.has(payload)
+}
 
 export async function readJsonBody(request, maxBytes) {
   const chunks = []
@@ -42,11 +50,12 @@ export async function readFileStreamBody(request, config) {
   try {
     size = await writeLimitedStream({ input: request, localPath, maxBytes: config.artifacts.maxFileBytes })
     if (size) {
-      return {
+      const payload = {
         ...metadata,
-        _stream: true,
-        file: { localPath, localDir, size, filename, contentType },
+        file: { localPath, size, filename, contentType },
       }
+      spools.set(payload, localDir)
+      return payload
     }
   } catch (error) {
     await fsp.rm(localDir, { recursive: true, force: true })
@@ -57,11 +66,10 @@ export async function readFileStreamBody(request, config) {
 }
 
 export async function cleanupPayloadSpool(payload) {
-  if (!payload?._stream || !payload.file?.localPath) return
-  await fsp.rm(payload.file.localPath, { force: true })
-  if (payload.file.localDir) {
-    await fsp.rm(payload.file.localDir, { recursive: true, force: true })
-  }
+  const localDir = spools.get(payload)
+  if (!localDir) return
+  await fsp.rm(localDir, { recursive: true, force: true })
+  spools.delete(payload)
 }
 
 function readStreamMetadata(request) {
@@ -78,13 +86,14 @@ async function writeLimitedStream({ input, localPath, maxBytes }) {
   const output = createWriteStream(localPath, { flags: "wx", mode: 0o644 })
   let total = 0
   try {
-    for await (const chunk of input) {
-      total += chunk.length
-      if (total > maxBytes) throw publicError("file_too_large", `File is too large; max ${maxBytes} bytes.`, 413)
-      if (!output.write(chunk)) await once(output, "drain")
-    }
-    output.end()
-    await once(output, "finish")
+    await pipeline(input, new Transform({
+      transform(chunk, _encoding, callback) {
+        total += chunk.length
+        callback(total > maxBytes
+          ? publicError("file_too_large", `File is too large; max ${maxBytes} bytes.`, 413)
+          : null, chunk)
+      },
+    }), output)
     return total
   } catch (error) {
     output.destroy()

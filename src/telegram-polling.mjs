@@ -25,7 +25,6 @@ export function createTelegramPolling({
   flushPromptKey,
   logError,
   maxPendingUpdates = 100,
-  maxUncommittedUpdates = 1_000,
   maxConcurrentUpdatesPerGroup = 2,
   slowUpdateMs = 5_000,
 }) {
@@ -52,7 +51,7 @@ export function createTelegramPolling({
     return scopes
   }
 
-  async function poll({ shouldStop }) {
+  async function poll({ shouldStop, signal, onProgress = () => {} }) {
     let offset = state.data.runtime.telegramUpdateOffset || undefined
     const dispatcher = createUpdateDispatcher({
       state,
@@ -61,18 +60,25 @@ export function createTelegramPolling({
       persistOffset,
       logError,
       maxPendingUpdates,
-      maxUncommittedUpdates,
       maxConcurrentUpdatesPerGroup,
       slowUpdateMs,
+      signal,
     })
     while (!shouldStop()) {
       try {
-        const updates = await telegram.getUpdates(offset, 25)
+        const updates = await telegram.getUpdates(offset, 25, { signal })
+        onProgress()
         for (const update of updates) {
+          if (shouldStop()) break
           await dispatcher.waitForCapacity()
-          offset = update.update_id + 1
-          dispatcher.enqueue(update, offset)
+          dispatcher.enqueue(update, update.update_id + 1)
         }
+        // getUpdates(offset) acknowledges updates at Telegram itself. Never use
+        // the fetched cursor until every handler in this batch has settled.
+        const unfinished = await dispatcher.drain()
+        offset = state.data.runtime.telegramUpdateOffset || offset
+        onProgress()
+        if (unfinished && !shouldStop()) await delay(2500)
       } catch (error) {
         if (shouldStop()) break
         logError(error)
@@ -82,13 +88,24 @@ export function createTelegramPolling({
   }
 
   async function handleUpdate(update) {
-    if (update.callback_query) await handleCallbackQuery(update.callback_query)
-    if (update.message) await handleTelegramMessage(update.message)
+    try {
+      if (update.callback_query) await handleCallbackQuery(update.callback_query)
+      if (update.message) await handleTelegramMessage(update.message)
+    } catch (error) {
+      const message = update.message || update.callback_query?.message
+      const actor = update.callback_query?.from || message?.from
+      const chatId = state.chatId || config.telegram.chatId
+      if (!error.feedbackReported && message && isAllowedMessage({ from: actor }, config)
+        && String(chatId) === String(message.chat?.id)) {
+        await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("polling.actionFailed") })
+          .then(() => { error.feedbackReported = true }, () => {})
+      }
+      throw error
+    }
   }
 
   async function persistOffset(offset) {
     await state.update((data) => {
-      if (data.runtime.telegramUpdateOffset === offset) return false
       data.runtime.telegramUpdateOffset = offset
       return true
     })
@@ -245,37 +262,45 @@ function createUpdateDispatcher({
   persistOffset,
   logError,
   maxPendingUpdates,
-  maxUncommittedUpdates,
   maxConcurrentUpdatesPerGroup,
   slowUpdateMs,
+  signal,
 }) {
   const acknowledgements = []
   const lanes = new Map()
   const capacityWaiters = []
   const semaphore = createKeyedSemaphore(maxConcurrentUpdatesPerGroup)
-  let persistRunning = false
+  let persistRunning = null
   let unfinishedUpdates = 0
 
   async function waitForCapacity() {
-    while (unfinishedUpdates >= maxPendingUpdates || acknowledgements.length >= maxUncommittedUpdates) {
+    while (unfinishedUpdates >= maxPendingUpdates) {
       await new Promise((resolve) => capacityWaiters.push(resolve))
     }
   }
 
   function enqueue(update, offset) {
     const routing = updateRouting(update, state, config)
-    const acknowledgement = { offset, done: false }
-    acknowledgements.push(acknowledgement)
+    const existing = acknowledgements.find((item) => item.offset === offset)
+    if (existing?.done) return
+    const acknowledgement = existing || { offset, done: false }
+    if (!existing) acknowledgements.push(acknowledgement)
     unfinishedUpdates += 1
+    let completed = false
 
     const previous = lanes.get(routing.lane) || Promise.resolve()
     const task = previous.then(async () => {
+      if (signal?.aborted) return
       const release = await semaphore.acquire(routing.group)
       const startedAt = Date.now()
       try {
-        await handleUpdate(update)
+        if (!signal?.aborted) {
+          await handleUpdate(update)
+          completed = true
+        }
       } catch (error) {
         logError(error)
+        completed = error.feedbackReported === true
       } finally {
         release()
         const durationMs = Date.now() - startedAt
@@ -290,7 +315,7 @@ function createUpdateDispatcher({
       }
     })
     const settled = task.catch(logError).finally(() => {
-      acknowledgement.done = true
+      acknowledgement.done = completed && !signal?.aborted
       unfinishedUpdates -= 1
       while (capacityWaiters.length) capacityWaiters.shift()()
       if (lanes.get(routing.lane) === settled) lanes.delete(routing.lane)
@@ -299,10 +324,15 @@ function createUpdateDispatcher({
     lanes.set(routing.lane, settled)
   }
 
-  async function persistCompletedPrefix() {
-    if (persistRunning) return
-    persistRunning = true
-    try {
+  async function drain() {
+    await Promise.all([...lanes.values()])
+    await persistCompletedPrefix()
+    return acknowledgements.some((item) => !item.done)
+  }
+
+  function persistCompletedPrefix() {
+    if (persistRunning) return persistRunning
+    persistRunning = (async () => {
       while (true) {
         let completed = 0
         let offset
@@ -315,19 +345,18 @@ function createUpdateDispatcher({
           await persistOffset(offset)
         } catch (error) {
           logError(error)
+          if (signal?.aborted) return
           await delay(2500)
           continue
         }
         acknowledgements.splice(0, completed)
         while (capacityWaiters.length) capacityWaiters.shift()()
       }
-    } finally {
-      persistRunning = false
-      if (acknowledgements[0]?.done) void persistCompletedPrefix()
-    }
+    })().finally(() => { persistRunning = null })
+    return persistRunning
   }
 
-  return { enqueue, waitForCapacity }
+  return { enqueue, waitForCapacity, drain }
 }
 
 function updateRouting(update, state, config) {

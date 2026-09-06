@@ -1,6 +1,7 @@
 import { getLanguage, t } from "./i18n/index.mjs"
 import { logErrorEvent, logInfo, logWarn } from "./logger.mjs"
 import { escapeHtml, telegramMessageLink, topicId } from "./telegram.mjs"
+import { createBackendRequester } from "./backend-backoff.mjs"
 
 const CALLBACK_PREFIX = "panel:"
 const INPUT_TTL_MS = 5 * 60 * 1000
@@ -10,7 +11,7 @@ const MIN_LENGTH_OPTIONS = [0, 200, 300, 500, 1000, 2000]
 const SESSION_STATUS_TIMEOUT_MS = 3000
 
 export class ControlMenu {
-  constructor({ config, state, telegram, opencode, promptQueue, finalVoice, createSession, refreshCommandMenu }) {
+  constructor({ config, state, telegram, opencode, promptQueue, finalVoice, createSession, refreshCommandMenu, backendRequester = createBackendRequester() }) {
     this.config = config
     this.state = state
     this.telegram = telegram
@@ -23,6 +24,8 @@ export class ControlMenu {
     this.currentPage = "home"
     this.currentActor = null
     this.statusRefreshTimer = null
+    this.backendRequester = backendRequester
+    this.statusSnapshotPromise = null
   }
 
   async start() {
@@ -305,6 +308,7 @@ export class ControlMenu {
     const current = this.state.controlMenuMessage()
     if (!current) return this.ensureMenu(page, actor)
     const rendered = await this.render(page, actor)
+    if (this.currentPage !== page || this.currentActor !== (actor || null)) return null
     try {
       return await this.telegram.editMessageText({
         chatId: current.chatId,
@@ -346,7 +350,9 @@ export class ControlMenu {
     const text = [
       t("controlMenu.title"),
       "",
-      t("controlMenu.home.healthy"),
+      sessionSnapshot?.failedServers.size
+        ? t("controlMenu.hostsUnavailable", { servers: escapeHtml([...sessionSnapshot.failedServers].join(", ")) })
+        : t("controlMenu.home.healthy"),
       t("controlMenu.home.sessions", { busy, queued }),
       t("controlMenu.home.voice", { value: this.stateLabel(voiceEnabled) }),
       t("controlMenu.home.mirror", { value: this.stateLabel(mirrorEnabled), mode: this.state.mirrorMode() }),
@@ -369,11 +375,13 @@ export class ControlMenu {
     if (!visible.length) lines.push(t("controlMenu.sessions.empty"))
     for (const binding of visible) {
       const queued = this.promptQueue.status(binding).length
-      const status = this.sessionIsBusy(binding, sessionSnapshot)
-        ? t("controlMenu.sessions.busy")
-        : queued
-          ? t("controlMenu.sessions.queued", { count: queued })
-          : t("controlMenu.sessions.idle")
+      const status = sessionSnapshot?.failedServers.has(binding.serverID)
+        ? t("controlMenu.sessions.offline")
+        : this.sessionIsBusy(binding, sessionSnapshot)
+          ? t("controlMenu.sessions.busy")
+          : queued
+            ? t("controlMenu.sessions.queued", { count: queued })
+            : t("controlMenu.sessions.idle")
       lines.push(t("controlMenu.sessions.item", {
         title: escapeHtml(bindingTitle(binding)),
         server: escapeHtml(binding.serverID || "?"),
@@ -536,14 +544,26 @@ export class ControlMenu {
       ))
   }
 
-  async sessionStatusSnapshot() {
-    const serverIDs = [...new Set(this.activeBindings().map((binding) => binding.serverID).filter(Boolean))]
+  sessionStatusSnapshot() {
+    this.statusSnapshotPromise ||= this.loadSessionStatusSnapshot().finally(() => { this.statusSnapshotPromise = null })
+    return this.statusSnapshotPromise
+  }
+
+  async loadSessionStatusSnapshot() {
+    const groups = Map.groupBy(this.activeBindings(), (binding) => binding.serverID)
     const statuses = new Map()
     const failedServers = new Set()
-    await Promise.all(serverIDs.map(async (serverID) => {
+    await Promise.all([...groups].map(async ([serverID, bindings]) => {
       try {
-        const result = await this.opencode.sessionStatuses(serverID, { timeoutMs: SESSION_STATUS_TIMEOUT_MS })
-        for (const [sessionID, status] of Object.entries(result || {})) statuses.set(`${serverID}:${sessionID}`, status)
+        for (const directory of new Set(bindings.map((binding) => binding.directory || this.opencode.server(serverID).home))) {
+          const result = await this.backendRequester.request(serverID, "control menu status", () =>
+            this.opencode.sessionStatuses(serverID, { directory, timeoutMs: SESSION_STATUS_TIMEOUT_MS }))
+          if (result === this.backendRequester.skipped) {
+            failedServers.add(serverID)
+            break
+          }
+          for (const [sessionID, status] of Object.entries(result || {})) statuses.set(`${serverID}:${sessionID}`, status)
+        }
       } catch (error) {
         failedServers.add(serverID)
         logWarn("control_menu.session_status.failed", { serverID, error: error.message })
@@ -553,9 +573,9 @@ export class ControlMenu {
   }
 
   sessionIsBusy(binding, snapshot) {
-    if (!snapshot || snapshot.failedServers.has(binding.serverID)) return this.promptQueue.isBusy(binding)
-    const status = snapshot.statuses.get(`${binding.serverID}:${binding.sessionID}`)
-    return status ? status.type !== "idle" : false
+    const status = snapshot?.statuses.get(`${binding.serverID}:${binding.sessionID}`)
+    if (status) return status.type !== "idle"
+    return !snapshot || snapshot.failedServers.has(binding.serverID) ? this.promptQueue.isBusy(binding) : false
   }
 
   scheduleStatusRefresh() {

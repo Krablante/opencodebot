@@ -33,6 +33,7 @@ export function createSessionReconciler({
   logError,
   shouldStop,
   onSessionStatusChange = () => {},
+  onProgress = () => {},
   incompleteRunGraceMs = 1500,
   initialMessagePageSize = 5,
   messagePageSize = 20,
@@ -60,6 +61,9 @@ export function createSessionReconciler({
   const compactionReplayRoots = new Map()
   const activeLogicalTurns = new Map()
   const retryStatuses = new Map()
+  const pendingSeeds = new Set()
+  const seedFailures = new Set()
+  const startedAt = Date.now()
 
   function activeBinding(binding) {
     const current = state.findBinding(binding.serverID, binding.sessionID)
@@ -257,38 +261,19 @@ export function createSessionReconciler({
           onSessionStatusChange(binding, { type: "idle" })
           break
         case "session.next.step.failed":
-          await clearRetryStatus(binding, { clearFeedback: true })
-          clearRunCheck(binding)
-          await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
-          if (manualCompaction) {
-            clearManualCompaction(binding, "step-failed")
-            if (promptQueue.hasExpectedStop(binding)) break
-            promptQueue.markSendFailed(binding)
-            break
-          }
-          if (promptQueue.hasExpectedStop(binding)) break
-          {
-            const failure = await notifyRunFailed(binding, properties, promptQueue.clear(binding))
-            await notifyRunAlert(binding, {
-              kind: "error",
-              properties,
-              detail: failure.errorText || t("sessionError.runFailed"),
-              topicMessageId: failure.message?.message_id,
-            })
-          }
-          break
         case "session.error":
           await clearRetryStatus(binding, { clearFeedback: true })
           clearRunCheck(binding)
+          if (properties.assistantMessageID) await state.markAssistantMirrored(server.id, sessionID, properties.assistantMessageID)
           if (manualCompaction) {
-            clearManualCompaction(binding, "session-error")
+            clearManualCompaction(binding, event.type)
             if (promptQueue.hasExpectedStop(binding)) break
             promptQueue.markSendFailed(binding)
             break
           }
           if (promptQueue.hasExpectedStop(binding)) break
           {
-            const failure = await notifySessionError(binding, properties)
+            const failure = await notifySessionError(binding, properties, promptQueue.clear(binding))
             await notifyRunAlert(binding, {
               kind: "error",
               properties,
@@ -844,9 +829,11 @@ export function createSessionReconciler({
   async function reconcileLoop() {
     if (config.reconcile.enabled === false) return
     await seedExistingSessions()
+    onProgress()
     while (!shouldStop()) {
       await delay(config.reconcile.intervalMs).catch(() => {})
       if (shouldStop()) break
+      onProgress()
       if (questionManager?.reconcile) await questionManager.reconcile().catch(logError)
       if (!state.mirrorEnabled(config)) continue
       await reconcileSessions().catch(logError)
@@ -865,6 +852,7 @@ export function createSessionReconciler({
           }
         }
       }))
+      onProgress()
     }
   }
 
@@ -906,18 +894,29 @@ export function createSessionReconciler({
   }
 
   async function seedExistingSessions() {
-    const batches = await Promise.all(config.opencode.servers.map(async (server) => {
+    await Promise.all(config.opencode.servers.map(seedServer))
+  }
+
+  async function seedServer(server) {
+    pendingSeeds.add(server.id)
+    try {
       const sessions = await backendRequest(server.id, "seed sessions", () => opencode.listSessions(server.id, { mirror: true }))
-      if (sessions === skippedBackendRequest) return []
+      if (sessions === skippedBackendRequest) return skippedBackendRequest
       await removeMissingBindingsAbsentFromList(server, sessions)
       rememberSessionScanWatermark(server.id, sessions)
       const visible = sessions.filter((session) => !isIgnoredSession(session))
       for (const session of visible) observedSessionUpdates.set(`${server.id}:${session.id}`, sessionUpdatedMs(session))
-      return visible.map((session) => [server.id, session.id])
-    }))
-    const seen = batches.flat()
-    const seeded = await state.seedSeenSessions(seen)
-    if (seeded) console.log(`[opencodebot] seeded ${seeded} existing OpenCodez sessions`)
+      await state.seedSeenSessions(visible.filter((session) => Number(session.time?.created || 0) <= startedAt).map((session) => [server.id, session.id]))
+      pendingSeeds.delete(server.id)
+      seedFailures.delete(server.id)
+      return sessions
+    } catch (error) {
+      if (!seedFailures.has(server.id)) logError(error)
+      seedFailures.add(server.id)
+      return skippedBackendRequest
+    } finally {
+      onProgress()
+    }
   }
 
   async function removeMissingBindingsAbsentFromList(server, sessions) {
@@ -930,6 +929,10 @@ export function createSessionReconciler({
           directory: binding.directory,
         }))
         if (session === skippedBackendRequest) break
+        if (isInternalSession(session)) {
+          await state.disableBinding(binding.serverID, binding.sessionID, "internal session")
+          detachBinding(binding)
+        }
       } catch (error) {
         if (!isOpenCodeSessionNotFound(error, binding.sessionID)) throw error
         await removeMissingSessionBinding(binding, "startup-verification")
@@ -943,10 +946,10 @@ export function createSessionReconciler({
     await Promise.all(config.opencode.servers.map(async (server) => {
       const watermark = sessionScanWatermarks.get(server.id)
       const start = Number.isFinite(watermark) ? Math.max(0, watermark - sessionScanOverlapMs) : undefined
-      const sessions = await backendRequest(server.id, "list sessions", () => opencode.listSessions(server.id, {
+      const sessions = !pendingSeeds.has(server.id) ? await backendRequest(server.id, "list sessions", () => opencode.listSessions(server.id, {
         mirror: true,
         start,
-      }))
+      })) : await seedServer(server)
       if (sessions === skippedBackendRequest) return
       rememberSessionScanWatermark(server.id, sessions)
       for (const session of sessions) {
@@ -1285,31 +1288,18 @@ export function createSessionReconciler({
     return true
   }
 
-  async function notifyRunFailed(binding, properties, clearedQueue) {
-    const errorText = stepFailureText(properties)
-    const lines = ["<b>Run finished with an error.</b>"]
-    if (errorText) lines.push(escapeHtml(errorText))
+  async function notifySessionError(binding, properties, clearedQueue = []) {
+    const detail = await resolvedSessionError(binding, properties)
+    const lines = [t("reconcile.sessionFailed")]
+    if (detail) lines.push(`<blockquote><b>${escapeHtml(detail.title)}</b>\n${escapeHtml(detail.message)}</blockquote>`)
     if (clearedQueue.length) {
-      lines.push("", "<b>Cleared queued prompts:</b>")
+      lines.push("", t("reconcile.queueCleared"))
       lines.push(...clearedQueue.map((item) => `${item.index}. <code>${escapeHtml(item.summary)}</code>`))
     }
     const message = await telegram.sendMessage({
       chatId: binding.chatId,
       topicId: binding.topicId,
       text: lines.join("\n"),
-    })
-    return { message, errorText }
-  }
-
-  async function notifySessionError(binding, properties) {
-    const detail = await resolvedSessionError(binding, properties)
-    const text = detail
-      ? `❌ <b>OpenCodez session error</b>\n<blockquote><b>${escapeHtml(detail.title)}</b>\n${escapeHtml(detail.message)}</blockquote>`
-      : "❌ <b>OpenCodez session error.</b>"
-    const message = await telegram.sendMessage({
-      chatId: binding.chatId,
-      topicId: binding.topicId,
-      text,
     })
     return { message, detail }
   }
@@ -1431,14 +1421,6 @@ function isUnavailableTopicError(error) {
   return /message thread not found|forum topic .*not found|topic .*not found|topic .*deleted|topic .*closed|message thread .*closed/i.test(
     error.message || "",
   )
-}
-
-function stepFailureText(properties) {
-  const error = properties.error || properties.exception || properties.reason
-  if (typeof error === "string") return error
-  if (error?.message) return error.message
-  if (properties.message) return properties.message
-  return ""
 }
 
 export function normalizeSessionError(value) {

@@ -22,6 +22,8 @@ import { createTelegramPolling } from "./telegram-polling.mjs"
 import { createTopicLifecycle } from "./topic-lifecycle.mjs"
 import { managedTopicTitle } from "./topic-titles.mjs"
 import { createUpdateManager } from "./update-manager.mjs"
+import { createRuntimeHealth } from "./runtime-health.mjs"
+import { setMaxListeners } from "node:events"
 
 const config = loadConfig()
 assertRuntimeConfig(config)
@@ -31,9 +33,12 @@ await state.load({ promptProfiles: config.promptProfiles })
 configureI18n({ state, defaultLanguage: config.ui.defaultLanguage })
 if (config.telegram.chatId && !state.chatId) await state.setChatId(config.telegram.chatId)
 
-const telegram = new TelegramClient(config.telegram.token, config.telegram.botApi)
+const abort = new AbortController()
+setMaxListeners(0, abort.signal)
+const health = createRuntimeHealth(config)
+const telegram = new TelegramClient(config.telegram.token, { ...config.telegram.botApi, signal: abort.signal })
 const botInfo = await telegram.getMe()
-const opencode = new OpenCodeClient(config)
+const opencode = new OpenCodeClient(config, { signal: abort.signal })
 const finalNotifier = createFinalNotifier({ config, state, telegram, opencode })
 const notifyFinalAnswerReady = finalNotifier.notifyFinalAnswerReady
 let promptRouter
@@ -66,6 +71,7 @@ const renderer = new MirrorRenderer({
 })
 let controlMenu
 promptRouter = createPromptRouter({
+  signal: abort.signal,
   config,
   state,
   telegram,
@@ -90,7 +96,6 @@ const {
 } = promptRouter
 const topicLifecycle = createTopicLifecycle({ config, state, telegram, opencode, activateBindingForPrompt, clearPromptFeedback })
 const { createTopicForSession, createTopicForWebSession, handleTopicLifecycleMessage, isInternalSession, randomTopicIcon } = topicLifecycle
-const abort = new AbortController()
 let shutdownRequested = false
 const backendRequester = createBackendRequester()
 const skippedBackendRequest = backendRequester.skipped
@@ -110,7 +115,7 @@ const runAlerter = createRunAlerter({ config, state, telegram, logError })
 const updateManager = createUpdateManager({ config, state, telegram })
 const artifactUploads = new ArtifactUploadBuffer({
   settings: config.artifactUploads,
-  flushUpload: ({ message, files }) => handleArtifactUploadMessage({ telegram, config, opencode, message, files }),
+  flushUpload: ({ message, files }) => handleArtifactUploadMessage({ telegram, config, opencode, message, files, signal: abort.signal }),
   onError: logError,
 })
 sessionReconciler = createSessionReconciler({
@@ -134,6 +139,7 @@ sessionReconciler = createSessionReconciler({
   showPromptFeedback,
   logError,
   shouldStop: () => shutdownRequested,
+  onProgress: () => health.beat("reconcile"),
   onSessionStatusChange: () => controlMenu?.scheduleStatusRefresh(),
 })
 let refreshCommandMenu = async () => {}
@@ -144,6 +150,7 @@ controlMenu = new ControlMenu({
   opencode,
   promptQueue,
   finalVoice,
+  backendRequester,
   createSession: createPendingTopic,
   refreshCommandMenu: async (language) => {
     if (language) await setLanguage(language)
@@ -213,9 +220,12 @@ for (const server of config.opencode.servers) {
 }
 
 questionManager.reconcile().catch(logError)
-sessionReconciler.reconcileLoop().catch(logError)
+sessionReconciler.reconcileLoop().catch((error) => {
+  logError(error)
+  void requestShutdown("session recovery stopped", 1)
+})
 
-await telegramPolling.poll({ shouldStop: () => shutdownRequested })
+await telegramPolling.poll({ shouldStop: () => shutdownRequested, signal: abort.signal, onProgress: () => health.beat("telegram") })
 await state.flushDeferred?.()
 
 async function createPendingTopic(message, args) {
@@ -251,15 +261,17 @@ function logError(error) {
   console.error(`[opencodebot] ${error.stack || error.message || error}`)
 }
 
-function requestShutdown(signalName) {
+async function requestShutdown(signalName, exitCode = 0) {
   if (shutdownRequested) return
   shutdownRequested = true
+  process.exitCode = exitCode
   console.info(`[opencodebot] received ${signalName}, shutting down`)
   updateManager.stop()
   finalVoice.stop()
   abort.abort()
   setTimeout(() => {
     console.info("[opencodebot] shutdown grace elapsed, exiting")
-    process.exit(0)
-  }, 2000).unref?.()
+    process.exit(exitCode)
+  }, 8000).unref?.()
+  await Promise.allSettled([health.stop(), state.flushDeferred?.(), state.markerQueue])
 }

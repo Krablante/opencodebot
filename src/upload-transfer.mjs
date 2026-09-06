@@ -3,10 +3,11 @@ import { createReadStream } from "node:fs"
 import { promises as fsp } from "node:fs"
 import path from "node:path"
 import { spawn } from "node:child_process"
+import { pipeline } from "node:stream/promises"
 
-export async function prepareSavedFilesForServer(files = [], { server, sessionID }) {
+export async function prepareSavedFilesForServer(files = [], { server, sessionID, signal }) {
   if (!Array.isArray(files) || !files.length) return files
-  return Promise.all(files.map((file) => transferSavedFile(file, { server, sessionID })))
+  return Promise.all(files.map((file) => transferSavedFile(file, { server, sessionID, signal })))
 }
 
 export function targetUploadPath({ server, sessionID, filename, uniqueID = randomUUID() }) {
@@ -30,10 +31,10 @@ export function pathStyle(server) {
   return "posix"
 }
 
-async function transferSavedFile(file, { server, sessionID }) {
+async function transferSavedFile(file, { server, sessionID, signal }) {
   if (!file || file.type !== "saved_file" || !file.path || !server?.uploadRoot) return file
   const targetPath = targetUploadPath({ server, sessionID, filename: file.filename })
-  await transferFile({ localPath: file.path, targetPath, server })
+  await transferFile({ localPath: file.path, targetPath, server, signal })
   return {
     ...file,
     localPath: file.path,
@@ -42,7 +43,8 @@ async function transferSavedFile(file, { server, sessionID }) {
   }
 }
 
-export async function transferFile({ localPath, targetPath, server }) {
+export async function transferFile({ localPath, targetPath, server, signal }) {
+  signal?.throwIfAborted()
   const transfer = server.transfer || { type: "local" }
   if (transfer.type === "local") {
     await fsp.mkdir(parentPath(targetPath, pathStyle(server)), { recursive: true })
@@ -50,23 +52,23 @@ export async function transferFile({ localPath, targetPath, server }) {
     return
   }
   if (transfer.type === "ssh") {
-    await transferFileViaSsh({ localPath, targetPath, server, transfer })
+    await transferFileViaSsh({ localPath, targetPath, server, transfer, signal })
     return
   }
   throw new Error(`unsupported upload transfer type for ${server.id}: ${transfer.type}`)
 }
 
-async function transferFileViaSsh({ localPath, targetPath, server, transfer }) {
+async function transferFileViaSsh({ localPath, targetPath, server, transfer, signal }) {
   const target = sshTarget(transfer)
   const style = pathStyle(server)
   const targetDir = parentPath(targetPath, style)
   if (style === "windows") {
-    await run("ssh", [...sshArgs(transfer), target, windowsMkdirCommand(targetDir)])
-    await run("scp", [...scpArgs(transfer), localPath, `${target}:${scpRemotePath(targetPath, style)}`])
+    await run("ssh", [...sshArgs(transfer), target, windowsMkdirCommand(targetDir)], undefined, signal)
+    await run("scp", [...scpArgs(transfer), localPath, `${target}:${scpRemotePath(targetPath, style)}`], undefined, signal)
     return
   }
-  await run("ssh", [...sshArgs(transfer), target, `mkdir -p -- ${shellQuote(targetDir)}`])
-  await runWithInput("ssh", [...sshArgs(transfer), target, `cat > ${shellQuote(targetPath)}`], localPath)
+  await run("ssh", [...sshArgs(transfer), target, `mkdir -p -- ${shellQuote(targetDir)}`], undefined, signal)
+  await run("ssh", [...sshArgs(transfer), target, `cat > ${shellQuote(targetPath)}`], localPath, signal)
 }
 
 function sshTarget(transfer) {
@@ -76,7 +78,7 @@ function sshTarget(transfer) {
 }
 
 function sshArgs(transfer) {
-  const args = ["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new"]
+  const args = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new"]
   if (transfer.port) args.push("-p", String(transfer.port))
   if (transfer.identityFile) args.push("-i", String(transfer.identityFile))
   return args
@@ -86,12 +88,18 @@ function scpArgs(transfer) {
   return sshArgs(transfer).map((arg) => (arg === "-p" ? "-P" : arg))
 }
 
-function run(command, args) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] })
+async function run(command, args, inputPath, signal) {
+  const controller = new AbortController()
+  const onAbort = () => controller.abort(signal.reason)
+  if (signal?.aborted) onAbort()
+  else signal?.addEventListener("abort", onAbort, { once: true })
+  const timer = setTimeout(() => controller.abort(), 15 * 60_000)
+  timer.unref?.()
+  const child = spawn(command, args, { stdio: [inputPath ? "pipe" : "ignore", "ignore", "pipe"], signal: controller.signal })
+  const completed = new Promise((resolve, reject) => {
     let stderr = ""
     child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString()
+      stderr = (stderr + chunk.toString()).slice(-4096)
     })
     child.on("error", reject)
     child.on("close", (code) => {
@@ -102,25 +110,17 @@ function run(command, args) {
       reject(new Error(`${command} exited with ${code}${stderr ? `: ${stderr.trim()}` : ""}`))
     })
   })
-}
-
-function runWithInput(command, args, inputPath) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] })
-    let stderr = ""
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString()
-    })
-    child.on("error", reject)
-    createReadStream(inputPath).on("error", reject).pipe(child.stdin)
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve()
-        return
-      }
-      reject(new Error(`${command} exited with ${code}${stderr ? `: ${stderr.trim()}` : ""}`))
-    })
-  })
+  const copied = inputPath ? pipeline(createReadStream(inputPath), child.stdin) : Promise.resolve()
+  try {
+    await Promise.all([completed, copied])
+  } catch (error) {
+    controller.abort()
+    await Promise.allSettled([completed, copied])
+    throw error
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener("abort", onAbort)
+  }
 }
 
 function parentPath(filePath, style) {

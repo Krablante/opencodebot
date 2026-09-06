@@ -26,7 +26,8 @@
     "check": "node scripts/check.mjs",
     "test": "node --test test/*.test.mjs",
     "smoke": "node scripts/smoke.mjs",
-    "smoke:live": "docker compose exec -T opencodebot npm run smoke -- /app/config.local.json",
+    "health:live": "docker compose exec -T opencodebot node src/runtime-health.mjs /app/config.local.json",
+    "smoke:live": "npm run health:live",
     "init-config": "node scripts/init-config.mjs",
     "telegram-local": "node scripts/telegram-local.mjs",
     "wireguard": "node scripts/wireguard.mjs",
@@ -36,7 +37,7 @@
     "update-runner:uninstall": "node scripts/install-update-runner.mjs --uninstall"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "dependencies": {
     "mdast-util-from-markdown": "2.0.3",

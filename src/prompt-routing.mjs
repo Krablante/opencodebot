@@ -29,14 +29,14 @@ export async function bindPendingTopicSession({ state, opencode, pending, messag
     promptProfileName: pending.promptProfileName,
     agent: pending.promptProfile?.agent,
     model: pending.promptProfile?.model,
+    setupProfile: pending.promptProfile,
   }
   await state.bindTopic(binding)
   await state.markSeenSession(binding.serverID, binding.sessionID)
-  await applyPromptProfile(opencode, pending.serverID, session.id, pending.promptProfile, { directory })
   return binding
 }
 
-export function createPromptRouter({ config, state, telegram, opencode, renderer, scheduleReconcile, onBindingRemoved = () => {}, logError }) {
+export function createPromptRouter({ config, state, telegram, opencode, renderer, scheduleReconcile, onBindingRemoved = () => {}, logError, signal }) {
   const promptFeedbackMessages = new Map()
   const activityPersistedAt = new Map()
   const multipartPrompts = new MultipartPromptBuffer(config.multipartPrompts, flushTelegramPrompt, logError)
@@ -47,7 +47,14 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     onExpire: notifyAttachmentExpired,
     onError: logError,
   })
-  const promptQueue = new PromptQueue(sendTelegramPrompt, { onDrop: cleanupFiles })
+  const promptQueue = new PromptQueue(sendTelegramPrompt, {
+    onDrop: cleanupFiles,
+    sessionStatus: (binding) => opencode.sessionStatus(binding.serverID, binding.sessionID, { directory: binding.directory }),
+    onQueued: async (binding) => {
+      await activateBindingForPrompt(binding, "telegram-queue")
+      scheduleReconcile(binding, 1000)
+    },
+  })
 
   async function queueTelegramPrompt(key, text, context) {
     if (context?.rewindError) {
@@ -69,6 +76,12 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     }
     const sourceMessageId = context.message?.message_id
     if (context.binding) {
+      if (promptQueue.isCompacting(context.binding)) {
+        const result = await promptQueue.enqueue(context.binding, text, files, { sourceMessageId })
+        await telegram.sendMessage({ chatId: context.binding.chatId, topicId: context.binding.topicId,
+          text: t("commands.queue.queued", { position: result.position, summaryHtml: escapeHtml(text.slice(0, 100)) }) })
+        return
+      }
       await sendTelegramPrompt(context.binding, text, files, { sourceMessageId })
       return
     }
@@ -195,8 +208,18 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       ? feedbackMessageFor(binding)
       : await sendPromptFeedback({ binding, text: promptFeedbackStartingText(), kind: "accepted" })
     try {
+      const current = state.findBinding(binding.serverID, binding.sessionID)
+      if (!current || current.disabled) throw new Error(t("prompt.noBinding"))
+      if (current.setupProfile) {
+        const setupProfile = current.promptProfileName ? config.promptProfiles[current.promptProfileName] : current.setupProfile
+        if (!setupProfile) throw new Error(t("prompt.setupProfileMissing"))
+        await applyPromptProfile(opencode, current.serverID, current.sessionID, setupProfile, { directory: current.directory })
+        Object.assign(current, { agent: setupProfile.agent, model: setupProfile.model })
+        Object.assign(binding, { agent: setupProfile.agent, model: setupProfile.model })
+        await state.update(() => { delete current.setupProfile })
+      }
       const profile = await currentProfile(binding)
-      const preparedFiles = await prepareSavedFilesForServer(files, { server: opencode.server(binding.serverID), sessionID: binding.sessionID })
+      const preparedFiles = await prepareSavedFilesForServer(files, { server: opencode.server(binding.serverID), sessionID: binding.sessionID, signal })
       await state.addPendingPrompt({
         serverID: binding.serverID,
         sessionID: binding.sessionID,
@@ -212,7 +235,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     } catch (error) {
       promptQueue.markSendFailed(binding)
       await state.removePendingPrompt(binding.serverID, binding.sessionID, text).catch(logError)
-      if (feedbackMode === "rewind") await reportRewindStatus(binding, rewindFeedbackReplacementNotSentText()).catch(logError)
+      if (feedbackMode === "rewind") await reportRewindStatus(binding, rewindFeedbackReplacementNotSentText()).then(() => { error.feedbackReported = true }, logError)
       else if (isOpenCodeSessionNotFound(error, binding.sessionID)) {
         promptQueue.clear(binding)
         const promptProfile = config.promptProfiles?.[binding.promptProfileName]
@@ -227,8 +250,8 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
             pendingCreated: removed.pendingCreated,
           })
         }
-        await reportMissingSession(binding).catch(logError)
-      } else await reportPromptFeedbackError(binding, error).catch(logError)
+        await reportMissingSession(binding).then(() => { error.feedbackReported = true }, logError)
+      } else await reportPromptFeedbackError(binding, error).then(() => { error.feedbackReported = true }, logError)
       throw error
     }
   }
@@ -265,6 +288,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
         await opencode.waitForSessionIdle(binding.serverID, binding.sessionID, { directory: binding.directory, timeoutMs: 45_000 })
         await promptQueue.waitForExpectedStop(binding)
       }
+      promptQueue.cancelCompaction(binding)
       await promptQueue.markBackendIdle(binding)
       await promptQueue.markTerminalMirrored(binding)
       const revertedSession = await opencode.revertSession(
@@ -289,7 +313,8 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       await state.markPromptOriginsRewound(binding.serverID, binding.sessionID, rewind.origin.opencodeMessageID)
       await promptQueue.sendNow(binding, text, files, { sourceMessageId: message.message_id, feedbackMode: "rewind" })
     } catch (error) {
-      await reportRewindStatus(binding, reverted ? rewindFeedbackReplacementNotSentText() : rewindFeedbackFailedText()).catch(logError)
+      await reportRewindStatus(binding, reverted ? rewindFeedbackReplacementNotSentText() : rewindFeedbackFailedText())
+        .then(() => { error.feedbackReported = true }, logError)
       throw error
     }
   }

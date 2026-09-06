@@ -115,6 +115,10 @@ All requests require:
 Authorization: Bearer <OPENCODEBOT_ARTIFACT_TOKEN>
 ```
 
+The JSON endpoint accepts text and display metadata, not server-local file paths. File delivery requires the streaming
+endpoint. Temporary-file ownership stays inside the running gateway, so client-supplied fields cannot authorize file
+reads or cleanup. A completed or failed streamed upload cleans up only its own generated spool directory.
+
 Status check:
 
 ```text

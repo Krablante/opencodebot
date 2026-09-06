@@ -13,14 +13,13 @@ if (status) throw new Error("Refusing to deploy from a dirty checkout")
 
 await run(npmCommand(), ["ci"])
 await run(npmCommand(), ["run", "check"])
-await run(npmCommand(), ["run", "smoke"])
 await run("docker", ["compose", "build", ...(deployAll ? [] : ["opencodebot"])], {
   env: { ...process.env, OPENCODEBOT_BUILD_SHA: revision },
 })
 await run("docker", deployAll
   ? ["compose", "up", "-d", "--no-build"]
   : ["compose", "up", "-d", "--no-build", "--no-deps", "--force-recreate", "opencodebot"])
-await run(npmCommand(), ["run", "smoke:live"])
+await run(npmCommand(), ["run", "health:live"])
 console.log(`Deployed ${deployAll ? "the full Compose project" : "opencodebot"} at ${revision.slice(0, 12)}.`)
 
 async function run(command, args, options = {}) {

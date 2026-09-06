@@ -66,12 +66,12 @@ fixed argument arrays; Telegram callback data is never interpreted as a shell co
 The runner then:
 
 1. fetches the configured branch and fast-forwards the checkout to the approved target;
-2. runs `npm ci`, `npm run check`, and `npm run smoke`;
+2. runs `npm ci` and `npm run check`;
 3. preserves the running image as `opencodebot:rollback`;
 4. builds `opencodebot:current` with the target Git revision in its environment and OCI image label;
 5. force-recreates only the `opencodebot` Compose service with `--no-deps`;
-6. runs `npm run smoke:live`;
-7. restores the previous image if replacement or live verification fails.
+6. runs `npm run health:live` against the actual process and required backend APIs;
+7. restores and health-checks the previous image if replacement or live verification fails.
 
 Source may remain fast-forwarded after a failed build. That is intentional: the running image revision remains the
 deployment source of truth, `/update` offers the same target again, and retry does not require a destructive Git reset.
@@ -141,7 +141,9 @@ npm run deploy:bot
 ```
 
 It refuses a dirty checkout, runs local checks, builds with the exact Git revision, recreates only opencodebot, and runs
-live smoke. The same npm command can be launched from PowerShell when Docker Desktop is the deployment host; only the
+the production health check. That check requires progress from Telegram polling and session recovery, not just a running
+container or a separately launched smoke process. It performs no Telegram sends or dropbox writes. The same npm command
+can be launched from PowerShell when Docker Desktop is the deployment host; only the
 unattended systemd runner remains Linux-specific.
 
 Operational checks:

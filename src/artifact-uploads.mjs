@@ -42,7 +42,7 @@ export class ArtifactUploadBuffer {
   }
 }
 
-export async function handleArtifactUploadMessage({ telegram, config, opencode, message, files }) {
+export async function handleArtifactUploadMessage({ telegram, config, opencode, message, files, signal }) {
   const uploadConfig = config.artifactUploads || {}
   if (!uploadConfig.enabled) {
     await replyHTML(telegram, message, t("artifacts.disabled"))
@@ -67,6 +67,7 @@ export async function handleArtifactUploadMessage({ telegram, config, opencode, 
       server: target.server,
       files,
       requestedFilenames: target.requestedFilenames,
+      signal,
     })
   } catch (error) {
     await replyHTML(telegram, message, t("artifacts.saveFailed", { errorHtml: escapeHtml(error.message || String(error)) }))
@@ -164,17 +165,17 @@ export function resolveArtifactUploadRoot({ config, server, style = pathStyleFor
   return expandHomeForServer(configured, server, style)
 }
 
-async function saveArtifactFiles({ telegram, config, server, files, requestedFilenames = [] }) {
+async function saveArtifactFiles({ telegram, config, server, files, requestedFilenames = [], signal }) {
   if (!files?.length) return []
   const scratchDir = path.join(config.paths.uploadsDir || path.join(os.tmpdir(), "opencodebot-uploads"), "artifact-inbox", randomUUID())
   let downloads = []
   try {
     const namedFiles = applyArtifactUploadFilenames(files, requestedFilenames)
-    downloads = await downloadTelegramFiles(telegram, uniquedFiles(namedFiles), scratchDir, config.attachments)
+    downloads = await downloadTelegramFiles(telegram, uniquedFiles(namedFiles), scratchDir, config.attachments, { inline: false })
     const saved = []
     for (const file of downloads) {
       const targetPath = artifactTargetPath({ config, server, filename: file.filename })
-      await transferFile({ localPath: file.localPath, targetPath, server })
+      await transferFile({ localPath: file.localPath, targetPath, server, signal })
       saved.push({ ...file, targetPath })
     }
     return saved

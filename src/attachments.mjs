@@ -178,7 +178,7 @@ export function extractTelegramFiles(message, richContent = normalizeTelegramRic
   })
 }
 
-export async function downloadTelegramFiles(telegram, descriptors, uploadDir, settings) {
+export async function downloadTelegramFiles(telegram, descriptors, uploadDir, settings, { inline = true } = {}) {
   const normalized = normalizeAttachmentSettings(settings)
   await fs.mkdir(uploadDir, { recursive: true, mode: 0o700 })
   const downloads = []
@@ -201,14 +201,14 @@ export async function downloadTelegramFiles(telegram, descriptors, uploadDir, se
       const stat = await fs.stat(localPath)
       const mime = descriptor.mime || "application/octet-stream"
       const size = stat.size || downloaded.file?.file_size || descriptor.size || 0
-      const inline = size <= normalized.maxInlineBytes
-      logAttachment("attachment.download.complete", descriptor, { size, inline, sourcePath: downloaded.file?.source_path })
+      const embed = inline && size <= normalized.maxInlineBytes
+      logAttachment("attachment.download.complete", descriptor, { size, inline: embed, sourcePath: downloaded.file?.source_path })
       downloads.push({
-        type: inline ? "file" : "saved_file",
+        type: embed ? "file" : "saved_file",
         mime,
         filename: descriptor.filename,
-        url: inline ? await dataURL(localPath, mime) : undefined,
-        path: inline ? undefined : localPath,
+        url: embed ? await dataURL(localPath, mime) : undefined,
+        path: embed ? undefined : localPath,
         source: { type: "telegram", kind: descriptor.kind, fileUniqueId: descriptor.fileUniqueID },
         localPath,
         size,

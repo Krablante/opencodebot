@@ -11,7 +11,7 @@ plain JSON config, and boring runtime state over a large framework.
 ## Why OpenCodez
 
 opencodebot is tuned for OpenCodez's API and event stream. It works especially well with OpenCodez because that fork
-adds selectable System prompts, token-saving pruning, and a more convenient cached web UI. That web UI remains useful on
+adds selectable System prompts and stateful ChatGPT Responses transport. Its web UI remains useful on
 the LAN by default, and can also be reached away from home through the optional WireGuard helper if you want private
 remote access.
 
@@ -25,8 +25,8 @@ workspace-scoped `/event` stream.
 - `/new [server] [profile] [dir:<path>] [title]` for explicit server/profile/directory/topic setup.
 - User-provided topic titles stay user-owned; placeholder titles can be renamed from OpenCodez session titles.
 - `/q` in-memory per-session prompt queue, with status/delete commands.
-- Telegram updates run in ordered per-topic lanes with per-host concurrency limits, so an overloaded OpenCodez server
-  cannot block commands or prompts for other servers.
+- Each received Telegram batch runs in ordered per-topic lanes with per-host concurrency limits. The bot acknowledges
+  updates only after handling them and waits for the batch before requesting the next one.
 - `/kill` to stop the current OpenCodez run for a topic and clear queued prompts.
 - `/reset` to preserve the old session and start fresh in the same Telegram topic.
 - Reply to an earlier Telegram user prompt to rewind that OpenCodez branch and replace it with the reply text and
@@ -95,7 +95,7 @@ Node.js and npm. Windows is fully fine as a Telegram, browser, Docker, and WireG
 
 ## Quick Start
 
-You need Node.js 18 or newer, Docker Compose, a running OpenCodez server, and a Telegram bot token from BotFather. The
+You need Node.js 22 or newer, Docker Compose, a running OpenCodez server, and a Telegram bot token from BotFather. The
 bot can run on the same machine as OpenCodez or on another machine that can reach OpenCodez over HTTP.
 
 Clone the repo and create local config:
@@ -377,14 +377,13 @@ single-server deployments keep plain names.
 
 ```bash
 npm run check
-npm run smoke
-npm run smoke:live
+npm run health:live
 ```
 
-`npm run check` syntax-checks source and scripts. `npm run smoke` is the central contract smoke for production-sensitive
-regressions; avoid adding scattered test files for ordinary changes. `npm run smoke:live` runs the same lightweight
-health check inside the live Compose service against `/app/config.local.json`. Neither smoke path should print tokens or
-send prompts.
+`npm run check` syntax-checks source and scripts. `npm run health:live` checks the main process, progress of Telegram
+polling and session recovery, and required backend APIs. It sends no messages or prompts and writes no dropbox files.
+`smoke:live` remains an alias for this operational check. Existing local test/smoke commands remain available separately;
+deployment does not run them. See [Development](docs/development.md) for manual verification guidance.
 
 ## License
 

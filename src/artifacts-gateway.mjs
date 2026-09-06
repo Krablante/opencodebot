@@ -3,7 +3,7 @@ import fsp from "node:fs/promises"
 import { createServer } from "node:http"
 import path from "node:path"
 
-import { cleanupPayloadSpool, readFileStreamBody, readJsonBody } from "./artifacts/http-body.mjs"
+import { cleanupPayloadSpool, isStreamPayload, readFileStreamBody, readJsonBody } from "./artifacts/http-body.mjs"
 import { publicError, statusForError } from "./artifacts/errors.mjs"
 import { artifactFileCaptionHtml, artifactPathLines, clampText, safeContentType, safeFilename } from "./artifacts/formatting.mjs"
 import { durationMs, logErrorEvent, logInfo, logWarn } from "./logger.mjs"
@@ -78,7 +78,7 @@ async function sendArtifact({ config, telegram, target, payload }) {
   const captionPaths = payload?.captionPaths
   const messages = []
   if (payload?.file) {
-    if (payload._stream !== true) throw publicError("stream_required", "Files must be sent to /artifacts/send-file as a stream.", 400)
+    if (!isStreamPayload(payload)) throw publicError("stream_required", "Files must be sent to /artifacts/send-file as a stream.", 400)
     if (mode === "text") throw publicError("invalid_text_file_mode", "Send file content as text instead of file when mode is text.", 400)
     const file = fileFromPayload(payload.file, config.artifacts.maxFileBytes)
     if (!telegram.local && file.localPath && !file.bytes) {

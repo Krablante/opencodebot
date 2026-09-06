@@ -1,8 +1,26 @@
 export class PromptQueue {
-  constructor(sendPrompt, { onDrop } = {}) {
+  constructor(sendPrompt, { onDrop, sessionStatus, onQueued } = {}) {
     this.sendPrompt = sendPrompt
     this.onDrop = onDrop || (async () => {})
     this.sessions = new Map()
+    this.sessionStatus = sessionStatus
+    this.onQueued = onQueued
+  }
+
+  setCompacting(binding, operation) {
+    const state = this.state(binding)
+    state.compacting = operation || null
+    if (operation) beginRun(state)
+  }
+
+  isCompacting(binding) {
+    return Boolean(this.state(binding).compacting)
+  }
+
+  cancelCompaction(binding) {
+    const state = this.state(binding)
+    if (state.compacting) state.compacting.cancelled = true
+    state.compacting = null
   }
 
   markBusy(binding) {
@@ -53,12 +71,20 @@ export class PromptQueue {
     const value = String(text || "").trim()
     if (!value) return { status: "empty" }
     const state = this.state(binding)
-    if (!state.busy) {
+    if (!state.compacting && this.sessionStatus) {
+      const status = await this.sessionStatus(binding)
+      if (status.type !== "idle") {
+        if (!state.busy) beginRun(state)
+        state.idle = false
+      } else state.idle = true
+    }
+    if (!state.busy && !state.compacting) {
       await this.sendNow(binding, value, files, metadata)
       return { status: "sent" }
     }
-    state.items.push({ text: value, files, createdAt: Date.now(), sourceMessageId: metadata?.sourceMessageId })
-    return { status: "queued", position: state.items.length }
+    const position = state.items.push({ text: value, files, createdAt: Date.now(), sourceMessageId: metadata?.sourceMessageId })
+    await this.onQueued?.(binding)
+    return { status: "queued", position }
   }
 
   status(binding) {
@@ -93,6 +119,7 @@ export class PromptQueue {
     state.busy = false
     state.idle = true
     state.terminalMirrored = true
+    this.cancelCompaction(binding)
     state.items = []
     items.forEach((item) => this.dropItem(item))
     return cleared
@@ -118,7 +145,7 @@ export class PromptQueue {
   }
 
   async drainIfReady(binding, state) {
-    if (!state.idle || !state.terminalMirrored) return { status: "waiting" }
+    if (state.compacting || !state.idle || !state.terminalMirrored) return { status: "waiting" }
     state.busy = false
     if (!state.items.length) return { status: "idle" }
     const item = state.items.shift()

@@ -11,7 +11,7 @@ export class SpeechModule {
     this.telegram = telegram
     this.state = state
     this.uploadDir = uploadDir
-    this.attachmentSettings = { ...attachmentSettings, maxFileBytes: config.maxFileBytes, maxInlineBytes: config.maxFileBytes }
+    this.attachmentSettings = { ...attachmentSettings, maxFileBytes: config.maxFileBytes }
     this.clients = clients || {
       openrouter: new OpenRouterSpeechClient(config.providers.openrouter, env),
       groq: new GroqSpeechClient(config.providers.groq, env),
@@ -234,7 +234,7 @@ export class SpeechModule {
     let transcriptParts = []
     const startedAt = Date.now()
     try {
-      downloads = await downloadTelegramFiles(this.telegram, descriptors, this.uploadDir, this.attachmentSettings)
+      downloads = await downloadTelegramFiles(this.telegram, descriptors, this.uploadDir, this.attachmentSettings, { inline: false })
       const file = downloads[0]
       const result = await client.transcribeFile(file, model)
       const elapsedMs = Date.now() - startedAt

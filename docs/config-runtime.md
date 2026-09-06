@@ -256,6 +256,8 @@ watches on configured OpenCodez servers: `global` mirrors new sessions from any 
 sessions when the operator does not pass `dir:<path>`; the normal value is `serverHome`, which uses the selected
 server's `home` from `servers.json`. `global` uses one aggregate OpenCodez `/global/event` SSE connection per server;
 `serverHome` uses `/event?directory=<server.home>`. It does not create one long-lived connection per workspace.
+Server-home mirroring requires every configured server to have an explicit `home`; startup reports a missing home rather
+than silently expanding discovery to all projects.
 
 Each server in `servers.json` needs a non-empty unique `id` and an absolute HTTP(S) `url`. The optional `home` field
 gives `/new` a default directory and lets `~/trash` expand naturally for artifact uploads. `uploadRoot` gives large
@@ -518,9 +520,21 @@ including visible progress notes for interrupted turns, and never stores prompt,
 conservative behavior rather than runtime config knobs.
 
 `runtime.telegramUpdateOffset` is the durable completion watermark, not merely the most recently fetched update. The
-poller keeps ordered per-topic lanes and per-host concurrency state in memory, and advances this watermark only after all
-earlier fetched updates have completed. The fixed limits are two active handlers per backend group, 100 unfinished
-updates, and 1,000 uncommitted update records; no additional queue service or configuration is required.
+poller processes one Telegram batch at a time with ordered per-topic lanes and up to two active handlers per backend
+group. It requests the next batch only after the current handlers settle and uses the persisted completed prefix as
+the next offset, because that request acknowledges updates at Telegram itself. Each batch is bounded to 100 updates;
+no additional queue service or durable inbox is required. A slow handler may delay the next fetch.
+
+An unfinished new-session profile is stored on its binding as `setupProfile` until model and System selection both
+succeed. A resend retries that setup before sending a prompt. Named profiles are resolved again from current config,
+so repairing a profile and restarting the bot is enough to retry without creating another OpenCodez session.
+
+`<statePath>.health.json` is a small replaceable operational snapshot, separate from conversation state. It contains only
+the main process PID, image revision, shutdown state, and last progress times of polling/recovery. Existing loops refresh
+it at most once per 30 seconds after their first report; there is no heartbeat service or extra listener. `health:live`
+waits up to one minute for initialization, rejects missing/stopping/dead or stale processes, and checks Telegram plus
+the discovery API of required backends. `offline_ok` hosts are not required for this deployment gate. The progress
+allowance is 20 minutes to accommodate bounded large-file handlers; stopped recovery triggers process shutdown immediately.
 
 The mirror-marker references above are one logical part of durable state but are physically stored in the sibling append
 journal `<statePath>.mirror-markers.ndjson`; marker maps are not written to `state.json`. Startup loads the compact journal

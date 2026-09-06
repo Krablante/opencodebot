@@ -50,6 +50,17 @@ nested-list workaround from general rich-message preparation.
 
 ## Checks
 
+The default maintenance path is syntax checking, manual behavior verification, and inspection of the actual runtime and
+logs. Do not add test files for ordinary fixes. Existing test/smoke commands below are optional focused tools, not part
+of deployment. `deploy:bot` and the approved updater run dependency installation, syntax checks, image deployment, and
+the production health check instead of executing mocked regression scenarios inside the live container.
+
+For delivery changes, manually exercise rejected JSON file metadata and one valid streamed upload on an isolated
+gateway; delayed HTTP bodies; a failed file transfer; queued prompts across busy/idle/error/compaction; and a failed then
+retried launch profile. Use disposable data and no second Telegram poller with the production token. Check both available
+backend scopes with read-only API calls, and inspect startup/recovery logs after rollout. Rich Message limits and normal
+answer rendering are independent of these reliability checks.
+
 Run syntax checks:
 
 ```bash
@@ -73,7 +84,7 @@ expansion. `npm test` holds only the few contracts that benefit from a dedicated
 the OpenCodez System selection payload, the terminal-mirror/idle latch that guards queued prompts, and single-choice
 question callbacks. `npm run smoke` is the central regression check: it verifies config shape and aggregated
 server-config validation, ordered SSE event handling, OpenCode request timeouts, and Telegram update isolation: a slow
-backend group cannot delay another group, same-backend work respects its concurrency bound, and the durable offset
+backend group cannot delay another group within the received batch, same-backend work respects its concurrency bound, and the durable offset
 advances only after the contiguous completion prefix. It also verifies whole-session state pruning without
 per-session message loss, Telegram download limits, synthetic file text filtering, nested rich-list normalization,
 `/kill`, native `/compact` request shape and internal-summary suppression, structured session-error normalization and
@@ -155,8 +166,17 @@ Run live Compose smoke against the running service:
 npm run smoke:live
 ```
 
-`smoke:live` executes `npm run smoke -- /app/config.local.json` inside the running Compose container, so it checks the
-live runtime config with the same lightweight smoke contract.
+`smoke:live` is a compatibility alias for `health:live`. The latter executes the production `src/runtime-health.mjs`
+check inside the existing container. It verifies main-process identity, polling/recovery progress, Telegram access,
+and required backend discovery APIs. It neither starts a bot nor sends messages, creates sessions, or writes dropbox
+files. A dead recovery loop initiates shutdown so Compose can restart the process instead of leaving a silently degraded
+bot. Startup discovery failures are retried per host within the existing loop.
+
+HTTP deadlines include reading response bodies, and shutdown cancellation reaches polling and ordinary API requests.
+Manual compaction allows 21 minutes, covering OpenCodez's 20-minute remote-compaction budget without ending the client
+request prematurely; ordinary OpenCodez requests remain bounded to two minutes.
+SSH file transfer has a 10-second connect bound and a 15-minute command deadline; pipeline errors reject only the upload.
+The bot requests cancellation and immediately flushes deferred state on shutdown, with an eight-second final grace.
 
 ## Service
 

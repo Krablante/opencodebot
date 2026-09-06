@@ -5,12 +5,14 @@ import { pathToFileURL } from "node:url"
 import { Readable, Transform } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import { durationMs, logErrorEvent, logInfo, logWarn, shouldLogSlow } from "./logger.mjs"
+import { withRequestTimeout } from "./request-timeout.mjs"
 
 export const TELEGRAM_RICH_TEXT_MAX_CHARS = 32_000
 
 export class TelegramClient {
   constructor(token, options = {}) {
     this.token = token
+    this.signal = options.signal
     this.rootURL = trimTrailingSlash(options.rootUrl || "https://api.telegram.org")
     this.fileRootURL = trimTrailingSlash(options.fileRootUrl || this.rootURL)
     this.baseURL = `${this.rootURL}/bot${token}`
@@ -20,6 +22,11 @@ export class TelegramClient {
   }
 
   async request(method, payload = {}, attempt = 0, options = {}) {
+    return withRequestTimeout({ signal: options.signal || this.signal, timeoutMs: options.timeoutMs || 120_000 },
+      (signal) => this.requestAttempt(method, payload, attempt, { ...options, signal }), `Telegram ${method}`)
+  }
+
+  async requestAttempt(method, payload, attempt, options) {
     const startedAt = Date.now()
     let response
     let data = {}
@@ -40,9 +47,9 @@ export class TelegramClient {
     if (response.status === 429 && Number.isFinite(retryAfter) && attempt < 3) {
       logWarn("telegram.request.retry", { method, attempt, status: response.status, retryAfterSec: retryAfter, durationMs: elapsedMs, ...telegramPayloadSummary(payload) })
       await delay((retryAfter + 1) * 1000, options.signal)
-      return this.request(method, payload, attempt + 1, options)
+      return this.requestAttempt(method, payload, attempt + 1, options)
     }
-    if (!response.ok || data.ok === false) {
+    if (!response.ok || data.ok !== true) {
       const error = new Error(`Telegram ${method} failed: ${data.description || response.status}`)
       if (!options.suppressFailureLog) logErrorEvent("telegram.request.failed", error, { method, attempt, status: response.status, durationMs: elapsedMs, ...telegramPayloadSummary(payload) })
       throw error
@@ -55,24 +62,31 @@ export class TelegramClient {
     return this.request("deleteWebhook", { drop_pending_updates: false })
   }
 
-  async getMe() {
-    return this.request("getMe")
+  async getMe(options = {}) {
+    const me = await this.request("getMe", {}, 0, options)
+    if (me?.is_bot !== true) throw new Error("Telegram getMe did not return a bot identity")
+    return me
   }
 
   async setMyCommands(commands, options = {}) {
     return this.request("setMyCommands", { commands, ...options })
   }
 
-  async getFile(fileId) {
-    return this.request("getFile", { file_id: fileId })
+  async getFile(fileId, options = {}) {
+    return this.request("getFile", { file_id: fileId }, 0, options)
   }
 
   async downloadFile({ fileId, destination, maxBytes }) {
+    return withRequestTimeout({ signal: this.signal, timeoutMs: 15 * 60_000 },
+      (signal) => this.downloadFileWithSignal({ fileId, destination, maxBytes, signal }), "Telegram download")
+  }
+
+  async downloadFileWithSignal({ fileId, destination, maxBytes, signal }) {
     let file
     try {
-      file = await this.getFile(fileId)
+      file = await this.getFile(fileId, { signal })
     } catch (error) {
-      if (this.local) await this.diagnoseCloudGetFile(fileId, error)
+      if (this.local && !signal.aborted) await this.diagnoseCloudGetFile(fileId, error)
       throw error
     }
     if (file.file_size && file.file_size > maxBytes) {
@@ -85,12 +99,12 @@ export class TelegramClient {
       await copyLocalFileWithLimit({ sourcePath, destination, maxBytes })
       return { file: { ...file, source_path: sourcePath }, destination }
     }
-    const response = await fetch(`${this.fileBaseURL}/${file.file_path}`)
+    const response = await fetch(`${this.fileBaseURL}/${file.file_path}`, { signal })
     if (!response.ok || !response.body) throw new Error(`Telegram file download failed: ${response.status}`)
     const contentLength = Number(response.headers.get("content-length") || 0)
     if (contentLength && contentLength > maxBytes) throw new Error(`Telegram file download is too large (${contentLength} bytes; max ${maxBytes})`)
     try {
-      await pipeline(Readable.fromWeb(response.body), limitStreamBytes(maxBytes), fs.createWriteStream(destination, { mode: 0o600 }))
+      await pipeline(Readable.fromWeb(response.body), limitStreamBytes(maxBytes), fs.createWriteStream(destination, { mode: 0o600 }), { signal })
     } catch (error) {
       await fsp.rm(destination, { force: true })
       throw error
@@ -122,7 +136,7 @@ export class TelegramClient {
       offset,
       timeout,
       allowed_updates: ["message", "callback_query"],
-    }, 0, options)
+    }, 0, { timeoutMs: (timeout + 10) * 1000, ...options })
   }
 
   async sendMessage({ chatId, topicId, text, disablePreview = true, format = "html", replyMarkup }) {
@@ -136,7 +150,7 @@ export class TelegramClient {
     return this.request("sendMessage", payload)
   }
 
-  async replyMessage({ chatId, topicId, replyToMessageId, text, disablePreview = true, format = "html", replyMarkup }) {
+  async replyMessage({ message, chatId = message?.chat?.id, topicId = message?.message_thread_id, replyToMessageId = message?.message_id, text, disablePreview = true, format = "html", replyMarkup }) {
     const payload = {
       chat_id: chatId,
       disable_web_page_preview: disablePreview,
@@ -183,6 +197,7 @@ export class TelegramClient {
       if (captionFormat === "html") payload.parse_mode = "HTML"
       if (captionFormat === "markdownv2") payload.parse_mode = "MarkdownV2"
       return this.request(method, payload, 0, {
+        timeoutMs: 15 * 60_000,
         summary: {
           chatId,
           topicId,
@@ -232,11 +247,16 @@ export class TelegramClient {
   }
 
   async requestMultipart(method, buildForm, summary = {}, attempt = 0) {
+    return withRequestTimeout({ signal: this.signal, timeoutMs: 15 * 60_000 },
+      (signal) => this.multipartAttempt(method, buildForm, summary, attempt, signal), `Telegram ${method}`)
+  }
+
+  async multipartAttempt(method, buildForm, summary, attempt, signal) {
     const startedAt = Date.now()
     let response
     let data = {}
     try {
-      response = await fetch(`${this.baseURL}/${method}`, { method: "POST", body: buildForm() })
+      response = await fetch(`${this.baseURL}/${method}`, { method: "POST", body: buildForm(), signal })
       data = await response.json().catch(() => ({}))
     } catch (error) {
       logErrorEvent("telegram.request.error", error, { method, attempt, durationMs: durationMs(startedAt), ...summary })
@@ -246,10 +266,10 @@ export class TelegramClient {
     const retryAfter = data?.parameters?.retry_after
     if (response.status === 429 && Number.isFinite(retryAfter) && attempt < 3) {
       logWarn("telegram.request.retry", { method, attempt, status: response.status, retryAfterSec: retryAfter, durationMs: elapsedMs, ...summary })
-      await delay((retryAfter + 1) * 1000)
-      return this.requestMultipart(method, buildForm, summary, attempt + 1)
+      await delay((retryAfter + 1) * 1000, signal)
+      return this.multipartAttempt(method, buildForm, summary, attempt + 1, signal)
     }
-    if (!response.ok || data.ok === false) {
+    if (!response.ok || data.ok !== true) {
       const error = new Error(`Telegram ${method} failed: ${data.description || response.status}`)
       logErrorEvent("telegram.request.failed", error, { method, attempt, status: response.status, durationMs: elapsedMs, ...summary })
       throw error

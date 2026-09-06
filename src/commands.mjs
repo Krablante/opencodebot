@@ -421,7 +421,7 @@ export function createTelegramCommandHandlers({
     })
     const operation = { cancelled: false }
     compactOperations.set(compactOperationKey(binding), operation)
-    promptQueue.markBusy(binding)
+    promptQueue.setCompacting(binding, operation)
     void compactSessionInBackground({ binding, message, feedback, model: profile.model, operation }).catch((error) => {
       logErrorEvent("compact.background_failed", error, { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId })
     })
@@ -455,6 +455,7 @@ export function createTelegramCommandHandlers({
         })
         return
       }
+      promptQueue.setCompacting(binding, false)
       await releaseCompactQueueAfterFailure(binding)
       logErrorEvent("compact.failed", error, { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId })
       await updateCompactFeedback({
@@ -463,6 +464,7 @@ export function createTelegramCommandHandlers({
         text: t("commands.compact.failed", { errorHtml: escapeHtml(error.message) }),
       })
     } finally {
+      promptQueue.setCompacting(binding, false)
       if (compactCompleted && !operation.cancelled) {
         await releaseCompactQueueAfterSuccess(binding).catch((error) => {
           logErrorEvent("compact.queue_release_failed", error, {

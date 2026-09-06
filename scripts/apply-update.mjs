@@ -63,7 +63,6 @@ async function main() {
     await run(npmCommand(), ["ci"])
     await status("checking", { components })
     await run(npmCommand(), ["run", "check"])
-    await run(npmCommand(), ["run", "smoke"])
 
     previousImage = await currentContainerImage()
     if (previousImage) await run("docker", ["image", "tag", previousImage, "opencodebot:rollback"])
@@ -76,7 +75,7 @@ async function main() {
     replacementStarted = true
     await run("docker", ["compose", "up", "-d", "--no-build", "--no-deps", "--force-recreate", "opencodebot"])
     await status("verifying", { components })
-    await run(npmCommand(), ["run", "smoke:live"])
+    await run(npmCommand(), ["run", "health:live"])
 
     await status("succeeded", {
       components,
@@ -90,6 +89,7 @@ async function main() {
         if (request?.id) await writeStatus(statusPath, request.id, "rolling_back", { components })
         await run("docker", ["image", "tag", previousImage, "opencodebot:current"])
         await run("docker", ["compose", "up", "-d", "--no-build", "--no-deps", "--force-recreate", "opencodebot"])
+        await run(npmCommand(), ["run", "health:live"])
         rolledBack = true
       } catch (rollbackError) {
         console.error(`[opencodebot-update] rollback failed: ${rollbackError.message}`)

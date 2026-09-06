@@ -100,6 +100,10 @@ export function assertRuntimeConfig(config) {
   if (!config.telegram.token) errors.push("Telegram bot token is missing")
   if (!config.telegram.allowedUserIds.length) errors.push("Allowed Telegram user id is missing")
   if (!config.opencode.servers.length) errors.push("OpenCodez servers list is empty")
+  if (config.opencode.mirrorScope === "serverHome") {
+    const missing = config.opencode.servers.filter((server) => !server.home)
+    if (missing.length) errors.push(`serverHome mirroring requires home for: ${missing.map((server) => server.id).join(", ")}`)
+  }
   if (config.artifacts.enabled && !config.artifacts.token) errors.push("Artifact gateway token is missing")
   if (config.telegram.botApi.mode === "local") {
     if (!config.telegram.botApi.apiIdPresent) errors.push("TELEGRAM_API_ID is required for local Telegram Bot API mode")

@@ -44,12 +44,9 @@ export function createQuestionManager({
   async function sendQuestion(server, binding, info, delivery) {
     const existing = state.questionRecord(info.id)
     if (existing?.status === "pending" && existing.messageId) {
-      await telegram.editMessageText({
-        chatId: existing.chatId,
-        messageId: existing.messageId,
-        text: renderQuestion(existing),
-        replyMarkup: questionReplyMarkup(existing),
-      })
+      // The request is immutable. Recovery only owes missing recipient alerts;
+      // rewriting the same card every reconcile pass adds no information.
+      await notifyRecipients(binding, existing)
       return true
     }
     const questions = normalizeQuestions(info.questions)
@@ -189,10 +186,9 @@ export function createQuestionManager({
           : await opencode.questions(server.id, { directory })
         if (pending === skippedBackendRequest) return
         const pendingIDs = new Set(pending.map((item) => item.id))
-        if (pending.length) logInfo("question.reconcile.discovered", { source: server.id, directory, pending: pending.length })
         await Promise.all(pending.map(async (info) => {
           const binding = state.findBinding(server.id, info.sessionID)
-          if (binding) await handleAsked(server, binding, info, "reconcile")
+          if (binding && !binding.disabled) await handleAsked(server, binding, info, "reconcile")
         }))
         for (const record of state.questionRecords()) {
           if (record.serverID !== server.id || record.directory !== directory || record.status !== "pending" || pendingIDs.has(record.requestID)) continue
