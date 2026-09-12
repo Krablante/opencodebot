@@ -465,8 +465,20 @@ parts cannot enter the Telegram renderer. Accumulation ends when the matching te
 `message.part.updated` event. The bot does not edit Telegram token-by-token. Each completed assistant progress note is
 mirrored once using its OpenCodez message id as the durable dedupe key. A completed assistant `message.updated` event
 finalizes the message; an exact-message lookup runs only when live part delivery was missing.
-Completed/final assistant text is sent as Telegram Rich Message markdown when the Bot API accepts it, with fallback for
-local Markdown links and formatting errors. Real final answers are identified by `finish=stop` and marked with `🏁 `.
+Completed/final assistant text is sent as Telegram Rich Message markdown. Local links and Markdown images become readable
+labels with code-formatted paths before delivery, for example `Screenshot — /tmp/preview.png`; Telegram cannot fetch files
+from an agent's filesystem. This preserves the rest of the answer's emphasis, lists, and links instead of letting one
+local image force the entire answer into raw Markdown. Inline and reference-style links share the same CommonMark
+handling, including spaces and parentheses in destinations; literal examples in code remain untouched. Actual file
+delivery still uses the attachment/artifact path, not automatic filesystem reads by the text renderer.
+
+HTTP(S) images remain images on the normal path. If Telegram rejects photo content, the bot retries once as a Rich Message
+with image links instead of embedded photos. Subsequent edits of that block, including the final marker, reuse this choice
+without retrying the broken image. Other Rich Message rejections retain the last-resort ordinary-text fallback; transport
+errors propagate rather than triggering a second send in another format. Recovery logs use `mirror.text.image_links` and
+`mirror.text.rich_fallback` without answer text or image URLs.
+
+Real final answers are identified by `finish=stop` and marked with `🏁 ` on the exact delivered text block being finalized.
 The bot pins the user prompt that started the run: the original Telegram message for Telegram-origin prompts, or the
 mirrored user message for web-origin prompts.
 

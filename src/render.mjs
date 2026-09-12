@@ -69,8 +69,7 @@ export class MirrorRenderer {
     if (!value) return
     this.closeToolBatch(binding)
     const output = final ? withFinalAnswerMarker(value) : value
-    const markdown = prepareRichMarkdown(output)
-    const sent = await this.sendAssistantMarkdown(binding, markdown, output)
+    const sent = await this.deliverAssistantText(binding, output)
     await this.notifyMirrorMessage(binding, sent)
     if (final) await this.notifyFinalMessage(binding, { assistantMessageID, messageId: sent.message_id, finalText: text })
     return sent
@@ -174,9 +173,8 @@ export class MirrorRenderer {
   async flushText(binding, block, force) {
     const startedAt = Date.now()
     const rawText = block.finalMarked ? withFinalAnswerMarker(block.text || "...") : block.text || "..."
-    const payload = block.richFallback ? preparePlainAssistantText(rawText, this.config) : prepareRichMarkdown(rawText)
     if (!block.messageId) {
-      const sent = await this.sendAssistantMarkdown(binding, payload, rawText, block)
+      const sent = await this.deliverAssistantText(binding, rawText, block)
       block.messageId = sent.message_id
       await this.notifyMirrorMessage(binding, sent)
       this.rememberAssistantMessage(binding, block.assistantMessageID, block.messageId)
@@ -188,30 +186,7 @@ export class MirrorRenderer {
       })
       return block.messageId
     }
-    if (block.richFallback) {
-      await ignoreEditRace(() => this.telegram.editMessageText({ chatId: binding.chatId, messageId: block.messageId, text: payload }))
-    } else {
-      try {
-        await ignoreEditRace(() =>
-          this.telegram.editRichMessage({
-            chatId: binding.chatId,
-            messageId: block.messageId,
-            markdown: payload,
-            skipEntityDetection: true,
-          }),
-        )
-      } catch (error) {
-        if (!isRichMessageError(error)) throw error
-        block.richFallback = true
-        await ignoreEditRace(() =>
-          this.telegram.editMessageText({
-            chatId: binding.chatId,
-            messageId: block.messageId,
-            text: preparePlainAssistantText(rawText, this.config),
-          }),
-        )
-      }
-    }
+    await this.deliverAssistantText(binding, rawText, block)
     this.rememberAssistantMessage(binding, block.assistantMessageID, block.messageId)
     const elapsedMs = durationMs(startedAt)
     if (force || shouldLogSlow(elapsedMs)) {
@@ -226,23 +201,39 @@ export class MirrorRenderer {
     return block.messageId
   }
 
-  async sendAssistantMarkdown(binding, markdown, rawText, block) {
-    try {
-      return await this.telegram.sendRichMessage({
-        chatId: binding.chatId,
-        topicId: binding.topicId,
-        markdown,
-        skipEntityDetection: true,
-      })
-    } catch (error) {
-      if (!isRichMessageError(error)) throw error
-      if (block) block.richFallback = true
-      return this.telegram.sendMessage({
-        chatId: binding.chatId,
-        topicId: binding.topicId,
-        text: preparePlainAssistantText(rawText, this.config),
-      })
+  async deliverAssistantText(binding, rawText, block = {}) {
+    const deliver = (payload, rich) => {
+      const target = { chatId: binding.chatId, ...payload }
+      if (block.messageId) {
+        target.messageId = block.messageId
+        return ignoreEditRace(() => rich ? this.telegram.editRichMessage(target) : this.telegram.editMessageText(target))
+      }
+      target.topicId = binding.topicId
+      return rich ? this.telegram.sendRichMessage(target) : this.telegram.sendMessage(target)
     }
+    if (!block.richFallback) {
+      const markdown = prepareRichMarkdown(rawText, { imagesAsLinks: block.richImagesAsLinks })
+      try {
+        return await deliver({ markdown, skipEntityDetection: true }, true)
+      } catch (error) {
+        if (!isRichMessageError(error)) throw error
+        if (!block.richImagesAsLinks && /RICH_MESSAGE_PHOTO/.test(error.message)) {
+          const withoutImages = prepareRichMarkdown(rawText, { imagesAsLinks: true })
+          if (withoutImages !== markdown) {
+            block.richImagesAsLinks = true
+            logMirrorFlush("mirror.text.image_links", binding)
+            try {
+              return await deliver({ markdown: withoutImages, skipEntityDetection: true }, true)
+            } catch (retryError) {
+              if (!isRichMessageError(retryError)) throw retryError
+            }
+          }
+        }
+        block.richFallback = true
+        logMirrorFlush("mirror.text.rich_fallback", binding)
+      }
+    }
+    return deliver({ text: preparePlainAssistantText(rawText, this.config) }, false)
   }
 
   async flushTools(binding, tools) {
@@ -467,39 +458,10 @@ export class MirrorRenderer {
 
   async markFinalAssistantMessage(binding, session, assistantMessageID, messageId) {
     const startedAt = Date.now()
-    const block = findAssistantBlock(session, assistantMessageID)
+    const block = findAssistantBlock(session, assistantMessageID, messageId)
     if (!block || block.finalMarked) return
     const rawText = withFinalAnswerMarker(block.text || "...")
-    if (block.richFallback) {
-      await ignoreEditRace(() =>
-        this.telegram.editMessageText({
-          chatId: binding.chatId,
-          messageId,
-          text: preparePlainAssistantText(rawText, this.config),
-        }),
-      )
-    } else {
-      try {
-        await ignoreEditRace(() =>
-          this.telegram.editRichMessage({
-            chatId: binding.chatId,
-            messageId,
-            markdown: prepareRichMarkdown(rawText),
-            skipEntityDetection: true,
-          }),
-        )
-      } catch (error) {
-        if (!isRichMessageError(error)) throw error
-        block.richFallback = true
-        await ignoreEditRace(() =>
-          this.telegram.editMessageText({
-            chatId: binding.chatId,
-            messageId,
-            text: preparePlainAssistantText(rawText, this.config),
-          }),
-        )
-      }
-    }
+    await this.deliverAssistantText(binding, rawText, block)
     block.finalMarked = true
     logMirrorFlush("mirror.final_marked", binding, {
       assistantMessageID,
@@ -647,10 +609,10 @@ function shortText(value, maxChars) {
   return text.length > maxChars ? `${text.slice(0, Math.max(0, maxChars - 3))}...` : text
 }
 
-function findAssistantBlock(session, assistantMessageID) {
+function findAssistantBlock(session, assistantMessageID, messageId) {
   if (!session || !assistantMessageID) return null
   for (const block of session.texts.values()) {
-    if (block.assistantMessageID === assistantMessageID) return block
+    if (block.assistantMessageID === assistantMessageID && block.messageId === messageId) return block
   }
   return null
 }

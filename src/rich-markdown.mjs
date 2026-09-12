@@ -1,5 +1,7 @@
 import { clampTelegram, clampTelegramRichMarkdown, escapeHtml } from "./telegram.mjs"
 import { normalizeNestedRichLists } from "./rich-list-normalization.mjs"
+import { fromMarkdown } from "mdast-util-from-markdown"
+import { toMarkdown } from "mdast-util-to-markdown"
 
 export const FINAL_ANSWER_MARKER = "🏁"
 
@@ -9,8 +11,9 @@ export function closeOpenCodeFence(markdown) {
   return fences && fences.length % 2 === 1 ? `${value}\n\`\`\`` : value
 }
 
-export function prepareRichMarkdown(markdown) {
-  return sanitizeRichMarkdownLinks(closeOpenCodeFence(clampTelegramRichMarkdown(normalizeNestedRichLists(markdown))))
+export function prepareRichMarkdown(markdown, { imagesAsLinks = false } = {}) {
+  const value = sanitizeRichMarkdownLinks(normalizeNestedRichLists(markdown), imagesAsLinks)
+  return closeOpenCodeFence(clampTelegramRichMarkdown(value))
 }
 
 export function withFinalAnswerMarker(text) {
@@ -43,70 +46,71 @@ export function escapeMarkdownV2(text) {
   return String(text ?? "").replace(/[\\_*[\]()~`>#+\-=|{}.!]/g, "\\$&")
 }
 
-function sanitizeRichMarkdownLinks(markdown) {
-  let inFence = false
-  return String(markdown ?? "")
-    .split("\n")
-    .map((line) => {
-      if (/^```/.test(line)) {
-        inFence = !inFence
-        return line
-      }
-      return inFence ? line : sanitizeRichMarkdownLine(line)
+function sanitizeRichMarkdownLinks(markdown, imagesAsLinks) {
+  const source = String(markdown ?? "")
+  if (!/[\[<]/.test(source)) return source
+  const tree = fromMarkdown(source)
+  const definitions = new Map()
+  const replacements = []
+  const walk = (node, visit) => {
+    if (visit(node)) return
+    for (const child of node.children || []) walk(child, visit)
+  }
+  walk(tree, (node) => {
+    if (node.type === "definition" && !definitions.has(node.identifier)) definitions.set(node.identifier, node)
+  })
+  // Replace only parsed links: preserve tables, custom rich syntax, and literal code byte-for-byte.
+  walk(tree, (node) => {
+    if (node.type === "definition" && !isSafeRichUrl(node.url)) {
+      replacements.push({ start: node.position.start.offset, end: node.position.end.offset, value: "" })
+      return true
+    }
+    if (!["link", "image", "linkReference", "imageReference"].includes(node.type)) return false
+    const children = sanitizeLink(node, definitions, imagesAsLinks)
+    if (children.length === 1 && children[0] === node) return true
+    replacements.push({
+      start: node.position.start.offset,
+      end: node.position.end.offset,
+      value: toMarkdown({ type: "root", children: [{ type: "paragraph", children }] }).trimEnd(),
     })
-    .join("\n")
-}
-
-function sanitizeRichMarkdownLine(line) {
-  let result = ""
-  let index = 0
-  let inCode = false
-  while (index < line.length) {
-    if (line[index] === "`") {
-      inCode = !inCode
-      result += line[index]
-      index += 1
-      continue
-    }
-    if (inCode || line[index] !== "[" || line[index - 1] === "!") {
-      result += line[index]
-      index += 1
-      continue
-    }
-    const parsed = parseMarkdownLink(line, index)
-    if (!parsed) {
-      result += line[index]
-      index += 1
-      continue
-    }
-    result += isSafeRichUrl(parsed.url) ? line.slice(index, parsed.end) : parsed.label
-    index = parsed.end
+    return true
+  })
+  let result = source
+  for (const { start, end, value } of replacements.reverse()) {
+    result = `${result.slice(0, start)}${value}${result.slice(end)}`
   }
   return result
 }
 
-function parseMarkdownLink(line, start) {
-  const labelEnd = findUnescaped(line, "]", start + 1)
-  if (labelEnd < 0 || line[labelEnd + 1] !== "(") return null
-  const urlEnd = findUnescaped(line, ")", labelEnd + 2)
-  if (urlEnd < 0) return null
-  const label = line.slice(start + 1, labelEnd)
-  const url = line.slice(labelEnd + 2, urlEnd).trim()
-  if (!label || !url) return null
-  return { label, url, end: urlEnd + 1 }
-}
-
-function findUnescaped(text, needle, start) {
-  for (let index = start; index < text.length; index += 1) {
-    if (text[index] === "\\") {
-      index += 1
-      continue
-    }
-    if (text[index] === needle) return index
+function sanitizeLink(node, definitions, imagesAsLinks, inLink = false) {
+  const image = node.type === "image" || node.type === "imageReference"
+  const target = node.type.endsWith("Reference") ? definitions.get(node.identifier) : node
+  if (!target) return [node]
+  const children = image
+    ? [{ type: "text", value: node.alt || target.url }]
+    : (node.children || []).flatMap((child) => sanitizeInlineLinks(child, definitions, imagesAsLinks, true))
+  if (!isSafeRichUrl(target.url, image && !imagesAsLinks) || (image && imagesAsLinks && inLink)) {
+    if (children.length === 1 && children[0].type === "text" && children[0].value === target.url) return [{ type: "inlineCode", value: target.url }]
+    return [...children, { type: "text", value: " — " }, { type: "inlineCode", value: target.url }]
   }
-  return -1
+  if (image && imagesAsLinks) return [{ type: "link", url: target.url, title: target.title, children }]
+  if (!image && children.some((child, index) => child !== node.children[index])) return [{ ...node, children }]
+  return [node]
 }
 
-function isSafeRichUrl(url) {
-  return /^(https?:\/\/|tg:\/\/|mailto:)[^\s<>()]+$/i.test(url)
+function sanitizeInlineLinks(node, definitions, imagesAsLinks, inLink) {
+  if (["link", "image", "linkReference", "imageReference"].includes(node.type)) return sanitizeLink(node, definitions, imagesAsLinks, inLink)
+  if (!node.children) return [node]
+  const children = node.children.flatMap((child) => sanitizeInlineLinks(child, definitions, imagesAsLinks, inLink))
+  return children.some((child, index) => child !== node.children[index]) ? [{ ...node, children }] : [node]
+}
+
+function isSafeRichUrl(url, image = false) {
+  if (!/^(https?:\/\/|tg:\/\/|mailto:)[^\s<>]+$/i.test(url)) return false
+  try {
+    const parsed = new URL(url)
+    return !image || parsed.protocol === "https:" || parsed.protocol === "http:"
+  } catch {
+    return false
+  }
 }

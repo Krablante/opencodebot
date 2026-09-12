@@ -50,6 +50,10 @@ Telegram message rendering, including best-effort removal of rolled-back text an
 message that moves from accepted to provider retry information starting at attempt three and disappears when output
 resumes. `tool-formatting.mjs` and `rich-markdown.mjs` hold pure formatting helpers; `rich-list-normalization.mjs` uses mdast to isolate Telegram's
 nested-list workaround from general rich-message preparation.
+`rich-markdown.mjs` also uses the existing mdast dependencies to replace unsupported link/image destinations by source
+range, without reserializing unrelated Markdown. `MirrorRenderer.deliverAssistantText` owns the shared send/edit policy:
+rich Markdown, one image-to-link retry for photo rejection, then the existing ordinary-text fallback. The selected mode
+lives only on the in-memory text block; there is no new config, journal, worker, or polling path.
 
 ## Checks
 
@@ -76,6 +80,15 @@ Run syntax checks:
 ```bash
 npm run check
 ```
+
+For assistant-formatting fixes, manually inspect prepared Markdown for local images, reference links, paths containing
+spaces/parentheses/backticks, linked images, nested lists, and literal code. Telegram's `savePreparedInlineMessage` with an
+article containing `InputRichMessageContent` can validate disposable Markdown against the real Bot API parser without
+posting to a chat or starting another poller. Use an allowed operator and an allowed chat type; the prepared result expires
+automatically and must not be shared. This validates parsing, not phone-client layout or actual send/edit delivery; it also
+restricts inline media to previously uploaded files. Check the renderer's send, edit, final-marker, photo-rejection, and
+transport-failure branches with bounded inline probes, then inspect deployment health and metadata-only fallback logs.
+Do not create test files for these checks.
 
 Run the small dedicated test suite:
 
