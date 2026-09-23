@@ -24,8 +24,10 @@ export class ControlMenu {
     this.currentPage = "home"
     this.currentActor = null
     this.statusRefreshTimer = null
+    this.statusRefreshPending = false
     this.backendRequester = backendRequester
     this.statusSnapshotPromise = null
+    this.menuOperation = Promise.resolve()
   }
 
   async start() {
@@ -36,8 +38,8 @@ export class ControlMenu {
     return message
   }
 
-  async open(message, page = "home") {
-    const panel = await this.ensureMenu(page, message?.from)
+  async open(message, page = "home", options = {}) {
+    const panel = await this.ensureMenu(page, message?.from, options)
     if (!panel?.message_id) return null
     if (this.isGeneralMessage(message)) {
       await this.deleteQuietly(message.chat?.id, message.message_id)
@@ -58,7 +60,10 @@ export class ControlMenu {
   async handleCallback(query) {
     const data = String(query?.data || "")
     if (!data.startsWith(CALLBACK_PREFIX)) return false
+    return this.runMenuOperation(() => this.handleCurrentCallback(query, data))
+  }
 
+  async handleCurrentCallback(query, data) {
     const current = this.state.controlMenuMessage()
     if (!current || String(query.message?.chat?.id) !== String(current.chatId) || Number(query.message?.message_id) !== Number(current.messageId)) {
       await this.answer(query, t("controlMenu.stale"), true)
@@ -115,18 +120,18 @@ export class ControlMenu {
   async dispatch(query, action) {
     if (["home", "sessions", "new", "voice", "voice-advanced", "personal", "system", "help"].includes(action)) {
       await this.answer(query)
-      await this.editMenu(action, query.from)
+      await this.editMenuUnlocked(action, query.from)
       return
     }
     if (action === "refresh") {
       await this.answer(query, t("controlMenu.refreshed"))
-      await this.editMenu("home", query.from)
+      await this.editMenuUnlocked("home", query.from)
       return
     }
     if (action === "new:create") {
       await this.answer(query, t("controlMenu.new.creating"))
       await this.createSession({ ...query.message, from: query.from }, "")
-      await this.editMenu("home", query.from)
+      await this.editMenuUnlocked("home", query.from)
       return
     }
     if (action.startsWith("voice:auto:")) {
@@ -138,7 +143,7 @@ export class ControlMenu {
       }
       await this.finalVoice.patchSettings({ enabled })
       await this.answer(query, enabled ? t("controlMenu.enabled") : t("controlMenu.disabled"))
-      await this.editMenu("voice", query.from)
+      await this.editMenuUnlocked("voice", query.from)
       return
     }
     if (action.startsWith("voice:profile:")) {
@@ -149,17 +154,17 @@ export class ControlMenu {
       const voice = selected.voices.includes(currentVoice) ? currentVoice : selected.defaultVoice
       await this.finalVoice.patchSettings({ profile: selected.id, voice })
       await this.answer(query, t("controlMenu.saved"))
-      await this.editMenu("voice", query.from)
+      await this.editMenuUnlocked("voice", query.from)
       return
     }
     if (action === "voice:profiles") {
       await this.answer(query)
-      await this.editMenu("voice-profiles", query.from)
+      await this.editMenuUnlocked("voice-profiles", query.from)
       return
     }
     if (action === "voice:voices") {
       await this.answer(query)
-      await this.editMenu("voice-voices", query.from)
+      await this.editMenuUnlocked("voice-voices", query.from)
       return
     }
     if (action.startsWith("voice:voice:")) {
@@ -168,7 +173,7 @@ export class ControlMenu {
       if (!voice) return this.answer(query, t("controlMenu.invalidChoice"), true)
       await this.finalVoice.patchSettings({ voice })
       await this.answer(query, t("controlMenu.saved"))
-      await this.editMenu("voice", query.from)
+      await this.editMenuUnlocked("voice", query.from)
       return
     }
     if (action.startsWith("voice:min:")) {
@@ -176,7 +181,7 @@ export class ControlMenu {
       if (!Number.isSafeInteger(value) || value < 0) return this.answer(query, t("controlMenu.invalidChoice"), true)
       await this.finalVoice.patchSettings({ minFinalChars: value })
       await this.answer(query, t("controlMenu.saved"))
-      await this.editMenu("voice-advanced", query.from)
+      await this.editMenuUnlocked("voice-advanced", query.from)
       return
     }
     if (action === "voice:prompt:edit" || action === "voice:intro:edit") {
@@ -189,7 +194,7 @@ export class ControlMenu {
       const prompt = action.includes(":prompt:")
       await this.finalVoice.patchSettings(prompt ? { prompt: null } : { introTemplate: null })
       await this.answer(query, t("controlMenu.saved"))
-      await this.editMenu("voice-advanced", query.from)
+      await this.editMenuUnlocked("voice-advanced", query.from)
       return
     }
     if (action.startsWith("notify:")) {
@@ -201,14 +206,14 @@ export class ControlMenu {
       if (!Number.isInteger(count) || count < 1 || count > 10) return this.answer(query, t("controlMenu.invalidChoice"), true)
       await this.state.setContextTurnsForUser(query.from?.id, count)
       await this.answer(query, t("controlMenu.saved"))
-      await this.editMenu("personal", query.from)
+      await this.editMenuUnlocked("personal", query.from)
       return
     }
     if (action.startsWith("mirror:")) {
       const enabled = action.endsWith(":1")
       await this.state.setMirrorEnabled(enabled)
       await this.answer(query, enabled ? t("controlMenu.enabled") : t("controlMenu.disabled"))
-      await this.editMenu("system", query.from)
+      await this.editMenuUnlocked("system", query.from)
       return
     }
     if (action.startsWith("mode:")) {
@@ -216,7 +221,7 @@ export class ControlMenu {
       if (!["full", "economy"].includes(mode)) return this.answer(query, t("controlMenu.invalidChoice"), true)
       await this.state.setMirrorMode(mode)
       await this.answer(query, t("controlMenu.saved"))
-      await this.editMenu("system", query.from)
+      await this.editMenuUnlocked("system", query.from)
       return
     }
     if (action.startsWith("lang:")) {
@@ -224,7 +229,7 @@ export class ControlMenu {
       if (!["en", "ru"].includes(language)) return this.answer(query, t("controlMenu.invalidChoice"), true)
       await this.refreshCommandMenu(language)
       await this.answer(query, t("controlMenu.saved"))
-      await this.editMenu("system", query.from)
+      await this.editMenuUnlocked("system", query.from)
       return
     }
     await this.answer(query, t("controlMenu.invalidChoice"), true)
@@ -246,7 +251,7 @@ export class ControlMenu {
     }
     await this.state.setFinalNotificationsEnabledFor(userId, enabled)
     await this.answer(query, enabled ? t("controlMenu.enabled") : t("controlMenu.disabled"))
-    await this.editMenu("personal", query.from)
+    await this.editMenuUnlocked("personal", query.from)
   }
 
   async startInput(query, field) {
@@ -269,10 +274,20 @@ export class ControlMenu {
     })
   }
 
-  async ensureMenu(page = "home", actor) {
+  runMenuOperation(operation) {
+    const result = this.menuOperation.then(operation)
+    this.menuOperation = result.catch(() => {})
+    return result
+  }
+
+  ensureMenu(page = "home", actor, options = {}) {
+    return this.runMenuOperation(() => this.ensureMenuUnlocked(page, actor, options))
+  }
+
+  async ensureMenuUnlocked(page = "home", actor, { replace = false } = {}) {
     this.rememberPage(page, actor)
     const existing = this.state.controlMenuMessage()
-    if (existing && String(existing.chatId) === String(this.chatId())) {
+    if (!replace && existing && String(existing.chatId) === String(this.chatId())) {
       const rendered = await this.render(page, actor)
       try {
         const edited = await this.telegram.editMessageText({
@@ -298,15 +313,20 @@ export class ControlMenu {
       disableWebPagePreview: true,
     })
     await this.state.setControlMenuMessage({ chatId: this.chatId(), messageId: sent.message_id })
+    if (existing) await this.retireMenu(existing)
     await this.pinMenu(sent.message_id)
     logInfo("control_menu.created", { chatId: this.chatId(), messageId: sent.message_id })
     return sent
   }
 
-  async editMenu(page, actor) {
+  editMenu(page, actor) {
+    return this.runMenuOperation(() => this.editMenuUnlocked(page, actor))
+  }
+
+  async editMenuUnlocked(page, actor) {
     this.rememberPage(page, actor)
     const current = this.state.controlMenuMessage()
-    if (!current) return this.ensureMenu(page, actor)
+    if (!current) return this.ensureMenuUnlocked(page, actor)
     const rendered = await this.render(page, actor)
     if (this.currentPage !== page || this.currentActor !== (actor || null)) return null
     try {
@@ -320,7 +340,7 @@ export class ControlMenu {
       if (isMessageNotModified(error)) return null
       if (isMissingMessage(error)) {
         await this.state.setControlMenuMessage()
-        return this.ensureMenu(page, actor)
+        return this.ensureMenuUnlocked(page, actor)
       }
       throw error
     }
@@ -579,12 +599,17 @@ export class ControlMenu {
   }
 
   scheduleStatusRefresh() {
-    if (!["home", "sessions"].includes(this.currentPage)) return
+    if (this.statusRefreshPending || !["home", "sessions"].includes(this.currentPage)) return
     clearTimeout(this.statusRefreshTimer)
     this.statusRefreshTimer = setTimeout(() => {
-      if (!["home", "sessions"].includes(this.currentPage)) return
-      this.editMenu(this.currentPage, this.currentActor).catch((error) => {
+      this.statusRefreshPending = true
+      this.runMenuOperation(() => {
+        if (!["home", "sessions"].includes(this.currentPage)) return null
+        return this.editMenuUnlocked(this.currentPage, this.currentActor)
+      }).catch((error) => {
         logErrorEvent("control_menu.status_refresh.failed", error, { page: this.currentPage })
+      }).finally(() => {
+        this.statusRefreshPending = false
       })
     }, 500)
     this.statusRefreshTimer.unref?.()
@@ -622,6 +647,25 @@ export class ControlMenu {
     } catch (error) {
       logWarn("control_menu.pin.failed", { chatId: this.chatId(), messageId, error: error.message })
     }
+  }
+
+  async retireMenu({ chatId, messageId }) {
+    try {
+      await this.telegram.deleteMessage({ chatId, messageId, suppressFailureLog: true })
+      return
+    } catch (error) {
+      if (/message to delete not found/i.test(String(error?.message || ""))) return
+      // Telegram may refuse deletion of an old message; keep it inert instead.
+    }
+    await Promise.all([
+      this.telegram.request("editMessageReplyMarkup", {
+        chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] },
+      }, 0, { suppressFailureLog: true }).catch((error) => {
+        if (!isMessageNotModified(error) && !isMissingMessage(error)) logWarn("control_menu.retire.keyboard.failed", { error: error.message })
+      }),
+      this.telegram.request("unpinChatMessage", { chat_id: chatId, message_id: messageId }, 0, { suppressFailureLog: true })
+        .catch((error) => logWarn("control_menu.retire.unpin.failed", { error: error.message })),
+    ])
   }
 
   async answer(query, text, showAlert = false) {

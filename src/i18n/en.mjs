@@ -20,7 +20,7 @@ export const en = {
   "command.description.compact": "Compact the current session context",
   "command.description.context": "Export current session context",
   "command.description.speak": "Voice a replied message summary",
-  "command.description.menu": "Open the control center in General",
+  "command.description.menu": "Recreate the control center in General",
 
   "controlMenu.title": "🧭 <b>OpenCodeBot</b>\n<code>Control center · General</code>",
   "controlMenu.opened": "The control panel is in General. This message will disappear in 30 seconds.",

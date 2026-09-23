@@ -57,7 +57,7 @@ export function createTelegramCommandHandlers({
     session: handleSessionInfo,
     new: createPendingTopic,
     reset: handleResetCommand,
-    menu: (message) => controlMenu.open(message),
+    menu: (message) => controlMenu.open(message, "home", { replace: true }),
     help: (message) => controlMenu.open(message, "help"),
     start: (message) => controlMenu.open(message),
     q: handleQueueCommand,

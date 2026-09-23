@@ -14,9 +14,13 @@ The panel is created or recovered at startup, edited in place, and pinned withou
 - global interface language;
 - entry points for a new session, recent sessions, voice, personal settings, system settings, and help.
 
-`/menu`, `/start`, and `/help` all lead to the panel. In General, the command message is removed after the panel is
-refreshed. In another topic, the bot returns a temporary `Open panel` link to General instead of creating another menu.
-The link message is removed after 30 seconds.
+`/menu` creates a new panel at the bottom of General and makes it the only active panel, even when the command is issued
+from another topic. The old panel is deleted; if Telegram refuses deletion (for example, because of its age), the bot
+removes its keyboard and unpins that specific message instead. The new panel is pinned silently. `/start`, `/help`, the
+Refresh button, and automatic updates continue to edit the existing panel in place.
+
+In General, the command message is removed after the panel is ready. In another topic, the bot returns a temporary
+`Open panel` link to the active General panel instead of creating a topic-local menu. The link disappears after 30 seconds.
 
 The panel deliberately uses an inline keyboard rather than a persistent reply keyboard. It does not occupy the message
 composer and cannot leak topic-specific actions into unrelated topics.
@@ -85,7 +89,9 @@ minutes, belongs to the Telegram user who opened it, and is accepted only as a r
 not durable across restart because it is UI interaction state, not bot configuration.
 
 Callbacks are handled only after the normal allowed-chat and allowed-user checks. A callback from an old panel message
-receives a stale-panel alert and cannot change state.
+receives a stale-panel alert and cannot change state, even if Telegram could not remove its keyboard. Panel creation,
+edits, and callbacks share one in-memory operation lane, so concurrent commands and automatic refreshes cannot recreate
+or reactivate a retired panel. A callback checks the active message when its turn begins, not before waiting in that lane.
 
 ## State And Recovery
 
@@ -106,6 +112,10 @@ At startup the bot edits this message with fresh state and pins it. If Telegram 
 can no longer be edited, the stale reference is cleared and one replacement panel is created. Pin failure is logged but
 does not remove or duplicate the working panel.
 
+Explicit replacement sends and saves the new message before retiring the old one. A send failure therefore leaves the
+previous panel active. Cleanup failures are logged and do not invalidate the new panel; only its saved message reference
+can authorize callbacks. This adds no state schema, background worker, or periodic Telegram request.
+
 The implementation lives in `src/control-menu.mjs`. It uses the existing Telegram transport, state store, prompt queue,
 Final Voice module, and session-creation function. It does not maintain a second command implementation or introduce a
 UI framework.
@@ -115,7 +125,8 @@ UI framework.
 After deployment:
 
 1. Open General and verify one pinned `OpenCodeBot · Control center` message.
-2. Confirm that `/menu` refreshes that message without creating a second panel.
+2. Run `/menu` twice: each invocation creates a new pinned message in General, and only the newest panel works. Repeat
+   from another topic and verify the temporary link points to the new General panel. `/start` and Refresh must keep its id.
 3. Open `Sessions` and follow one topic link.
 4. Change one reversible setting, verify its displayed state, and restore the preferred value.
 5. Open `Voice → Advanced settings`, start a prompt or intro edit, then send `/cancel` as a reply.

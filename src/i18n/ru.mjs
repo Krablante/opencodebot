@@ -20,7 +20,7 @@ export const ru = {
   "command.description.compact": "Сжать контекст текущей сессии",
   "command.description.context": "Экспортировать контекст текущей сессии",
   "command.description.speak": "Озвучить краткий пересказ сообщения",
-  "command.description.menu": "Открыть центр управления в General",
+  "command.description.menu": "Пересоздать центр управления в General",
 
   "controlMenu.title": "🧭 <b>OpenCodeBot</b>\n<code>Центр управления · General</code>",
   "controlMenu.opened": "Панель управления находится в General. Это сообщение исчезнет через 30 секунд.",
