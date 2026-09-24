@@ -7,6 +7,7 @@ const CALLBACK_PREFIX = "panel:"
 const INPUT_TTL_MS = 5 * 60 * 1000
 const LINK_MESSAGE_TTL_MS = 30 * 1000
 const MAX_VISIBLE_SESSIONS = 12
+const PROFILES_PER_PAGE = 7
 const MIN_LENGTH_OPTIONS = [0, 200, 300, 500, 1000, 2000]
 const SESSION_STATUS_TIMEOUT_MS = 3000
 
@@ -119,6 +120,18 @@ export class ControlMenu {
 
   async dispatch(query, action) {
     if (["home", "sessions", "new", "voice", "voice-advanced", "personal", "system", "help"].includes(action)) {
+      await this.answer(query)
+      await this.editMenuUnlocked(action, query.from)
+      return
+    }
+    if (/^profiles:\d+$/.test(action)) {
+      await this.answer(query)
+      await this.editMenuUnlocked(action, query.from)
+      return
+    }
+    if (/^profile:\d+:\d+$/.test(action)) {
+      const index = Number(action.split(":")[1])
+      if (!this.launchProfiles()[index]) return this.answer(query, t("controlMenu.invalidChoice"), true)
       await this.answer(query)
       await this.editMenuUnlocked(action, query.from)
       return
@@ -349,6 +362,11 @@ export class ControlMenu {
   async render(page, actor) {
     const sessionSnapshot = ["home", "sessions"].includes(page) ? await this.sessionStatusSnapshot() : null
     if (page === "sessions") return this.renderSessions(sessionSnapshot)
+    if (page.startsWith("profiles:")) return this.renderLaunchProfiles(Number(page.split(":")[1]))
+    if (page.startsWith("profile:")) {
+      const [, index, listPage] = page.split(":").map(Number)
+      return this.renderLaunchProfile(index, listPage)
+    }
     if (page === "new") return this.renderNew()
     if (page === "voice") return this.renderVoice()
     if (page === "voice-advanced") return this.renderVoiceAdvanced()
@@ -382,6 +400,7 @@ export class ControlMenu {
     ].join("\n")
     return this.view(text, [
       [this.callback(t("controlMenu.button.new"), "new"), this.callback(t("controlMenu.button.sessions"), "sessions")],
+      [this.callback(t("controlMenu.button.profiles"), "profiles:0")],
       [this.callback(t("controlMenu.button.voice"), "voice"), this.callback(t("controlMenu.button.personal"), "personal")],
       [this.callback(t("controlMenu.button.system"), "system"), this.callback(t("controlMenu.button.help"), "help")],
       [this.callback(t("controlMenu.button.refresh"), "refresh")],
@@ -431,6 +450,57 @@ export class ControlMenu {
     ].join("\n"), [
       [this.callback(t("controlMenu.new.create"), "new:create")],
       [this.callback(t("controlMenu.button.back"), "home")],
+    ])
+  }
+
+  launchProfiles() {
+    return Object.entries(this.config.promptProfiles || {}).sort(([left], [right]) => left.localeCompare(right, "en"))
+  }
+
+  renderLaunchProfiles(page) {
+    const profiles = this.launchProfiles()
+    const pages = Math.max(1, Math.ceil(profiles.length / PROFILES_PER_PAGE))
+    const current = Math.min(page, pages - 1)
+    const start = current * PROFILES_PER_PAGE
+    const visible = profiles.slice(start, start + PROFILES_PER_PAGE)
+    const lines = [
+      t("controlMenu.profiles.title"),
+      t("controlMenu.profiles.count", { count: profiles.length, page: current + 1, pages }),
+      "",
+      ...visible.map(([name, profile]) => t("controlMenu.profiles.item", {
+        name: escapeHtml(name),
+        model: escapeHtml(profile.model?.modelID || t("controlMenu.profiles.inherited")),
+        variant: escapeHtml(profile.model?.variant || t("controlMenu.profiles.inherited")),
+      })),
+      ...(visible.length ? [] : [t("controlMenu.profiles.empty")]),
+      "",
+      t("controlMenu.profiles.hint"),
+    ]
+    const buttons = rows(visible.map(([name], offset) =>
+      this.callback(name, `profile:${start + offset}:${current}`)), 2)
+    const pagination = []
+    if (current > 0) pagination.push(this.callback(t("controlMenu.profiles.previous"), `profiles:${current - 1}`))
+    if (current + 1 < pages) pagination.push(this.callback(t("controlMenu.profiles.next"), `profiles:${current + 1}`))
+    if (pagination.length) buttons.push(pagination)
+    buttons.push([this.callback(t("controlMenu.button.back"), "home")])
+    return this.view(lines.join("\n"), buttons)
+  }
+
+  renderLaunchProfile(index, page) {
+    const [name, profile] = this.launchProfiles()[index]
+    const value = (text) => escapeHtml(text || t("controlMenu.profiles.inherited"))
+    return this.view([
+      t("controlMenu.profiles.detailTitle", { name: escapeHtml(name) }),
+      "",
+      t("controlMenu.profiles.model", { value: value(profile.model?.modelID) }),
+      t("controlMenu.profiles.provider", { value: value(profile.model?.providerID) }),
+      t("controlMenu.profiles.variant", { value: value(profile.model?.variant) }),
+      t("controlMenu.profiles.agent", { value: value(profile.agent) }),
+      t("controlMenu.profiles.system", { value: value(profile.opencodezSystem) }),
+      "",
+      t("controlMenu.profiles.usage", { name: escapeHtml(name) }),
+    ].join("\n"), [
+      [this.callback(t("controlMenu.button.back"), `profiles:${page}`)],
     ])
   }
 

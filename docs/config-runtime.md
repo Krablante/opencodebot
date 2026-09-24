@@ -298,6 +298,11 @@ server. Same-server reset preserves the current directory, while cross-server re
 the OpenCodez session's next model so the web composer stays in sync, and it keeps sending the same model in prompt
 payloads so Telegram-origin prompts do not depend on browser-local state.
 
+General's `Launch profiles` view reads this effective merged map directly. It includes runtime-added and overridden
+profiles, shows seven at a time, and offers a detailed card for each. Browsing is read-only; choose a profile by typing
+`/new [server] profile [title]` for a new topic or `/reset profile [server]` inside an existing session topic.
+Without a profile, `/new` uses `defaultPrompt`, while `/reset` keeps the topic's current profile.
+
 | Profile | Model | Reasoning |
 | --- | --- | --- |
 | `sol` | GPT-6 Sol | high |

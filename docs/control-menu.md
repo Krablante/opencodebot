@@ -12,7 +12,7 @@ The panel is created or recovered at startup, edited in place, and pinned withou
 - global automatic Final Voice state;
 - global mirror state and detail mode;
 - global interface language;
-- entry points for a new session, recent sessions, voice, personal settings, system settings, and help.
+- entry points for a new session, recent sessions, launch profiles, voice, personal settings, system settings, and help.
 
 `/menu` creates a new panel at the bottom of General and makes it the only active panel, even when the command is issued
 from another topic. The old panel is deleted; if Telegram refuses deletion (for example, because of its age), the bot
@@ -35,6 +35,10 @@ The panel labels shared and personal state explicitly:
   shown read-only.
 - `Sessions` lists the twelve most recently active bindings and links to their Telegram topics. Destructive session
   actions are intentionally not offered from General.
+- `Launch profiles` lists every configured session profile, including local additions and overrides. Seven appear per page
+  with model and reasoning variant; tapping a name shows provider, agent, OpenCodez System, and the commands to use it.
+  This is a reference view: opening a profile does not alter a session or the default. It is separate from Final Voice's
+  synthesis profiles.
 
 Running/idle state comes from `/session/status` in the active bindings' working directories, not from an unscoped
 host-level request. Calls are coalesced while a snapshot is in flight and use the same backend backoff as recovery.
@@ -128,9 +132,12 @@ After deployment:
 2. Run `/menu` twice: each invocation creates a new pinned message in General, and only the newest panel works. Repeat
    from another topic and verify the temporary link points to the new General panel. `/start` and Refresh must keep its id.
 3. Open `Sessions` and follow one topic link.
-4. Change one reversible setting, verify its displayed state, and restore the preferred value.
-5. Open `Voice → Advanced settings`, start a prompt or intro edit, then send `/cancel` as a reply.
-6. Verify Telegram's slash suggestions contain ten commands and hidden operator commands still work when typed.
+4. Open `Launch profiles`, turn to the last page, and inspect a profile card. Verify its model, variant, agent, and
+   System match the effective `promptProfiles` configuration and that Back returns to the same page. No new topic should
+   be created by browsing.
+5. Change one reversible setting, verify its displayed state, and restore the preferred value.
+6. Open `Voice → Advanced settings`, start a prompt or intro edit, then send `/cancel` as a reply.
+7. Verify Telegram's slash suggestions contain ten commands and hidden operator commands still work when typed.
 
 If the panel was manually deleted, run `/menu` or restart the service. If it exists but cannot be pinned, grant the bot
 `Pin messages` permission; the menu remains usable through `/menu` while unpinned.

@@ -215,7 +215,9 @@ The local Telegram Bot API sidecar is also optional. Add `TELEGRAM_API_ID` and `
 ## Commands
 
 OpenCodeBot creates one pinned control-panel message in General. It shows active sessions and current global state, and
-provides inline controls for new sessions, Final Voice, personal notifications/context depth, language, and mirror mode.
+provides a browsable list of configured launch profiles alongside controls for new sessions, Final Voice, personal
+notifications/context depth, language, and mirror mode. A profile card explains its model, reasoning variant, agent,
+System, and how to use it with `/new` or `/reset`; browsing does not change the current session.
 Use `/menu` to recreate it at the bottom of General, retiring the old panel. `/start` and `/help` open the existing panel.
 Running these commands in another topic returns a temporary link to the active General panel rather than creating a
 topic-local menu. See [General Control Menu](docs/control-menu.md).
