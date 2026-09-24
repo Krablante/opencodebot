@@ -10,7 +10,7 @@ import { baseTitleFromTelegramTitle, managedTopicTitle } from "../src/topic-titl
 test("built-in prompt profiles use current models, variants, and System prompts", () => {
   const profiles = normalizePromptProfiles()
 
-  assert.deepEqual(Object.keys(profiles).sort(), ["d4flash", "d4pro", "gpt6", "gpt6m", "luna", "sol", "solh", "solm", "solmax", "terra"])
+  assert.deepEqual(Object.keys(profiles).sort(), ["d4flash", "d4pro", "gpt6", "gpt6m", "luna", "lunah", "lunamax", "sol", "solh", "solm", "solmax", "solx", "terra"])
   assert.deepEqual(profiles.gpt6, {
     agent: "build",
     model: { providerID: "openai", modelID: "gpt-6-astra", variant: "high" },
@@ -23,18 +23,18 @@ test("built-in prompt profiles use current models, variants, and System prompts"
   })
   assert.deepEqual(profiles.sol, {
     agent: "build",
-    model: { providerID: "openai", modelID: "gpt-5.6-sol", variant: "xhigh" },
-    opencodezSystem: "codex_gpt_5_6_sol",
+    model: { providerID: "openai", modelID: "gpt-6-sol", variant: "high" },
+    opencodezSystem: "codex_gpt_6_sol",
   })
-  assert.equal(profiles.luna.opencodezSystem, "codex_gpt_5_6_luna_terra")
+  assert.equal(profiles.luna.opencodezSystem, "codex_gpt_6_luna")
   assert.equal(profiles.terra.opencodezSystem, "codex_gpt_5_6_luna_terra")
   assert.equal(profiles.d4flash.opencodezSystem, "default")
   assert.equal(profiles.d4pro.opencodezSystem, "default")
-  for (const [name, variant] of [["solm", "medium"], ["solh", "high"], ["sol", "xhigh"], ["solmax", "max"]]) {
+  for (const [name, variant] of [["solm", "medium"], ["solh", "high"], ["sol", "high"], ["solx", "xhigh"], ["solmax", "max"]]) {
     assert.deepEqual(profiles[name], {
       agent: "build",
-      model: { providerID: "openai", modelID: "gpt-5.6-sol", variant },
-      opencodezSystem: "codex_gpt_5_6_sol",
+      model: { providerID: "openai", modelID: "gpt-6-sol", variant },
+      opencodezSystem: "codex_gpt_6_sol",
     })
   }
   assert.deepEqual(profileFromMessages([{ info: { role: "user", agent: "build", model: profiles.sol.model } }]), {
@@ -63,7 +63,7 @@ test("/new resolves a profile and preserves an unknown token as title text", asy
   }, "nuc", "ses_test", parsed.promptProfile)
   assert.deepEqual(calls, [
     ["model", "nuc", "ses_test", profiles.sol.model, {}],
-    ["system", "nuc", "ses_test", "codex_gpt_5_6_sol", {}],
+    ["system", "nuc", "ses_test", "codex_gpt_6_sol", {}],
   ])
   assert.equal(parseNewTopicArgs("nuc custom-token old-chat", options).title, "custom-token old-chat")
 })

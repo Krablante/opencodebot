@@ -9,11 +9,9 @@ const defaultPromptProfiles = {
     model: { providerID: "deepseek", modelID: "deepseek-v4-pro", variant: "max" },
     opencodezSystem: "default",
   },
-  luna: {
-    agent: "build",
-    model: { providerID: "openai", modelID: "gpt-5.6-luna", variant: "xhigh" },
-    opencodezSystem: "codex_gpt_5_6_luna_terra",
-  },
+  luna: lunaProfile("xhigh"),
+  lunah: lunaProfile("high"),
+  lunamax: lunaProfile("max"),
   terra: {
     agent: "build",
     model: { providerID: "openai", modelID: "gpt-5.6-terra", variant: "xhigh" },
@@ -23,7 +21,8 @@ const defaultPromptProfiles = {
   gpt6m: astraProfile("medium"),
   solm: solProfile("medium"),
   solh: solProfile("high"),
-  sol: solProfile("xhigh"),
+  sol: solProfile("high"),
+  solx: solProfile("xhigh"),
   solmax: solProfile("max"),
 }
 
@@ -38,8 +37,16 @@ function astraProfile(variant) {
 function solProfile(variant) {
   return {
     agent: "build",
-    model: { providerID: "openai", modelID: "gpt-5.6-sol", variant },
-    opencodezSystem: "codex_gpt_5_6_sol",
+    model: { providerID: "openai", modelID: "gpt-6-sol", variant },
+    opencodezSystem: "codex_gpt_6_sol",
+  }
+}
+
+function lunaProfile(variant) {
+  return {
+    agent: "build",
+    model: { providerID: "openai", modelID: "gpt-6-luna", variant },
+    opencodezSystem: "codex_gpt_6_luna",
   }
 }
 

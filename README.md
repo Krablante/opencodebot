@@ -344,12 +344,15 @@ topics.
 
 Use `/mirror_on` and `/mirror_off` when you need to pause or resume web-to-Telegram mirroring without stopping the bot.
 
-Default chat profiles are `d4flash`, `d4pro`, `luna`, `terra`, `gpt6`, `gpt6m`, `solm`, `solh`, `sol`, and `solmax`. Each profile keeps
+Default chat profiles are `d4flash`, `d4pro`, `luna`, `lunah`, `lunamax`, `terra`, `gpt6`, `gpt6m`, `sol`, `solm`, `solx`, `solh`, and `solmax`. Each profile keeps
 its agent, model, variant, and OpenCodez System prompt in `promptProfiles`; local deployments can override those values
-in runtime config without changing code. DeepSeek profiles use the OpenCodez `default` System prompt, Luna and Terra
-share `codex_gpt_5_6_luna_terra`, and all four Sol profiles use `codex_gpt_5_6_sol`. `gpt6` and `gpt6m` both use GPT-6
-Astra with its bundled `codex_gpt_6_astra` System and select `high` and `medium` reasoning respectively. The four Sol
-profiles select the same Sol model with `medium`, `high`, `xhigh`, and `max` variants respectively.
+in runtime config without changing code. Sol and Luna now use GPT-6 with their distinct bundled `codex_gpt_6_sol` and
+`codex_gpt_6_luna` Systems. `sol` means high, `solm` medium, and `solx` xhigh; `luna` means xhigh, `lunah` high, and
+`lunamax` max. `solh` retains high and `solmax` max. `gpt6`/`gpt6m` remain Astra high/medium; Terra and DeepSeek
+profiles are unchanged. These new bundled Systems require OpenCodez `1.18.32+opencodez.1` or newer.
+
+Explicit runtime profiles override built-ins. Remove old copied Sol/Luna entries to inherit updated defaults, or update
+their model, variant, and System together. See [Prompt Profiles](docs/config-runtime.md#prompt-profiles) for the full table.
 
 `/reset [profile] [server]` may change profile, server, or both while preserving the current value when omitted.
 Same-server reset preserves the current directory; cross-server reset checks the target first and uses its configured

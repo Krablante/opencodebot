@@ -138,8 +138,18 @@
     },
     "luna": {
       "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-5.6-luna", "variant": "xhigh" },
-      "opencodezSystem": "codex_gpt_5_6_luna_terra"
+      "model": { "providerID": "openai", "modelID": "gpt-6-luna", "variant": "xhigh" },
+      "opencodezSystem": "codex_gpt_6_luna"
+    },
+    "lunah": {
+      "agent": "build",
+      "model": { "providerID": "openai", "modelID": "gpt-6-luna", "variant": "high" },
+      "opencodezSystem": "codex_gpt_6_luna"
+    },
+    "lunamax": {
+      "agent": "build",
+      "model": { "providerID": "openai", "modelID": "gpt-6-luna", "variant": "max" },
+      "opencodezSystem": "codex_gpt_6_luna"
     },
     "terra": {
       "agent": "build",
@@ -158,23 +168,28 @@
     },
     "solm": {
       "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-5.6-sol", "variant": "medium" },
-      "opencodezSystem": "codex_gpt_5_6_sol"
+      "model": { "providerID": "openai", "modelID": "gpt-6-sol", "variant": "medium" },
+      "opencodezSystem": "codex_gpt_6_sol"
     },
     "solh": {
       "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-5.6-sol", "variant": "high" },
-      "opencodezSystem": "codex_gpt_5_6_sol"
+      "model": { "providerID": "openai", "modelID": "gpt-6-sol", "variant": "high" },
+      "opencodezSystem": "codex_gpt_6_sol"
     },
     "sol": {
       "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-5.6-sol", "variant": "xhigh" },
-      "opencodezSystem": "codex_gpt_5_6_sol"
+      "model": { "providerID": "openai", "modelID": "gpt-6-sol", "variant": "high" },
+      "opencodezSystem": "codex_gpt_6_sol"
+    },
+    "solx": {
+      "agent": "build",
+      "model": { "providerID": "openai", "modelID": "gpt-6-sol", "variant": "xhigh" },
+      "opencodezSystem": "codex_gpt_6_sol"
     },
     "solmax": {
       "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-5.6-sol", "variant": "max" },
-      "opencodezSystem": "codex_gpt_5_6_sol"
+      "model": { "providerID": "openai", "modelID": "gpt-6-sol", "variant": "max" },
+      "opencodezSystem": "codex_gpt_6_sol"
     }
   },
   "web": {
