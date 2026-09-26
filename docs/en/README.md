@@ -1,6 +1,6 @@
 # OpenCodeBot documentation
 
-[English](README.md) · [Русский](../ru/README.md) · [Project overview](../../README.md)
+🇬🇧 [English](README.md) · 🇷🇺 [Русский](../ru/README.md) · [Project overview](../../README.md)
 
 Start with the [project README](../../README.md) if you have not installed the bot yet. This index separates the tasks you do in Telegram from the things you configure and operate on the host.
 
