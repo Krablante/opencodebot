@@ -1,5 +1,7 @@
 # Telegram Workflow
 
+[English](telegram-workflow.md) · [Русский](../ru/telegram-workflow.md)
+
 Telegram is the companion surface, not a second OpenCodez backend. The bot binds Telegram forum topics to OpenCodez
 sessions, sends prompts through the normal OpenCodez API, and mirrors visible progress from OpenCodez events and
 history. If OpenCodez says something happened, Telegram can show it; if a browser dropdown changed but no prompt was
@@ -79,7 +81,7 @@ topic, so General and working topics share this list.
 `/artifacts_here` marks the current forum topic as the only artifact target for agent uploads. If another topic later
 runs `/artifacts_here`, the new topic replaces the old one. Artifact topics do not mirror OpenCodez sessions. Ordinary
 text there is ignored as a prompt and returns concise dropbox instructions, while user-dropped files are saved to the
-configured artifact upload folder. A caption such as `nuc photo1, photo2.png` selects the server and renames files in
+configured artifact upload folder. A caption such as `workstation photo1, photo2.png` selects the server and renames files in
 order; omitted extensions are inherited from each source filename. See
 [Artifact Gateway](artifact-gateway.md#user-dropped-files) for the complete caption contract, plugin, gateway, and file
 dropbox setup.
@@ -148,7 +150,7 @@ context as plain text.
 profile, server, and directory. The inherited profile is resolved from the current configuration so its complete agent,
 model, variant, and System settings are applied; if that named profile was removed, the bot asks for an explicit
 configured profile before changing the session. One argument may be either a configured profile or server; two arguments
-are interpreted strictly as profile then server, so `/reset solh dima` changes both while `/reset dima` changes only the
+are interpreted strictly as profile then server, so `/reset solh workstation` changes both while `/reset workstation` changes only the
 server. Unknown, extra, or ambiguous arguments are rejected before any abort or state change. A same-server
 reset preserves the exact current directory. A cross-server reset first checks the target backend and then uses that
 server's configured default new-session directory instead of carrying an invalid host-local path across machines. Only
@@ -171,12 +173,12 @@ pending binding.
 `/new` parses arguments from left to right. If the first argument matches a configured server id, that server is used.
 If the next argument, or the first argument when no server was given, matches a profile in `promptProfiles`, that profile
 is used. A `dir:<path>` argument sets the OpenCodez session directory for this topic; otherwise `/new` uses the selected
-server's configured home directory. Everything left becomes the user-owned topic title.
+server's configured home directory when present. Everything left becomes the user-owned topic title.
 
 Telegram topic titles include a managed ` (<serverID>)` suffix only when two or more OpenCodez servers are configured.
 The suffix is applied to `/new`, web-created topics, backend title synchronization, manual topic renames, and `/reset`;
 changing server replaces only the managed suffix without changing the user-owned base title. For example,
-`/reset sol dima` turns `trash (nuc)` into `trash (dima)`. Single-server installations keep plain titles. The formatter
+`/reset sol workstation` turns `trash (local)` into `trash (workstation)`. Single-server installations keep plain titles. The formatter
 recognizes every configured server suffix, reserves suffix space inside Telegram's 128-character title limit, and avoids
 duplicate suffixes.
 
@@ -184,16 +186,16 @@ Examples:
 
 ```text
 /new TGBOT
-/new ser Release check
+/new workstation Release check
 /new d4flash Fix upload flow
 /new local sol Architecture pass
 /new local terra dir:/srv/opencodebot Artifact gateway
-/new dima d4flash dir:"C:\Users\dima\code\voltaren" voltaren
+/new workstation d4flash dir:"C:\Users\Operator\code\project" project
 /reset
 /reset sol
 /reset terra
-/reset dima
-/reset solh dima
+/reset workstation
+/reset solh workstation
 ```
 
 The default profiles are `d4flash`, `d4pro`, `luna`, `lunah`, `lunamax`, `terra`, `gpt6`, `gpt6m`, `sol`, `solm`, `solx`, `solh`, and `solmax`. They
@@ -288,7 +290,7 @@ OpenCodez user-message id; full reconcile provides the same fallback when the li
 preserve the canonical message identity and Web UI grouping for its session history.
 
 ```text
-dima upload root: /home/dima/.opencodebot/uploads
+workstation upload root: /home/operator/.opencodebot/uploads
 ```
 
 Supported attachment inputs include documents, photos, videos, animations, audio, voice messages, video notes, and media

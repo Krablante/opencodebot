@@ -1,10 +1,11 @@
 import { createReadStream } from "node:fs"
-import { readFile, stat } from "node:fs/promises"
+import { open, stat } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 const DEFAULT_MAX_BYTES = 2_000_000_000
+const MAX_TEXT_FILE_BYTES = 13_600 // The gateway accepts at most 3,400 UTF-16 characters.
 const DEFAULT_MODE = "auto"
 
 export const OpencodebotArtifactsPlugin = async (_input, options = {}) => ({
@@ -47,7 +48,7 @@ Use this only when the user explicitly asks to send, upload, share, or forward s
         }
         if (filePaths.length) {
           if (mode === "text") {
-            const payload = { ...commonPayload, text: [args.text ? String(args.text) : "", await readFile(filePaths[0], "utf8")].filter(Boolean).join("\n\n") }
+            const payload = { ...commonPayload, text: [args.text ? String(args.text) : "", await readSmallTextFile(filePaths[0])].filter(Boolean).join("\n\n") }
             responses.push(await sendPayload({ gatewayUrl, token, payload }))
           } else {
             for (const filePath of filePaths) {
@@ -140,6 +141,26 @@ async function fileMetadata(filePath, args, maxBytes) {
     size: info.size,
     filename: args.filename || path.basename(filePath),
     contentType: args.contentType || contentTypeForPath(filePath),
+  }
+}
+
+async function readSmallTextFile(filePath) {
+  const handle = await open(filePath, "r")
+  try {
+    const info = await handle.stat()
+    if (!info.isFile()) throw new Error(`Not a file: ${filePath}`)
+    if (info.size > MAX_TEXT_FILE_BYTES) throw new Error(`Text file is too large for a Telegram message (${info.size} bytes); use mode=document`)
+    const buffer = Buffer.alloc(info.size + 1)
+    let offset = 0
+    while (offset < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset)
+      if (!bytesRead) break
+      offset += bytesRead
+    }
+    if (offset > MAX_TEXT_FILE_BYTES) throw new Error("Text file grew beyond the message limit; use mode=document")
+    return buffer.toString("utf8", 0, offset)
+  } finally {
+    await handle.close()
   }
 }
 

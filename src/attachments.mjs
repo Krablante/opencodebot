@@ -249,21 +249,22 @@ async function dataURL(filePath, mime) {
 export async function cleanupUploads(uploadDir, maxAgeMs) {
   const cutoff = Date.now() - Number(maxAgeMs || 0)
   if (!Number.isFinite(cutoff)) return
-  let entries
+  let directory
   try {
-    entries = await fs.readdir(uploadDir, { withFileTypes: true })
+    directory = await fs.opendir(uploadDir)
   } catch (error) {
     if (error.code === "ENOENT") return
     throw error
   }
-  await Promise.all(
-    entries.map(async (entry) => {
-      const filePath = path.join(uploadDir, entry.name)
-      const stat = await fs.stat(filePath).catch(() => null)
-      if (!stat || stat.mtimeMs >= cutoff) return
-      await fs.rm(filePath, { recursive: true, force: true })
-    }),
-  )
+  for await (const entry of directory) {
+    if (!entry.isFile()) continue
+    const filePath = path.join(uploadDir, entry.name)
+    const stat = await fs.stat(filePath).catch((error) => {
+      if (error.code === "ENOENT") return null
+      throw error
+    })
+    if (stat?.isFile() && stat.mtimeMs < cutoff) await fs.rm(filePath, { force: true })
+  }
 }
 
 export function normalizeAttachmentSettings(settings = {}) {

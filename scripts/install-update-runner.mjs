@@ -5,12 +5,13 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { loadEnvFile } from "../src/config/common.mjs"
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const unitDir = path.join(os.homedir(), ".config", "systemd", "user")
 const servicePath = path.join(unitDir, "opencodebot-update.service")
 const pathUnitPath = path.join(unitDir, "opencodebot-update.path")
-const stateDir = path.resolve(optionValue("--state-dir") || process.env.OPENCODEBOT_STATE_DIR || path.join(os.homedir(), "politia", "state", "projects", "tg", "opencodebot"))
+const stateDir = path.resolve(projectRoot, optionValue("--state-dir") || process.env.OPENCODEBOT_STATE_DIR || loadEnvFile(path.join(projectRoot, ".env")).OPENCODEBOT_STATE_DIR || "state")
 const runtimeDir = path.join(stateDir, "updates")
 
 if (process.platform !== "linux") {

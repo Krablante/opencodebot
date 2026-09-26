@@ -1,7 +1,8 @@
 # Development
 
-This codebase should stay small enough to read in one sitting. The goal is not a framework around OpenCodez; the goal is
-a reliable companion bot with clear source boundaries.
+[English](development.md) · [Русский](../ru/development.md)
+
+This operated bot has grown beyond a one-sitting read. Follow a user action from its owner through the event and state boundaries below rather than reading the whole tree in order.
 
 The current split is intentionally modest. `main.mjs` wires startup, shutdown, and module composition.
 `telegram-polling.mjs` owns update polling, ordered topic lanes, bounded group concurrency, and Telegram input routing.
@@ -203,8 +204,8 @@ The bot requests cancellation and immediately flushes deferred state on shutdown
 
 ## Service
 
-Every completed Politia `opencodebot` change must finish with a live Compose rebuild/restart and verification; a
-successful commit and push do not replace this rollout step. Rebuild/restart and check logs with Compose:
+For a rollout approved by the operator, a source change still needs a live Compose rebuild/restart and verification;
+a local check does not replace this step. Rebuild/restart and check logs with Compose:
 
 ```bash
 npm run deploy:bot

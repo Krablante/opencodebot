@@ -1,396 +1,58 @@
-# opencodebot
+# OpenCodeBot
 
-opencodebot is a small Telegram mirror and companion for [OpenCodez](https://github.com/Krablante/opencodez). OpenCodez
-stays the main interface and source of truth; the bot adds Telegram forum topics, prompts, progress, compact tool
-status, attachments, interactive questions, user-prompt pins, final notifications, artifact delivery, optional voice
-transcription, and a memory-only prompt queue.
+**Your OpenCodez sessions in Telegram, without moving the workspace out of OpenCodez.**
 
-It is built as a practical single-operator tool that is still clean enough to share. The code favors readable modules,
-plain JSON config, and boring runtime state over a large framework.
+OpenCodeBot follows the OpenCodez API and sends visible session activity to Telegram forum topics. You can start a session, send a prompt, answer a question, and see the final reply from your phone. OpenCodez keeps the sessions, message IDs, tools, and web UI; the bot is a second, deliberately smaller control surface.
 
-## Why OpenCodez
+[English](README.md) · [Русский](README.ru.md) · [Documentation](docs/en/README.md) · [MIT license](LICENSE)
 
-opencodebot is tuned for OpenCodez's API and event stream. It works especially well with OpenCodez because that fork
-adds selectable System prompts and stateful ChatGPT Responses transport. Its web UI remains useful on
-the LAN by default, and can also be reached away from home through the optional WireGuard helper if you want private
-remote access.
-
-The bot does not scrape the web UI. It talks to the OpenCodez HTTP API and its SSE stream, then mirrors useful session
-activity into Telegram. Global mirroring uses one `/global/event` stream per server; server-home mirroring uses the
-workspace-scoped `/event` stream.
-
-## Features
-
-- Telegram forum topics mapped to OpenCodez sessions.
-- `/new [server] [profile] [dir:<path>] [title]` for explicit server/profile/directory/topic setup.
-- User-provided topic titles stay user-owned; placeholder titles can be renamed from OpenCodez session titles.
-- `/q` in-memory per-session prompt queue, with status/delete commands.
-- Telegram input is saved to a small durable inbox before acknowledgement. Topics run independently across batches,
-  preserving topic order and bounded concurrency; unfinished input resumes after restart.
-- `/kill` to stop the current OpenCodez run for a topic and clear queued prompts.
-- `/reset` to preserve the old session and start fresh in the same Telegram topic.
-- Reply to an earlier Telegram user prompt to rewind that OpenCodez branch and replace it with the reply text and
-  attachments.
-- Rich assistant messages sent as completed blocks instead of noisy token streaming; nested lists are structurally
-  normalized to stable visual lines because Telegram Rich Message mis-renders list dedents.
-- Single-choice OpenCodez questions mirrored into the bound topic with Telegram buttons; configured recipients receive a
-  direct notification linking to the question. SSE delivery is immediate, while the existing 15-second reconcile loop
-  and every SSE reconnect query pending questions as a recovery path; request-level single-flight prevents
-  event/recovery duplicates.
-- Global `/mode full|economy` mirror modes: full keeps compact expandable tool quotes, while economy shows assistant
-  progress and final answers without Telegram tool traffic.
-- Current OpenCodez `message.part.delta` / `message.part.updated` events drive progress delivery directly; reconcile stays
-  a bounded recovery path rather than the normal text transport.
-- A binding whose OpenCodez session is confirmed missing is physically removed with its session-scoped bot state. The
-  Telegram topic becomes ready to create a fresh session on the next prompt, while other sessions on that host continue
-  normally.
-- Both modes announce task/subagent spawns with a short robot notice that uses the web-visible task title; child-session
-  prompts, tool logs, and results stay hidden.
-- Short-lived `opencode-see delegate` sessions are ignored on every configured server: they create no Telegram topic,
-  mirror state, seen marker, or reconcile/accounting entry.
-- Attachments and Telegram media groups attached to the next prompt; large files are copied to the target server's
-  configured upload root and referenced by server-local path.
-- Optional Telegram artifact gateway for sending agent-created files, screenshots, logs, and text into one dedicated
-  artifacts topic; the same topic can accept user-dropped files and save them to a configured server folder.
-- Optional OpenRouter and direct Groq speech transcription for one dedicated `/sounds_here` topic; voice and audio
-  messages receive lossless plain Telegram transcripts in the same topic, split across ordinary 4,096-character-safe
-  messages instead of being truncated or converted to Rich Messages. A pinned model menu lets operators switch providers
-  and STT models.
-- Optional local Telegram Bot API sidecar for higher file limits and streaming artifact delivery without a separate
-  project.
-- Multipart prompt buffering for Telegram clients that split long messages.
-- Long web-origin prompts use one escaped Telegram Rich Message when they exceed the ordinary message limit; only
-  prompts beyond the richer safe limit are numbered and split, with a lossless ordinary-message fallback.
-- Telegram-authored Rich Messages are accepted as prompts: mixed inline formatting, visible block text, captions, and
-  credits are normalized without dropping words, while embedded rich photos reuse the ordinary attachment pipeline.
-- Optional WireGuard helper for private off-LAN access to the existing OpenCodez web UI.
-- Configurable daily GitHub update checks (`07:00 Europe/London` in the example and current deployment), a manual
-  `/update` command, readable commit-range notes, and an approved one-click rebuild/restart path that never changes or
-  restarts OpenCodez.
-
-## Shape
+## How it works
 
 ```text
-Telegram forum chat
-  -> opencodebot long polling
-    -> OpenCodez HTTP API and one SSE stream per server
-    -> local topic/session state
-
-LAN browser, or optional WireGuard browser
-  -> OpenCodez web UI and server selector
+OpenCodez API + one event stream per server
+                 ↓
+       OpenCodeBot (Node.js)
+                 ↕
+       Telegram forum topics
 ```
 
-OpenCodez remains the main workspace. Telegram is the mirror/control surface for moments when a chat interface is more
-convenient.
+A Telegram topic follows one main OpenCodez session. Assistant text arrives in completed blocks; tools appear as compact status in full mode. Hidden reasoning, raw tool arguments, and child sessions stay out of the mirror. The bot persists topic bindings, delivery markers, and incoming Telegram receipts so it can recover after a restart. Its `/q` prompt queue remains in memory.
 
-OpenCodez owns session and message identifiers. The bot submits prompts without client-generated message ids, then binds
-the original Telegram message to the canonical id reported by `session.next.prompted` (or recovered by reconcile). This
-keeps OpenCodez ordering, Web UI grouping, and Telegram reply-to-rewind on one durable identity without duplicating
-backend id rules.
+Beyond the mirror, you can enable speech transcription, a separate final-answer voice reply, or an artifact gateway that lets OpenCodez send files to one chosen Telegram topic. These are optional. Remote browser access through WireGuard and a local Telegram Bot API sidecar are optional too.
 
-## Platforms
+## Start
 
-Docker Compose is the recommended deployment path on Linux, Windows, and macOS. The bot also runs directly through
-Node.js and npm. Windows is fully fine as a Telegram, browser, Docker, and WireGuard client.
-
-## Quick Start
-
-You need Node.js 22 or newer, Docker Compose, a running OpenCodez server, and a Telegram bot token from BotFather. The
-bot can run on the same machine as OpenCodez or on another machine that can reach OpenCodez over HTTP.
-
-Clone the repo and create local config:
+You need Node.js **22+**, a running OpenCodez server, a Telegram bot token, and your numeric Telegram user ID. Docker Compose is the recommended runtime on Linux, macOS, and Windows; a direct Node.js run also works.
 
 ```bash
 git clone https://github.com/Krablante/opencodebot.git
 cd opencodebot
 npm run init-config
-cp token.env.example token.env
 ```
 
-This creates `config.local.json` and `servers.json`, then gives you a local `token.env` to fill in. Edit these before
-starting the bot:
+Copy `token.env.example` to the ignored `token.env` (`cp token.env.example token.env` on Linux/macOS; `Copy-Item token.env.example token.env` in PowerShell). Set `OPENCODEBOT_TOKEN`, `OPENCODEBOT_ALLOWED_USER_IDS`, and your OpenCodez API password there. Edit the generated `servers.json` with an HTTP URL reachable **from the bot runtime**. From a container, `127.0.0.1` points at the container; use the host's reachable address or `host.docker.internal`. Set an absolute `home` for `/new` if you want sessions created in that directory, and configure writable host paths before accepting file uploads.
+
+`config.local.json` is generated beside `servers.json`. Review its `telegram`, `defaultPrompt`, and `opencode` settings. The example starts with scheduled updates and optional provider features disabled. A first message from an allowed user can bind the forum chat while `allowChatBootstrap` is on; after setup, set `telegram.chatId` and turn bootstrap off.
+
+For Docker Compose, create a writable `state` directory (`mkdir -p state` on Linux/macOS, `New-Item -ItemType Directory -Force state` in PowerShell). The revision-aware `npm run deploy:bot` command requires a **clean Git checkout** and runs the live health check after starting the bot:
 
 ```bash
-$EDITOR config.local.json
-$EDITOR servers.json
-$EDITOR token.env
-```
-
-PowerShell works the same way:
-
-```powershell
-Copy-Item .\token.env.example .\token.env
-notepad .\config.local.json
-notepad .\servers.json
-notepad .\token.env
-```
-
-Secrets belong in `token.env`, not in git. Use your BotFather token, your numeric Telegram user id, and the password for
-the OpenCodez server API:
-
-```env
-OPENCODEBOT_TOKEN=123456:telegram-token
-OPENCODEBOT_ALLOWED_USER_IDS=123456789
-OPENCODEZ_SERVER_PASSWORD=your-opencodez-password
-# Optional, only when speech.enabled is true:
-OPENROUTER_API_KEY=sk-or-...
-```
-
-Edit `servers.json` so the bot can reach OpenCodez. If OpenCodez is on your LAN, use its LAN URL. If Docker and
-OpenCodez are on the same host, `http://host.docker.internal:4096` is usually the right URL.
-
-The first allowed user who talks to the bot can bootstrap the Telegram chat when `allowChatBootstrap` is still enabled
-in `config.local.json`. After the bot learns the chat id, keep the generated local config and state files; they are the
-runtime state.
-
-Run with Docker Compose:
-
-```bash
-mkdir -p state
 npm run deploy:bot
 docker compose logs -f opencodebot
 ```
 
-PowerShell:
+For a local Node.js run, use `npm start`. Do not run it alongside a container polling the same Telegram token. [Docker setup](docs/en/docker.md) covers mounts, host paths, the optional local Bot API, and updates; [configuration](docs/en/config-runtime.md) covers every runtime file and server setting.
 
-```powershell
-New-Item -ItemType Directory -Force state
-npm run deploy:bot
-docker compose logs -f opencodebot
-```
+## Use it
 
-For direct local usage, run `npm start`. Production/live operation should use Docker Compose.
+Open the pinned panel in General with `/menu`. Start a topic with `/new [server] [profile] [dir:<path>] [title]`, then send its first prompt. In a bound topic, `/q` queues another prompt, `/kill` stops the run, `/reset` starts fresh in the same topic while preserving the old session, and `/context` exports recent turns. Reply to an earlier Telegram prompt to rewind that exact OpenCodez turn. `/mode economy` hides ordinary tool traffic; `/mode full` shows compact tool status. `/artifacts_here` selects the single file-delivery topic when the gateway is configured.
 
-## Update
+See [Telegram workflow](docs/en/telegram-workflow.md) for topic rules and the full command guide. [Final Voice](docs/en/final-voice.md), [speech and runtime config](docs/en/config-runtime.md#speech-transcription), and [artifact delivery](docs/en/artifact-gateway.md) each have their own setup instructions.
 
-Update only the bot service with the revision-aware deployment wrapper:
+## Operate and develop
 
-```bash
-git pull
-npm run deploy:bot
-```
+`npm run check` checks syntax, `npm test` runs focused contracts, and `npm run smoke` checks the local integration paths without posting to Telegram. `npm run health:live` checks the deployed Compose process, Telegram access, and required OpenCodez discovery endpoints. `npm run deploy:all` rebuilds the full Compose project when its services change. No CI workflow is required to run the bot; [development](docs/en/development.md) and [self-update](docs/en/self-update.md) explain the source, runtime, and host-runner boundaries.
 
-Use `npm run deploy:all` instead when the Compose file, Telegram Bot API sidecar, or other services changed.
+**Documentation:** [English index](docs/en/README.md) · [Русский справочник](docs/ru/README.md). Each topic has a matching path under `docs/en/` and `docs/ru/`; add another language as another directory and link it from the indexes.
 
-The Telegram self-updater also rebuilds and restarts only opencodebot. If an exact update range changes
-`plugins/opencodebot-artifacts/` or `skills/telegram-artifact-send/`, its offer and success card report that manual
-follow-up. It never refreshes installed OpenCodez copies or restarts OpenCodez.
-
-The `/update` command always performs a manual check. `updates.enabled` controls only the optional scheduled check, so an
-older local config without an `updates` block can still use the command after one revision-aware manual deployment.
-
-One-click update is also disabled when a range changes Compose or the host updater itself. Telegram then shows the exact
-control-plane paths and the required `git pull` plus revision-aware manual deployment command; this keeps rollback honest
-instead of running an old image through a new Compose contract.
-
-When convenient, refresh changed plugin and skill copies wherever OpenCodez loads them. Copy the whole skill directory,
-including `agents/openai.yaml`; that file carries short trigger metadata for the agent. Restart each affected OpenCodez
-service manually after updating those files, because running agents may not reload plugin code or skill metadata.
-
-In Politia, use `/home/bloob/politia/services/harness/opencodez/deploy.sh` for that OpenCodez rollout. If you are
-running the update from `nuc`, restart the local OpenCodez service last and deferred so the current agent session is not
-interrupted early.
-
-See [Self-Update](docs/self-update.md) for checker configuration, update notes, host-runner installation, rollback, and
-verification.
-
-Your `config.local.json`, `servers.json`, `token.env`, and `state/` directory stay local and are not overwritten by
-updates.
-
-The artifact gateway and OpenCodez plugin are optional. Start without them first unless you specifically want agents to
-send files, screenshots, logs, or text to a Telegram artifacts topic. Enable that later with
-[Artifact Gateway](docs/artifact-gateway.md).
-
-The speech transcription module is optional. Enable it with `speech.enabled=true` and `OPENROUTER_API_KEY` in
-`token.env`. Voice messages in ordinary non-artifact topics are then transcribed as replies without being sent to
-OpenCodez; copy the transcript and send it as text when it should become a prompt. Run `/sounds_here` when you also want
-a dedicated voice/audio inbox with a pinned model menu. The module uses OpenRouter's `openai/whisper-large-v3-turbo` by
-default and can switch between configured OpenRouter transcription models, so no separate speech service is required.
-
-The local Telegram Bot API sidecar is also optional. Add `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` to `token.env`, set
-`telegram.botApi.mode` to `local`, start Compose with the `telegram-local` profile, then run
-`docker compose exec -T opencodebot npm run telegram-local -- doctor`. Details are in [Docker](docs/docker.md) and
-[Config And Runtime](docs/config-runtime.md).
-
-## Commands
-
-OpenCodeBot creates one pinned control-panel message in General. It shows active sessions and current global state, and
-provides a browsable list of configured launch profiles alongside controls for new sessions, Final Voice, personal
-notifications/context depth, language, and mirror mode. A profile card explains its model, reasoning variant, agent,
-System, and how to use it with `/new` or `/reset`; browsing does not change the current session.
-Use `/menu` to recreate it at the bottom of General, retiring the old panel. `/start` and `/help` open the existing panel.
-Running these commands in another topic returns a temporary link to the active General panel rather than creating a
-topic-local menu. See [General Control Menu](docs/control-menu.md).
-
-Telegram's visible slash suggestions contain only the common panel and topic commands. Rare setup and operator commands
-remain accepted when typed, so existing operational procedures continue to work without crowding the normal interface.
-
-Use `/update` to check GitHub immediately. An available revision is shown with readable notes, a full compare link, and
-`Update & restart` / `Not now` buttons. Scheduled checks use `updates.checkAt` and `updates.timeZone` from private config
-and publish available updates in General. The apply action rebuilds and restarts only opencodebot; see
-[Self-Update](docs/self-update.md).
-
-Use `/new` when you want a fresh Telegram topic and a new OpenCodez session. You can give it a server id, an optional
-chat profile, an optional `dir:<path>` override, and a title. If no server id is given, the configured default server is
-used. After the topic is created, send the first prompt in that topic.
-
-Use `/q` inside an existing OpenCodez topic when you want to queue another prompt for the same session. A queued prompt
-is released only after OpenCodez is idle and the preceding terminal assistant answer has been mirrored to Telegram.
-`/q status` shows the queue, and `/q delete 2` removes a queued item by number.
-
-If a run becomes idle without producing a terminal assistant answer or an explicit OpenCodez error, the bot verifies the
-latest user turn against freshly fetched OpenCodez message history and posts a clear interrupted-run warning with an
-`Open session` button. A terminal `finish=stop` counts as success only when the assistant produced visible final text;
-an empty stop gets the more precise `OpenCodez stopped without a final response` warning. User-message events activate
-tracking early, while idle checks and recent periodic reconciliation recover when a lifecycle event was absent or
-missed. Periodic incomplete snapshots use the same short grace and fresh-history check as idle events, so a final
-`finish=stop` update cannot race with a warning based on an older snapshot. A small durable handling ledger prevents
-duplicate warnings across repeated idle events and restarts. The warning is treated as the terminal notice for queue
-ordering, so queued work can continue instead of waiting forever.
-
-Configured `finalNotifications.userIds` also receive private operational alerts for explicit OpenCodez run errors,
-failed assistant steps, and unexpected interrupted/empty-terminal runs. These critical alerts ignore the per-user
-`/notify_off` final-answer toggle, contain no prompt or answer text, and link back to the Telegram topic and OpenCodez
-session. Expected `/kill`, queue interruption, rewind/reset, and normal compaction stops remain silent. A separate
-bounded durable marker keyed by recipient and run prevents a step failure, following `session.error`, and later
-interruption reconciliation from producing duplicate DMs.
-
-Explicit OpenCodez session errors are rendered with their normalized type, provider message, and status code when
-available, for example `API error (429)` plus the provider's rate-limit explanation. The bot reads the structured event
-payload first and falls back to the latest assistant error in session history when the event carries no detail. Known
-errors without messages receive concise guidance, including `/compact` for context overflow. Error output is
-length-bounded and deliberately excludes raw response bodies, headers, metadata, and other nested provider data.
-
-Use `/kill` inside an existing OpenCodez topic when you want to stop the current run. It sends OpenCodez's session abort
-request and clears that topic's queued prompts, but it does not delete the session or the Telegram topic.
-
-Use `/compact` inside an idle OpenCodez topic to condense that session's context with OpenCodez's native summarize
-endpoint. The bot resolves the session's current provider/model, immediately shows a `Compacting context…` status, and
-performs the potentially long operation in the background. Prompts sent after compaction starts wait in the existing
-topic queue. The internal compaction summary is not mirrored as an assistant answer; the status is edited to a concise
-success or failure result, and the session remains available either way. The running guard uses authoritative live
-OpenCodez `sessionStatus`; a stale in-memory queue busy flag cannot keep `/compact` blocked after the backend is idle. A
-genuinely busy backend or an already active compaction still returns concise wait/`/kill` guidance. Successful summarize
-completion releases the topic queue directly, so a missed terminal SSE event cannot leave later prompts stuck.
-
-Use `/context`, `/context N`, or `/set_context N` to export the latest main-session user turns from the current topic.
-The personal default is three turns and the supported range is 1–10. A completed turn contains the user prompt and its
-final `finish=stop` answer. An interrupted turn still occupies one of `N` slots and contains `### User — interrupted`,
-the original prompt, and every visible assistant progress note accumulated before interruption. Progress notes are
-labeled separately and never presented as a final answer; reasoning, tool payloads and step metadata remain excluded.
-The active unfinished turn remains omitted. Subagent sessions and synthetic prompts are excluded, while user attachment
-descriptors are preserved. Output is one or more collapsed Rich Messages containing an escaped code block, split without
-truncation below the safe Rich Message limit and capped at 240,000 characters. Expanding the block exposes Telegram's
-native code-copy affordance. Context text is never stored in bot state and a Rich Message failure produces only a short
-error, never a large plain-text fallback.
-
-Use `/reset [profile] [server]` when the Telegram thread should stay but its OpenCodez context should start over.
-Omitted values inherit the current profile/server; one argument may select either, while two arguments are profile then
-server. Same-server reset preserves the exact directory. Cross-server reset validates and preflights the target before
-aborting the old run, then uses that server's configured default directory. The bot clears queued or partially buffered
-input, atomically disables the old binding, updates the managed topic suffix when needed, and leaves the same topic
-waiting for its first prompt. The old session remains preserved on its original server. Running `/reset` again while
-pending safely updates the waiting profile/server without creating or aborting a session. Reset is rejected in
-`#General`, artifacts, sounds, or otherwise unbound topics.
-
-To replace an earlier turn, reply to that Telegram user prompt with the corrected text, attachments, or both. One short
-service message is edited from `🟡 Reverting…` to `🟢 Reverted` after the replacement prompt is accepted; it never emits
-the ordinary `Accepted by OpenCodez` message for this flow. The rewind status stays visible through mirrored OpenCodez
-output and is cleared only when the next regular prompt, another rewind, or a topic reset supersedes it. The bot stops
-an active run if necessary, discards later queued input, asks OpenCodez to rewind at that exact user message, then sends
-the reply as the replacement prompt. It only does this when the replied message belongs to the active OpenCodez session
-for the same topic. Replies to a prompt from before `/reset`, a different topic, or an already undone branch are
-rejected without sending anything to the current session. The reply-to-rewind association is durable across bot
-restarts, but it is available only for prompts sent after this feature was deployed.
-
-Use `/session` inside a topic when you want to see what Telegram topic is bound to which OpenCodez server/session. It
-also shows the web session URL, a pending reset waiting for its first prompt, and whether the current topic is the
-artifacts target.
-
-Use `/artifacts_here` inside a forum topic when you want that topic to become the single Telegram target for agent-sent
-artifacts. After that, `opencodebot_send_artifact` sends files, screenshots, logs, or text to that topic. Files dropped
-by a user in the same topic are saved under `artifactUploads.root` on the default server, or on the server named by the
-first caption word. Optional comma-separated names after the server rename uploaded files in order; names without an
-extension inherit the source file's complete extension, including compound extensions such as `.tar.gz`. Docker
-deployments must also mount that local artifact root; see
-[Artifact Gateway](docs/artifact-gateway.md#user-dropped-files) and [Docker](docs/docker.md#artifact-dropbox-paths).
-
-With speech enabled, a Telegram voice message in any ordinary non-artifact topic is transcribed through OpenRouter and
-answered as a reply to that voice message. The transcript is never submitted to OpenCodez automatically and never enters
-the attachment buffer; copy it and send it as text to use it as a prompt. General audio files keep the normal attachment
-behavior.
-
-Use `/sounds_here` inside a forum topic when you also want that topic to become the dedicated voice/audio transcription
-inbox. The command creates or refreshes a pinned model menu with buttons for configured transcription models and a
-`Refresh` button for config changes. Voice messages, general audio files, and supported audio documents in that topic
-are transcribed, while ordinary text is kept out of the prompt flow. Only the transcript is formatted as Telegram Mono
-text, with service metadata left outside that formatting. The OpenRouter language hint defaults to `ru`, can be changed
-to another ISO-639-1 code, or can be set to `null` / `"auto"` for auto-detect. `/sounds_off` clears only the dedicated
-inbox binding; voice messages in ordinary topics continue to be transcribed. `/sounds_status` shows whether speech is
-enabled, configured, selected model, dedicated topic, and busy.
-
-Use `/notify_on`, `/notify_off`, and `/notify_status` to manage private final-answer notifications for the configured
-recipients. Delivery is deduplicated per recipient and final assistant message. A final DM is sent only after the bot
-has mirrored a new final answer into Telegram and received its exact `message_id`; restart reconciliation never
-backfills DMs for already mirrored historical answers. Catch-up may still mirror a genuinely missing final answer, which
-then follows the ordinary notification path with a valid message link. Those DMs include the source topic, an `Open topic` button, context quotes, a completed task list when the
-agent closed one, and a separate quoted `Tools`/`Patched` summary with compact tool counts and semicolon-separated file
-names for successful structured file mutations. `/debug_on`, `/debug_off`, and `/debug_status` additionally control one
-global expandable run-diagnostics block at the very end of every final DM, including agent-step latency, effective TPS,
-tool timing/failures, and slowest tools.
-
-Use `/mode`, `/mode full`, or `/mode economy` to inspect or change the persistent global mirror mode. Both modes keep
-short subagent spawn notices. Full mode keeps normal compact tool reporting. Economy mode still mirrors each unique
-assistant progress note, final answer, and run failure once, but suppresses ordinary tool Telegram messages across all
-topics.
-
-Use `/mirror_on` and `/mirror_off` when you need to pause or resume web-to-Telegram mirroring without stopping the bot.
-
-Default chat profiles are `d4flash`, `d4pro`, `luna`, `lunah`, `lunamax`, `terra`, `gpt6`, `gpt6m`, `sol`, `solm`, `solx`, `solh`, and `solmax`. Each profile keeps
-its agent, model, variant, and OpenCodez System prompt in `promptProfiles`; local deployments can override those values
-in runtime config without changing code. Sol and Luna now use GPT-6 with their distinct bundled `codex_gpt_6_sol` and
-`codex_gpt_6_luna` Systems. `sol` means high, `solm` medium, and `solx` xhigh; `luna` means xhigh, `lunah` high, and
-`lunamax` max. `solh` retains high and `solmax` max. `gpt6`/`gpt6m` remain Astra high/medium; Terra and DeepSeek
-profiles are unchanged. These new bundled Systems require OpenCodez `1.18.32+opencodez.1` or newer.
-
-Explicit runtime profiles override built-ins. Remove old copied Sol/Luna entries to inherit updated defaults, or update
-their model, variant, and System together. See [Prompt Profiles](docs/config-runtime.md#prompt-profiles) for the full table.
-
-`/reset [profile] [server]` may change profile, server, or both while preserving the current value when omitted.
-Same-server reset preserves the current directory; cross-server reset checks the target first and uses its configured
-default directory. Multi-server deployments add a managed `(<serverID>)` suffix to Telegram topic titles, while
-single-server deployments keep plain names.
-
-## Docs
-
-- [General Control Menu](docs/control-menu.md) covers the singleton pinned panel, command scope, callbacks, reply-based
-  settings, state recovery, and operations.
-- [Telegram Workflow](docs/telegram-workflow.md) covers topics, `/new`, `/reset`, `/q`, `/kill`, attachments, multipart
-  prompts, rich messages, tools, user-prompt pins, final notifications, and reconcile.
-- [Config And Runtime](docs/config-runtime.md) covers config loading, token handling, chat profiles, mirror settings,
-  attachments, and state.
-- [Final Voice](docs/final-voice.md) covers optional final-answer summary and TTS voice replies, commands, provider
-  contracts, queue behavior, and safe cutover.
-- [Interface Language](docs/interface-language.md) covers the global panel and `/lang eng|ru` switch, localization boundaries,
-  persistent state, command-menu synchronization, and catalog maintenance.
-- [Artifact Gateway](docs/artifact-gateway.md) covers `/artifacts_here`, the LAN gateway, user-dropped artifact uploads,
-  the OpenCodez plugin, and the bundled skill.
-- [Docker](docs/docker.md) covers the recommended Compose deployment path.
-- [Development](docs/development.md) covers source layout, checks, smoke tests, service restart, and change style.
-- [WireGuard](docs/wireguard.md) covers the optional private access helper and what it does not own.
-
-## Checks
-
-```bash
-npm run check
-npm run health:live
-```
-
-`npm run check` syntax-checks source and scripts. `npm run health:live` checks the main process, progress of Telegram
-polling and session recovery, and required backend APIs. It sends no messages or prompts and writes no dropbox files.
-`smoke:live` remains an alias for this operational check. Existing local test/smoke commands remain available separately;
-deployment does not run them. See [Development](docs/development.md) for manual verification guidance.
-
-## License
-
-MIT
+MIT licensed. OpenCodeBot is an independent companion to [OpenCodez](https://github.com/Krablante/opencodez).

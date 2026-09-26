@@ -1,5 +1,7 @@
 # Config And Runtime
 
+[English](config-runtime.md) · [Русский](../ru/config-runtime.md)
+
 The repo contains source, defaults, and docs. Runtime config and state live outside git so the bot can be repaired,
 restarted, and shared without committing private values.
 
@@ -15,7 +17,7 @@ Default runtime config path:
 ./config.local.json
 ```
 
-`config.example.json` is the public shape and smoke-test baseline. `npm run init-config` creates the local runtime copy
+`config.example.json` is the public shape and smoke-test baseline. It leaves scheduled updates and optional providers off and contains no host-specific network values. `npm run init-config` creates the local runtime copy
 and an editable `servers.json`. Edit the runtime copy for local behavior, and update `config.example.json` only when the
 shareable default shape changes.
 
@@ -62,8 +64,8 @@ buffering, and tool compaction limits are fixed defaults in code.
 ## Updates
 
 `updates.enabled` explicitly enables scheduled GitHub checks. When enabled, `updates.checkAt` and `updates.timeZone` are
-required runtime settings rather than code defaults; the current deployment uses `07:00` and `Europe/London`, which
-tracks GMT and British Summer Time. `updates.repository` and `updates.branch` select the public source. `/update`
+required runtime settings rather than code defaults; for example, `"checkAt": "07:00"` with `"timeZone": "Europe/London"`.
+`updates.repository` and `updates.branch` select the public source. `/update`
 performs an immediate check without moving or enabling the configured schedule. Omitting the `updates` block leaves
 automatic checks disabled but does not disable the manual command.
 
@@ -213,8 +215,8 @@ OpenRouter.
 The prompt is deliberately short and configurable. Leave it blank if generic transcription is better for your group, or
 replace it with a small vocabulary hint. Do not put secrets in it.
 
-`speech.language` defaults to `"ru"` and is sent as a transcription hint. Set it to another ISO-639-1 code such as
-`"en"` when the speech topic is mostly another language. Set it to `null` or `"auto"` to omit the `language` field and
+`speech.language` defaults to automatic detection in new installations. Set it to an ISO-639-1 code such as `"ru"` or
+`"en"` when the speech topic is mostly one language. Set it to `null` or `"auto"` to omit the `language` field and
 let the selected provider auto-detect the audio language. A model entry may override `language`, `prompt`,
 `temperature`, or `responseFormat`.
 
@@ -273,12 +275,12 @@ silently or turns an unknown transfer type into `local`.
 
 ```json
 {
-  "id": "dima",
-  "url": "http://192.168.1.91:4098",
-  "home": "/home/dima",
-  "uploadRoot": "/home/dima/.opencodebot/uploads",
+  "id": "workstation",
+  "url": "http://workstation.local:4098",
+  "home": "/home/operator",
+  "uploadRoot": "/home/operator/.opencodebot/uploads",
   "pathStyle": "posix",
-  "transfer": { "type": "ssh", "host": "dima" }
+  "transfer": { "type": "ssh", "host": "workstation.local" }
 }
 ```
 
@@ -324,8 +326,8 @@ private prompt name, or migrates existing session history. No OpenCodez restart
 or upgrade is performed by the bot updater.
 
 When two or more servers are configured, Telegram topic names are rendered as `<base title> (<serverID>)`; single-server
-installations retain plain names. The base title is stored separately from the managed suffix so `/reset solh dima` can
-rename `trash (nuc)` to `trash (dima)` without suffix accumulation or changing the user-owned base. `/new`, web
+installations retain plain names. The base title is stored separately from the managed suffix so `/reset solh workstation` can
+rename `trash (local)` to `trash (workstation)` without suffix accumulation or changing the user-owned base. `/new`, web
 autocreation, backend title synchronization, and manual Telegram renames use the same formatter, which recognizes every
 configured server suffix and reserves space inside the 128-character Telegram title limit.
 
@@ -622,7 +624,7 @@ multihost and Windows setups usable because the path shown to the model belongs 
 the bot container.
 
 ```text
-dima:    /home/dima/.opencodebot/uploads/...
+Linux:   /home/operator/.opencodebot/uploads/...
 Windows: C:\Users\Alice\.opencodebot\uploads\...
 ```
 

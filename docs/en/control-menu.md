@@ -1,5 +1,7 @@
 # General Control Menu
 
+[English](control-menu.md) · [Русский](../ru/control-menu.md)
+
 OpenCodeBot keeps one persistent control-panel message in the Telegram forum's General topic. It is the primary interface
 for session discovery and settings that are not tied to one OpenCodez topic. Commands remain available as accelerators
 and for actions whose target is the current topic or replied message.

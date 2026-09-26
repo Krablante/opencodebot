@@ -1,5 +1,7 @@
 # Artifact Gateway
 
+[English](artifact-gateway.md) · [Русский](../ru/artifact-gateway.md)
+
 opencodebot can act as a small Telegram artifact gateway for AI agents. The design is intentionally simple: one central opencodebot instance owns the Telegram bot token and one current Telegram artifacts topic. Agent-side plugins on any LAN host read local files or text and stream the artifact bytes to opencodebot, which then sends the artifact to Telegram.
 
 This avoids guessing the current mirror topic and avoids sharing the Telegram bot token with agents. Agent-to-Telegram artifact delivery does not need SSH; Telegram user-dropped files use the configured server transfer only when the bot saves them to another host.
@@ -66,7 +68,7 @@ Optional comma-separated names after the server id rename uploaded files by posi
 - One name applies only to the first file.
 - If a requested name contains a dot, it is treated as an exact filename. Otherwise the complete source suffix beginning with its first dot is inherited: `photo` for `filephoto.png` becomes `photo.png`, while `backup` for `archive.tar.gz` becomes `backup.tar.gz`.
 - Fewer names than files leave the remaining filenames unchanged. Extra names are ignored.
-- An empty comma position leaves that file unchanged, so `nuc first, , third` preserves the second filename.
+- An empty comma position leaves that file unchanged, so `workstation first, , third` preserves the second filename.
 - Telegram media groups are collected before names are applied, so the caption on an album maps across the files in their Telegram order.
 - Commas delimit names and therefore cannot be part of a requested filename. All final names still pass through the normal filename sanitizer; caption values never create subdirectories.
 
@@ -77,18 +79,18 @@ Docker deployments must also make that folder writable from inside the bot conta
 Cloud Bot API deployments still have Telegram's cloud download limit. Local Bot API deployments can accept larger files when `attachments` limits are raised and the local Bot API file root is shared with the bot container.
 
 ```text
-caption: dima
+caption: workstation
 
-<blockquote>/home/dima/trash/2026-07-02/report.pdf</blockquote>
+<blockquote>/home/operator/trash/2026-07-02/report.pdf</blockquote>
 ```
 
 ```text
 files: filephoto.png, archive.tar.gz, untouched.pdf
-caption: nuc photo, backup
+caption: workstation photo, backup
 
-<blockquote>/home/bloob/trash/2026-07-02/photo.png
-/home/bloob/trash/2026-07-02/backup.tar.gz
-/home/bloob/trash/2026-07-02/untouched.pdf</blockquote>
+<blockquote>/home/operator/trash/2026-07-02/photo.png
+/home/operator/trash/2026-07-02/backup.tar.gz
+/home/operator/trash/2026-07-02/untouched.pdf</blockquote>
 ```
 
 ```text
@@ -129,7 +131,7 @@ Send text:
 
 ```json
 {
-  "caption": "ser my-app deploy log excerpt",
+  "caption": "workstation my-app deploy log excerpt",
   "mode": "text",
   "text": "last log lines..."
 }
@@ -149,13 +151,13 @@ The metadata JSON accepts the same top-level fields as `/artifacts/send`, plus s
 
 ```json
 {
-  "caption": "toma ui screenshot after layout fix",
+  "caption": "workstation ui screenshot after layout fix",
   "mode": "auto",
   "file": { "filename": "screenshot.png", "contentType": "image/png" }
 }
 ```
 
-`mode` can be `auto`, `photo`, `document`, or `text`. `auto` sends suitable JPEG/PNG/WebP files as Telegram photos and everything else as documents. `photo` is a display preference: an oversized or incompatible image is sent as a document instead, and a Telegram photo rejection is retried as a document. The original file remains lossless in every document path. Text artifacts are sent as Telegram MarkdownV2 expandable quotes. In cloud Bot API mode, the gateway keeps the conservative 50 MiB file limit. In local Bot API mode, streamed files are spooled under the shared local Bot API volume and sent to Telegram by local file path, allowing the local Bot API 2 GB file limit. The gateway keeps Telegram-visible file names clean by placing each streamed upload in a unique spool directory and preserving the requested file name as the local file basename.
+`mode` can be `auto`, `photo`, `document`, or `text`. `auto` sends suitable JPEG/PNG/WebP files as Telegram photos and everything else as documents. `photo` is a display preference: an oversized or incompatible image is sent as a document instead, and a Telegram photo rejection is retried as a document. The original file remains lossless in every document path. Text artifacts use expandable MarkdownV2 quotes when they fit; if escaping would exceed Telegram's message limit, the complete text is sent plainly. Text above 3,400 characters (or above the combined 4,096-character caption/path/message limit) returns HTTP 413 before any file is sent. Send longer text as a document; `mode=text` in the plugin also refuses files too large to fit in a text message. In cloud Bot API mode, the gateway keeps the conservative 50 MiB file limit. In local Bot API mode, streamed files are spooled under the shared local Bot API volume and sent to Telegram by local file path, allowing the local Bot API 2 GB file limit. The gateway keeps Telegram-visible file names clean by placing each streamed upload in a unique spool directory and preserving the requested file name as the local file basename.
 
 ## OpenCodez Plugin Setup
 
@@ -167,7 +169,7 @@ plugins/opencodebot-artifacts
 
 Install or reference it from the OpenCodez environment on each host that should be able to send artifacts. Configure the plugin with the LAN gateway URL and artifact token.
 
-In Politia, `/home/bloob/politia/services/harness/opencodez/deploy.sh` is the live install/update path for the OpenCodez hosts. It deploys managed copies of the plugin package and Telegram artifact skill, writes `~/.config/opencodez/artifacts.env`, points OpenCodez at the package directory, restarts OpenCodez services, and opens the gateway port from the LAN on the gateway host.
+Install the package through your OpenCodez deployment process on each host that needs this tool. Keep the gateway URL and artifact token in that host's private environment, then restart its OpenCodez service to load the plugin.
 
 OpenCodez plugin entries can be npm specs, `file://` URLs, relative paths, absolute paths, or `[spec, options]` tuples. Install or vendor the plugin package on each OpenCodez host, then reference the package directory. For a local checkout, a config entry can look like this:
 
@@ -177,7 +179,7 @@ OpenCodez plugin entries can be npm specs, `file://` URLs, relative paths, absol
     [
       "/path/to/opencodebot/plugins/opencodebot-artifacts",
       {
-        "gatewayUrl": "http://192.168.1.50:8788",
+        "gatewayUrl": "http://gateway-host:8788",
         "token": "replace-with-artifact-token"
       }
     ]
@@ -195,7 +197,7 @@ file:///C:/Users/you/opencodebot/plugins/opencodebot-artifacts
 You can also keep the token out of config and use environment variables:
 
 ```text
-OPENCODEBOT_ARTIFACT_GATEWAY_URL=http://192.168.1.50:8788
+OPENCODEBOT_ARTIFACT_GATEWAY_URL=http://gateway-host:8788
 OPENCODEBOT_ARTIFACT_TOKEN=replace-with-the-same-artifact-token
 ```
 
@@ -205,7 +207,7 @@ The plugin exposes this tool:
 opencodebot_send_artifact({ path?, paths?, text?, caption, mode? })
 ```
 
-If `path` is provided, the plugin reads that file on the local host where the agent is running and streams its bytes to opencodebot. opencodebot on `nuc` does not read remote paths from `ser`, `toma`, `dima`, or `rtx`.
+If `path` is provided, the plugin reads that file on the local host where the agent is running and streams its bytes to opencodebot. The gateway host does not read remote paths from other OpenCodez hosts.
 
 If `path` or `paths` is provided, the plugin resolves each value to an absolute path and the gateway appends a quoted path block to the Telegram caption. One file is shown as its full absolute path. Several files in one directory are shown as the absolute directory followed by comma-separated file names. Files from different directories are listed as absolute file paths. POSIX paths, Windows drive paths, Windows UNC paths, relative paths, and `file://` URLs are supported by the plugin and caption formatter. The gateway treats those paths as display metadata only; file reads happen locally inside the OpenCodez plugin process.
 
@@ -232,7 +234,7 @@ Use `npm run deploy:all` instead when Compose services or the Telegram Bot API s
 
 If the update changed `plugins/opencodebot-artifacts/`, refresh the plugin package wherever OpenCodez loads it. If the update changed `skills/telegram-artifact-send/`, refresh the whole skill directory in the OpenCodez skills location, including `agents/openai.yaml`.
 
-Restart every permitted OpenCodez service whose plugin or skill copy changed. Running agents may not reload plugin code or skill metadata until the service restarts. In Politia, use the harness deploy script for this rollout; when a host must remain running, stage its managed files with `--skip-restart-host HOST` and restart it only during an approved maintenance window.
+Restart every OpenCodez service whose plugin or skill copy changed. Running agents may not reload plugin code or skill metadata until the service restarts.
 
 The Telegram self-updater is intentionally narrower: it rebuilds and restarts only opencodebot, then reports plugin or
 skill source changes as a manual follow-up. It never invokes this OpenCodez rollout or restarts an OpenCodez service.
@@ -245,11 +247,3 @@ skill source changes as a manual follow-up. It never invokes this OpenCodez roll
 4. Send a small image file and confirm Telegram shows it as a photo when `mode` is `auto`.
 5. Send an oversized image with `mode` set to `photo` and confirm Telegram receives the unchanged file as a document.
 6. Send a non-image file and confirm Telegram receives it as a document.
-
-## Update Prompt
-
-Use this prompt with an AI agent that has access to the repo and runtime:
-
-```text
-Update opencodebot artifact gateway, the bundled OpenCodez artifact plugin, and the telegram-artifact-send skill according to docs/artifact-gateway.md. Preserve the model: one central opencodebot gateway, one current artifacts topic selected by /artifacts_here, no SSH, no per-host topics, plugin reads local files and streams bytes, Telegram token remains only in opencodebot. Pull the repo, rebuild/restart the opencodebot container, refresh the OpenCodez plugin and the whole skill directory if they changed, restart OpenCodez services after plugin or skill updates, then run checks, live smoke, log checks, commit, and push.
-```

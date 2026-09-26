@@ -21,11 +21,9 @@
     "defaultLanguage": "en"
   },
   "updates": {
-    "enabled": true,
+    "enabled": false,
     "repository": "Krablante/opencodebot",
-    "branch": "main",
-    "checkAt": "07:00",
-    "timeZone": "Europe/London"
+    "branch": "main"
   },
   "attachments": {
     "enabled": true,
@@ -41,7 +39,7 @@
     "language": "auto",
     "temperature": 0,
     "responseFormat": "json",
-    "prompt": "Русская голосовая заметка. Сохраняй технические названия, команды, пути и сокращения латиницей.",
+    "prompt": "",
     "openrouter": {
       "apiKeyEnv": "OPENROUTER_API_KEY",
       "url": "https://openrouter.ai/api/v1/audio/transcriptions"
@@ -56,50 +54,7 @@
       { "id": "groq/whisper-large-v3-turbo", "apiProvider": "groq", "apiModel": "whisper-large-v3-turbo", "label": "Whisper V3 Turbo", "price": "Free tier · $0.04/hour paid" }
     ]
   },
-  "finalVoice": {
-    "enabled": false,
-    "summary": {
-      "baseURL": "https://api.deepseek.com",
-      "apiKeyEnv": "DEEPSEEK_API_KEY",
-      "model": "deepseek-v4-flash",
-      "timeoutMs": 900000,
-      "maxInputChars": 120000,
-      "maxOutputChars": 3000,
-      "maxResponseBytes": 4194304,
-      "requestBody": {
-        "max_tokens": 393216,
-        "thinking": { "type": "enabled" },
-        "reasoning_effort": "max",
-        "response_format": { "type": "text" }
-      }
-    },
-    "tts": {
-      "defaultProfile": "silero",
-      "profiles": {
-        "silero": {
-          "label": "Silero TTS v5.5 RU",
-          "baseURL": "http://silero-tts-bridge:8000/v1",
-          "apiKeyEnv": "SILERO_TTS_API_KEY",
-          "model": "silero-ru-v5.5",
-          "voices": ["xenia", "eugene"],
-          "defaultVoice": "xenia",
-          "responseFormat": "opus",
-          "speed": 1,
-          "timeoutMs": 900000,
-          "maxResponseBytes": 20971520
-        }
-      }
-    },
-    "queue": {
-      "concurrency": 1,
-      "maxPending": 8
-    },
-    "defaults": {
-      "enabled": false,
-      "minFinalChars": 300,
-      "introTemplate": "Пришло новое сообщение из топика, {topicname}, на сервере, {server}."
-    }
-  },
+  "finalVoice": { "enabled": false },
   "artifactUploads": {
     "enabled": true,
     "root": "~/trash",
@@ -125,87 +80,6 @@
     "port": 8788,
     "tokenEnvNames": ["OPENCODEBOT_ARTIFACT_TOKEN"]
   },
-  "promptProfiles": {
-    "d4flash": {
-      "agent": "build",
-      "model": { "providerID": "deepseek", "modelID": "deepseek-v4-flash", "variant": "max" },
-      "opencodezSystem": "default"
-    },
-    "d4pro": {
-      "agent": "build",
-      "model": { "providerID": "deepseek", "modelID": "deepseek-v4-pro", "variant": "max" },
-      "opencodezSystem": "default"
-    },
-    "luna": {
-      "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-6-luna", "variant": "xhigh" },
-      "opencodezSystem": "codex_gpt_6_luna"
-    },
-    "lunah": {
-      "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-6-luna", "variant": "high" },
-      "opencodezSystem": "codex_gpt_6_luna"
-    },
-    "lunamax": {
-      "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-6-luna", "variant": "max" },
-      "opencodezSystem": "codex_gpt_6_luna"
-    },
-    "terra": {
-      "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-5.6-terra", "variant": "xhigh" },
-      "opencodezSystem": "codex_gpt_5_6_luna_terra"
-    },
-    "gpt6": {
-      "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-6-astra", "variant": "high" },
-      "opencodezSystem": "codex_gpt_6_astra"
-    },
-    "gpt6m": {
-      "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-6-astra", "variant": "medium" },
-      "opencodezSystem": "codex_gpt_6_astra"
-    },
-    "solm": {
-      "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-6-sol", "variant": "medium" },
-      "opencodezSystem": "codex_gpt_6_sol"
-    },
-    "solh": {
-      "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-6-sol", "variant": "high" },
-      "opencodezSystem": "codex_gpt_6_sol"
-    },
-    "sol": {
-      "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-6-sol", "variant": "high" },
-      "opencodezSystem": "codex_gpt_6_sol"
-    },
-    "solx": {
-      "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-6-sol", "variant": "xhigh" },
-      "opencodezSystem": "codex_gpt_6_sol"
-    },
-    "solmax": {
-      "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-6-sol", "variant": "max" },
-      "opencodezSystem": "codex_gpt_6_sol"
-    }
-  },
-  "web": {
-    "host": "opencodez.example.com",
-    "target": "http://192.168.1.50:4098",
-    "preferHttp": true
-  },
-  "wireguard": {
-    "enabled": false,
-    "interface": "wg0",
-    "listenPort": 51820,
-    "serverAddress": "10.77.0.1/24",
-    "subnet": "10.77.0.0/24",
-    "lanSubnet": "192.168.1.0/24",
-    "dns": "192.168.1.50",
-    "wanInterface": "eno1",
-    "stateDir": "state/wireguard"
-  }
+  "promptProfiles": {},
+  "web": {}
 }

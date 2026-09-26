@@ -1,5 +1,7 @@
 # Interface Language
 
+[English](interface-language.md) · [Русский](../ru/interface-language.md)
+
 OpenCodeBot has one global interface language for all chats, topics, recipients, command menus, buttons, status messages, and asynchronous notifications.
 
 Commands always remain in English. The preferred switch is `General → System`; the direct command remains available

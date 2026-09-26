@@ -1,5 +1,7 @@
 # Final Voice
 
+[English](final-voice.md) · [Русский](../ru/final-voice.md)
+
 Final Voice turns a completed OpenCode answer into a short spoken Telegram reply without delaying or weakening the normal text flow.
 
 The feature is optional and disabled by default. OpenCodeBot performs orchestration and Telegram delivery; model inference stays in a separate OpenAI-compatible TTS service.
@@ -25,9 +27,33 @@ The TTS provider owns only text-to-audio conversion. It must not receive Telegra
 
 ## Configuration
 
-`config.example.json` contains a complete disabled DeepSeek plus Silero example. Copy its `finalVoice` block into the effective runtime config and set deployment-specific values.
+`config.example.json` leaves Final Voice disabled. Supply `finalVoice.summary` and at least one `finalVoice.tts.profiles` entry in your private runtime config before enabling it; an absent TTS profile is not usable. No summary endpoint, model, key variable, TTS host, or provider-specific request body is inferred for a new installation.
 
-The production-compatible DeepSeek preset uses:
+For a generic OpenAI-compatible summary API and speech service, the operator-owned config looks like this:
+
+```json
+{
+  "finalVoice": {
+    "enabled": true,
+    "summary": { "baseURL": "https://api.example.com", "model": "summary-model", "apiKeyEnv": "SUMMARY_API_KEY" },
+    "tts": {
+      "defaultProfile": "voice",
+      "profiles": {
+        "voice": {
+          "baseURL": "http://tts-host:8000/v1",
+          "apiKeyEnv": "TTS_API_KEY",
+          "model": "speech-model",
+          "voices": ["speaker"],
+          "defaultVoice": "speaker",
+          "responseFormat": "opus"
+        }
+      }
+    }
+  }
+}
+```
+
+If you use DeepSeek, one provider-specific setup can use:
 
 - `https://api.deepseek.com/chat/completions`;
 - `deepseek-v4-flash`;
@@ -38,16 +64,18 @@ The production-compatible DeepSeek preset uses:
 
 `summary.requestBody` is passed through for OpenAI-compatible provider options, but OpenCodeBot always owns and overwrites `model`, `messages`, and `stream`. This permits provider-specific reasoning options without provider-specific code.
 
+The built-in summary prompt and spoken intro are written for Russian speech. For another language, set `summary.defaultPrompt` and `defaults.introTemplate` explicitly in the private config and choose a TTS profile that speaks that language. Switching the Telegram UI with `/lang` does not change voice output.
+
 TTS is configured as named profiles. Each profile fixes the operator-controlled endpoint, model, output format, timeout, and available Telegram-selectable voices. The bot never discovers models or endpoints dynamically.
 
 Secrets stay in `token.env`:
 
 ```dotenv
-DEEPSEEK_API_KEY=replace-me
-SILERO_TTS_API_KEY=optional-private-bridge-token
+SUMMARY_API_KEY=replace-me
+TTS_API_KEY=optional-provider-token
 ```
 
-`DEEPSEEK_API_KEY` is required when Final Voice is enabled. TTS bearer authentication is optional: if the configured environment variable is empty, OpenCodeBot sends no Authorization header.
+The configured summary API key is required when Final Voice is enabled. TTS bearer authentication is optional: if the configured environment variable is empty, OpenCodeBot sends no Authorization header.
 
 When `finalVoice.enabled` is false:
 
@@ -111,8 +139,7 @@ hard synthesis-chunk boundary, ensuring the topic/server announcement is spoken 
 
 The topic value comes from the canonical Telegram title. Its managed `(server)` suffix is removed because the template
 speaks `{server}` separately. Latin acronyms and identifiers inside `{topicname}` and `{server}` are converted locally to
-deterministic Cyrillic pronunciation before TTS (for example, `TTS-opencode (nuc)` becomes `ти ти эс опенкод` plus
-`нюк`). Only intro metadata is normalized; the summary and user/model content are unchanged.
+deterministic Cyrillic pronunciation before TTS (for example, an English acronym in the topic name becomes a speakable Russian rendering). Only intro metadata is normalized; the summary and user/model content are unchanged.
 
 The queue is intentionally in-memory. A restart drops incomplete voice work, while existing renderer markers prevent old finals from being replayed. Successful Telegram deliveries are recorded in a bounded persistent marker list. This provides clean at-most-once behavior without a second job database.
 

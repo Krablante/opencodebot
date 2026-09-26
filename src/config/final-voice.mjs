@@ -24,13 +24,6 @@ export const DEFAULT_FINAL_VOICE_PROMPT = `Ты готовишь текст дл
 
 СРАЗУ ВЫДАВАЙ ТОЛЬКО ГОТОВЫЙ ТЕКСТ ДЛЯ ОЗВУЧИВАНИЯ.`
 
-const DEFAULT_DEEPSEEK_BODY = {
-  max_tokens: 393_216,
-  thinking: { type: "enabled" },
-  reasoning_effort: "max",
-  response_format: { type: "text" },
-}
-
 const DEFAULT_INTRO = "Пришло новое сообщение из топика, {topicname}, на сервере, {server}."
 
 export function normalizeFinalVoiceConfig(input = {}, env = process.env) {
@@ -44,16 +37,16 @@ export function normalizeFinalVoiceConfig(input = {}, env = process.env) {
   const profiles = normalizeProfiles(ttsInput.profiles, env)
   const defaultProfile = profiles[ttsInput.defaultProfile]
     ? String(ttsInput.defaultProfile)
-    : Object.keys(profiles)[0] || "silero"
-  const summaryKeyEnv = cleanString(summaryInput.apiKeyEnv, "DEEPSEEK_API_KEY")
+    : Object.keys(profiles)[0] || ""
+  const summaryKeyEnv = cleanString(summaryInput.apiKeyEnv, "")
 
   return {
     enabled: input.enabled === true,
     summary: {
-      baseURL: trimTrailingSlash(summaryInput.baseURL || "https://api.deepseek.com"),
+      baseURL: trimTrailingSlash(summaryInput.baseURL || ""),
       apiKeyEnv: summaryKeyEnv,
-      apiKey: String(env[summaryKeyEnv] || "").trim(),
-      model: cleanString(summaryInput.model, "deepseek-v4-flash"),
+      apiKey: summaryKeyEnv ? String(env[summaryKeyEnv] || "").trim() : "",
+      model: cleanString(summaryInput.model, ""),
       defaultPrompt: cleanString(summaryInput.defaultPrompt, DEFAULT_FINAL_VOICE_PROMPT),
       timeoutMs: numberAtLeast(summaryInput.timeoutMs, 900_000, 1_000),
       maxInputChars: numberAtLeast(summaryInput.maxInputChars, 120_000, 1_000),
@@ -61,7 +54,7 @@ export function normalizeFinalVoiceConfig(input = {}, env = process.env) {
       maxResponseBytes: numberAtLeast(summaryInput.maxResponseBytes, 4 * 1024 * 1024, 1_024),
       requestBody: isObject(summaryInput.requestBody)
         ? structuredClone(summaryInput.requestBody)
-        : structuredClone(DEFAULT_DEEPSEEK_BODY),
+        : {},
     },
     tts: {
       defaultProfile,
@@ -82,22 +75,7 @@ export function normalizeFinalVoiceConfig(input = {}, env = process.env) {
 }
 
 function normalizeProfiles(value, env) {
-  const source = isObject(value) && Object.keys(value).length > 0
-    ? value
-    : {
-        silero: {
-          label: "Silero TTS v5.5 RU",
-          baseURL: "http://silero-tts-bridge:8000/v1",
-          apiKeyEnv: "SILERO_TTS_API_KEY",
-          model: "silero-ru-v5.5",
-          voices: ["xenia", "eugene"],
-          defaultVoice: "xenia",
-          responseFormat: "opus",
-          speed: 1,
-          timeoutMs: 900_000,
-          maxResponseBytes: 20 * 1024 * 1024,
-        },
-      }
+  const source = isObject(value) ? value : {}
   const profiles = {}
   for (const [rawID, rawProfile] of Object.entries(source)) {
     const id = String(rawID).trim().toLowerCase()

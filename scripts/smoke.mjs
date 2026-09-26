@@ -15,6 +15,7 @@ import {
   resolveUploadTarget,
 } from "../src/artifact-uploads.mjs"
 import { AttachmentBuffer, extractTelegramFiles } from "../src/attachments.mjs"
+import { startArtifactGateway } from "../src/artifacts-gateway.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "../src/commands.mjs"
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { normalizeFinalVoiceConfig } from "../src/config/final-voice.mjs"
@@ -41,6 +42,7 @@ import { createTelegramPolling, parseCommand } from "../src/telegram-polling.mjs
 import { createTopicLifecycle } from "../src/topic-lifecycle.mjs"
 import { createUpdateManager } from "../src/update-manager.mjs"
 import { classifyChangedPaths, scheduledCheckDue, summarizeUpdateCommits, zonedScheduleParts } from "../src/update-shared.mjs"
+import { nextPeerAddress } from "../src/wireguard-address.mjs"
 import { OpencodebotArtifactsPlugin } from "../plugins/opencodebot-artifacts/src/index.js"
 import { validateUpdateRequest } from "./apply-update.mjs"
 
@@ -55,6 +57,7 @@ await smokeRuntimeHealth(config, { explicit: Boolean(explicitConfigPath) })
 async function smokeLocalInvariants() {
   await smokeI18n()
   smokeConfigExample()
+  smokeWireguardAddresses()
   smokeUpdateSubsystem()
   await smokeUpdateManager()
   smokeSyntheticTextFilter()
@@ -64,6 +67,7 @@ async function smokeLocalInvariants() {
   await smokePollingHostIsolation()
   await smokeArtifactDropbox()
   await smokeArtifactPluginBatchCaptions()
+  await smokeArtifactTextLimit()
   await smokeSpeechOpenRouterRequest()
   await smokeSpeechGroqRequest()
   await smokeSpeechTopicRouting()
@@ -1619,6 +1623,20 @@ function smokeConfigExample() {
   assert.equal(example.speech.models[1].apiProvider, "groq")
   assert.equal(example.speech.models[1].apiModel, "whisper-large-v3")
   assert.ok(example.opencode.servers.length > 0)
+  assert.equal(example.updates.enabled, false)
+  assert.equal(example.finalVoice.enabled, false)
+  assert.deepEqual(example.finalVoice.tts.profiles, {})
+  assert.equal(example.finalVoice.summary.baseURL, "")
+  assert.deepEqual(example.finalVoice.summary.requestBody, {})
+}
+
+function smokeWireguardAddresses() {
+  assert.equal(nextPeerAddress([], "10.89.4.0/24", "10.89.4.1/24"), "10.89.4.2")
+  assert.equal(nextPeerAddress([{ address: "10.89.4.1" }, { address: "10.89.4.2" }], "10.89.4.0/24", "10.89.4.3/24"), "10.89.4.4")
+  assert.equal(nextPeerAddress([], "192.0.2.4/30", "192.0.2.6/30"), "192.0.2.5")
+  assert.throws(() => nextPeerAddress([{ address: "192.0.2.5" }], "192.0.2.4/30", "192.0.2.6/30"), /subnet is full/)
+  assert.throws(() => nextPeerAddress([], "10.89.4.0/24", "10.89.5.1/24"), /must be inside/)
+  assert.throws(() => nextPeerAddress([], "not-an-ip/24", "10.89.4.1/24"), /Invalid WireGuard IPv4/)
 }
 
 async function smokeSpeechOpenRouterRequest() {
@@ -1738,9 +1756,9 @@ async function smokeSpeechTopicRouting() {
   assert.equal(jobs.length, 2)
   assert.equal(jobs[1].message.message_thread_id, 8)
   assert.equal(await speech.handleVoiceMessage({ ...regularTopicVoice, voice: undefined, audio: regularTopicVoice.voice }), false)
-  assert.equal(speech.status().language, "ru")
-  speech.config.models[0].language = null
   assert.equal(speech.status().language, "auto")
+  speech.config.models[0].language = "ru"
+  assert.equal(speech.status().language, "ru")
 }
 
 async function smokeSpeechModelMenu() {
@@ -2010,9 +2028,42 @@ async function smokeArtifactPluginBatchCaptions() {
     await plugin.tool.opencodebot_send_artifact.execute({ paths: [first, second], caption: "local/test/upload", mode: "document" }, { directory: root })
     assert.deepEqual(metadata.map((item) => item.captionPaths), [[first], [second]])
     assert.deepEqual(metadata.map((item) => item.file.filename), ["first.txt", "second.txt"])
+    const oversized = path.join(root, "oversized.txt")
+    await writeFile(oversized, "x".repeat(13_601))
+    await assert.rejects(
+      plugin.tool.opencodebot_send_artifact.execute({ path: oversized, caption: "local/test/upload", mode: "text" }, { directory: root }),
+      /use mode=document/,
+    )
+    assert.equal(metadata.length, 2)
   } finally {
     globalThis.fetch = originalFetch
     await rm(root, { recursive: true, force: true })
+  }
+}
+
+async function smokeArtifactTextLimit() {
+  let sent = 0
+  const server = startArtifactGateway({
+    config: {
+      artifacts: { enabled: true, token: "test-token", port: 0, listenHost: "127.0.0.1", maxTextChars: 10, maxCaptionChars: 100, maxPayloadBytes: 1024 },
+      telegram: { botApi: { mode: "cloud" } },
+    },
+    state: { artifactsTopic: () => ({ chatId: 1, topicId: 2, title: "Artifacts" }) },
+    telegram: { async sendMessage() { sent++; return { message_id: sent } } },
+  })
+  try {
+    if (!server.listening) await new Promise((resolve) => server.once("listening", resolve))
+    const url = `http://127.0.0.1:${server.address().port}/artifacts/send`
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+      body: JSON.stringify({ text: "a".repeat(11), caption: "test" }),
+    })
+    assert.equal(response.status, 413)
+    assert.equal((await response.json()).error, "text_too_large")
+    assert.equal(sent, 0)
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
   }
 }
 
@@ -2727,16 +2778,6 @@ async function smokePendingTopicBindingPrecedesProfileSetup() {
       order.push("create")
       return { id: "ses_telegram_new", directory: "/srv/toma" }
     },
-    async switchSessionModel(serverID, sessionID) {
-      assert.equal(binding?.serverID, serverID)
-      assert.equal(binding?.sessionID, sessionID)
-      order.push("model")
-    },
-    async selectSystemPrompt(serverID, sessionID) {
-      assert.equal(binding?.serverID, serverID)
-      assert.equal(binding?.sessionID, sessionID)
-      order.push("system")
-    },
   }
   const result = await bindPendingTopicSession({
     state,
@@ -2755,7 +2796,8 @@ async function smokePendingTopicBindingPrecedesProfileSetup() {
     text: "First prompt",
   })
   assert.equal(result.topicId, 38740)
-  assert.deepEqual(order, ["create", "bind", "seen", "model", "system"])
+  assert.deepEqual(order, ["create", "bind", "seen"])
+  assert.deepEqual(binding.setupProfile, { model: { providerID: "openai", modelID: "gpt-5.6", variant: "high" }, opencodezSystem: "full" })
 }
 
 async function smokeTopicCreationSingleFlight() {
@@ -3092,7 +3134,7 @@ async function smokeKillSuppressesAbortFallout() {
   assert.equal(alerts.length, 1)
   assert.equal(alerts[0].kind, "error")
   assert.equal(alerts[0].alertKey, "nuc:ses_kill:user-first")
-  assert.match(sent[0].text, /OpenCodez session error/)
+  assert.match(sent[0].text, /OpenCodez run failed/)
   assert.match(sent[0].text, /real failure/)
 
   await reconciler.handleOpenCodeEvent({ id: "nuc" }, { type: "session.error", properties: { sessionID: "ses_kill" } })

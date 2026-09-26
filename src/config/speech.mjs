@@ -1,6 +1,6 @@
 const DEFAULT_MODEL = "openai/whisper-large-v3-turbo"
-const DEFAULT_LANGUAGE = "ru"
-const DEFAULT_PROMPT = "Русская голосовая заметка. Сохраняй технические названия, команды, пути и сокращения латиницей."
+const DEFAULT_LANGUAGE = "auto"
+const DEFAULT_PROMPT = ""
 const PROVIDER_DEFAULTS = {
   openrouter: {
     label: "OpenRouter",

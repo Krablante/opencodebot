@@ -1,13 +1,14 @@
 # Self-Update
 
-With the example and current private config, opencodebot checks its public GitHub `main` branch every day at
-`07:00 Europe/London`. The schedule comes from `updates.checkAt` and `updates.timeZone`. When a newer commit exists, it
+[English](self-update.md) · [Русский](../ru/self-update.md)
+
+The public example has scheduled checks disabled. If you enable them in private config, choose both
+`updates.checkAt` and `updates.timeZone`. When a newer commit exists, the bot
 posts one concise update card in the Telegram General topic. `/update` performs an immediate check and reports in the
 topic where the command was used even when scheduled checks are disabled. A manual check does not move or enable the
 daily schedule.
 
-The feature deliberately owns only opencodebot. It never deploys bundled OpenCodez plugin or skill copies, never calls
-the Politia harness, and never restarts OpenCodez. If the exact Git range includes
+The feature deliberately owns only opencodebot. It never deploys bundled OpenCodez plugin or skill copies and never restarts OpenCodez. If the exact Git range includes
 `plugins/opencodebot-artifacts/` or `skills/telegram-artifact-send/`, the offer and final success card identify those
 source changes and tell the operator to apply the installed copies manually when convenient.
 
@@ -124,8 +125,7 @@ npm run update-runner:install
 systemctl --user status opencodebot-update.path
 ```
 
-The installer defaults to Politia state at `~/politia/state/projects/tg/opencodebot`. A standalone deployment can name
-the host bind-mount source explicitly:
+The installer reads `OPENCODEBOT_STATE_DIR` from the process environment or the ignored Compose `.env` file; otherwise it uses `./state` in the checkout. You can name the host bind-mount source explicitly:
 
 ```bash
 npm run update-runner:install -- --state-dir /absolute/host/state

@@ -1,5 +1,7 @@
 # Docker
 
+[English](docker.md) · [Русский](../ru/docker.md)
+
 Docker Compose is the recommended deployment path for most people. It keeps the bot as one long-running process with local config and state mounted from the project directory. OpenCodez does not need to be in Docker.
 
 You need Node.js 22 or newer for helper scripts such as `npm run init-config`, plus Docker Compose for the runtime container.
@@ -109,7 +111,7 @@ If OpenCodez is reachable on your LAN, use the LAN URL:
     {
       "id": "local",
       "label": "OpenCodez",
-      "url": "http://192.168.1.50:4096",
+      "url": "http://host.docker.internal:4096",
       "home": "/home/alice",
       "uploadRoot": "/home/alice/.opencodebot/uploads",
       "transfer": { "type": "local" }

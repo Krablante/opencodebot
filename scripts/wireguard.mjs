@@ -4,6 +4,7 @@ import { execFile as execFileCallback } from "node:child_process"
 import { spawn } from "node:child_process"
 import { promisify } from "node:util"
 import { loadConfig } from "../src/config.mjs"
+import { nextPeerAddress } from "../src/wireguard-address.mjs"
 
 const execFile = promisify(execFileCallback)
 const config = loadConfig(process.env.OPENCODEBOT_CONFIG)
@@ -20,6 +21,11 @@ if (process.platform !== "linux") {
   process.exit(1)
 }
 
+if (!/^[a-zA-Z0-9_.-]{1,15}$/.test(wg.interface || "") || !/^[a-zA-Z0-9_.-]{1,15}$/.test(wg.wanInterface || "")) {
+  throw new Error("wireguard.interface and wireguard.wanInterface must be Linux interface names")
+}
+nextPeerAddress([], wg.subnet, wg.serverAddress)
+
 if (command === "init") await initServer()
 if (command === "peer") await createPeer(process.argv[3] || "phone")
 
@@ -34,6 +40,7 @@ async function initServer() {
 }
 
 async function createPeer(name) {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(name)) throw new Error("Peer name must use letters, numbers, _ or - and start with a letter or number")
   await fs.mkdir(path.join(wg.stateDir, "peers"), { recursive: true, mode: 0o700 })
   const serverPublic = (await fs.readFile(path.join(wg.stateDir, "server.pub"), "utf8")).trim()
   const peers = await readPeers()
@@ -41,7 +48,7 @@ async function createPeer(name) {
   if (existing) throw new Error(`Peer already exists: ${name}`)
   const peerPrivate = await genkey()
   const peerPublic = await publicKey(peerPrivate)
-  const address = nextPeerAddress(peers)
+  const address = nextPeerAddress(peers, wg.subnet, wg.serverAddress)
   const endpoint = await endpointValue()
   peers.push({ name, publicKey: peerPublic, address, createdAt: new Date().toISOString() })
   await writePeers(peers)
@@ -137,15 +144,6 @@ async function readPeers() {
 
 async function writePeers(peers) {
   await fs.writeFile(path.join(wg.stateDir, "peers.json"), JSON.stringify(peers, null, 2) + "\n", { mode: 0o600 })
-}
-
-function nextPeerAddress(peers) {
-  const used = new Set(peers.map((peer) => peer.address))
-  for (let host = 2; host < 255; host++) {
-    const address = `10.77.0.${host}`
-    if (!used.has(address)) return address
-  }
-  throw new Error("WireGuard peer subnet is full")
 }
 
 async function endpointValue() {

@@ -1,5 +1,7 @@
 # WireGuard
 
+[English](wireguard.md) · [Русский](../ru/wireguard.md)
+
 WireGuard is optional. opencodebot does not need it for Telegram long polling, `/new`, `/q`, attachments, mirror events, or normal LAN access to OpenCodez. It is only a private tunnel for opening the same LAN OpenCodez web UI from a phone or laptop when you are away from home.
 
 The useful mental model is simple: Telegram keeps working over the public Telegram API, OpenCodez keeps running on your private machine, and WireGuard gives your device a private route back into that LAN. Do not expose OpenCodez itself to the public internet just to use the web UI remotely.
@@ -22,7 +24,7 @@ On the server side you need a Linux host:
 
 - A machine running OpenCodez and opencodebot.
 - WireGuard installed on that machine: `wg` and `wg-quick` must exist.
-- A UDP port forwarded from the router to that machine. The default in `config.example.json` is `51820/udp`.
+- A UDP port forwarded from the router to that machine. Set `wireguard.listenPort` explicitly.
 - A public endpoint for the peer config: either your public IP address or a DNS name that points to it.
 - A LAN subnet and DNS value that match your network, not necessarily the sample values in this repo.
 
@@ -36,7 +38,7 @@ On the client side your friend needs:
 
 WireGuard uses UDP, not TCP. On your router, forward one UDP port from the internet to the machine that runs `wg0`.
 
-The default helper config uses:
+For a setup using port 51820:
 
 ```text
 external port: 51820/udp
@@ -50,7 +52,7 @@ Do not forward OpenCodez's web port directly. The safer pattern is one public UD
 
 ## Runtime Config
 
-The sample WireGuard block is a starting point, not a universal network config:
+Add a WireGuard block to your private runtime config. Replace the illustrative subnet, DNS, and network interface with values from your own network:
 
 ```json
 {
@@ -61,8 +63,8 @@ The sample WireGuard block is a starting point, not a universal network config:
     "serverAddress": "10.77.0.1/24",
     "subnet": "10.77.0.0/24",
     "lanSubnet": "192.168.1.0/24",
-    "dns": "192.168.1.50",
-    "wanInterface": "eno1"
+    "dns": "192.168.1.1",
+    "wanInterface": "eth0"
   }
 }
 ```
@@ -70,7 +72,7 @@ The sample WireGuard block is a starting point, not a universal network config:
 Adjust these before creating peers:
 
 - `listenPort`: UDP port forwarded on the router.
-- `serverAddress` and `subnet`: private WireGuard network. The defaults are fine unless they conflict with your existing networks.
+- `serverAddress` and `subnet`: your private WireGuard IPv4 network; the helper assigns peer addresses within this subnet.
 - `lanSubnet`: the LAN range clients should reach through the tunnel, such as `192.168.1.0/24` or `10.0.0.0/24`.
 - `dns`: DNS server pushed to clients. This is often the LAN address of your router, Pi-hole, AdGuard, or the OpenCodez host.
 - `wanInterface`: host network interface used for outbound LAN/NAT rules, such as `eth0`, `eno1`, or `wlan0`.

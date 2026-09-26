@@ -76,6 +76,13 @@ async function sendArtifact({ config, telegram, target, payload }) {
   const mode = normalizeMode(payload?.mode)
   const caption = clampText(String(payload?.caption || "Agent artifact").trim(), config.artifacts.maxCaptionChars)
   const captionPaths = payload?.captionPaths
+  const text = String(payload?.text || "").trim()
+  if (text.length > config.artifacts.maxTextChars) {
+    throw publicError("text_too_large", `Text is too long (${text.length} characters; max ${config.artifacts.maxTextChars}). Send it as a file instead.`, 413)
+  }
+  if (text && [caption, text, artifactPathLines(captionPaths).join("\n")].filter(Boolean).join("\n\n").length > 4096) {
+    throw publicError("text_too_large", "Formatted text exceeds Telegram's 4096-character message limit; send it as a file instead.", 413)
+  }
   const messages = []
   if (payload?.file) {
     if (!isStreamPayload(payload)) throw publicError("stream_required", "Files must be sent to /artifacts/send-file as a stream.", 400)
@@ -89,9 +96,8 @@ async function sendArtifact({ config, telegram, target, payload }) {
     const sent = await sendFileWithAutoFallback({ telegram, target, file, caption: artifactFileCaptionHtml(caption, captionPaths), method, mode })
     messages.push(messageResult(sent.method, target, sent.message))
   }
-  const text = String(payload?.text || "").trim()
   if (text) {
-    const message = await sendTextArtifact({ telegram, target, caption, captionPaths, text: clampText(text, config.artifacts.maxTextChars) })
+    const message = await sendTextArtifact({ telegram, target, caption, captionPaths, text })
     messages.push(messageResult("sendMessage", target, message))
   }
   if (!messages.length) throw publicError("empty_artifact", "Provide file or text.", 400)
@@ -117,13 +123,16 @@ async function sendTextArtifact({ telegram, target, caption, captionPaths, text 
   const pathLines = artifactPathLines(captionPaths)
   if (pathLines.length) lines.push("", toolQuoteMarkdownV2(pathLines.join("\n")))
   const markdown = lines.join("\n")
+  const plainPaths = artifactPathLines(captionPaths).join("\n")
+  const plain = [caption, text, plainPaths].filter(Boolean).join("\n\n")
+  if (plain.length > 4096) throw publicError("text_too_large", "Formatted text exceeds Telegram's 4096-character message limit; send it as a file instead.", 413)
   try {
+    if (markdown.length > 4096) return await telegram.sendMessage({ chatId: target.chatId, topicId: target.topicId, text: plain, format: "plain", disablePreview: true })
     return await telegram.sendMessage({ chatId: target.chatId, topicId: target.topicId, text: markdown, format: "markdownv2", disablePreview: true })
   } catch (error) {
     if (!/can't parse entities|entity/i.test(error.message)) throw error
     logWarn("artifacts.text_markdown_fallback", { captionChars: caption.length, textChars: text.length })
-    const plainPaths = artifactPathLines(captionPaths).join("\n")
-    return telegram.sendMessage({ chatId: target.chatId, topicId: target.topicId, text: [caption, text, plainPaths].filter(Boolean).join("\n\n"), format: "plain", disablePreview: true })
+    return telegram.sendMessage({ chatId: target.chatId, topicId: target.topicId, text: plain, format: "plain", disablePreview: true })
   }
 }
 
