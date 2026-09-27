@@ -300,6 +300,9 @@ server. Same-server reset preserves the current directory, while cross-server re
 the OpenCodez session's next model so the web composer stays in sync, and it keeps sending the same model in prompt
 payloads so Telegram-origin prompts do not depend on browser-local state.
 
+`d4flash` selects DeepSeek V4.1 Flash through the `deepseek-flash` model ID. An explicit `d4flash` entry in local
+`promptProfiles` overrides this built-in choice; update that entry too when migrating from `deepseek-v4-flash`.
+
 General's `Launch profiles` view reads this effective merged map directly. It includes runtime-added and overridden
 profiles, shows seven at a time, and offers a detailed card for each. Browsing is read-only; choose a profile by typing
 `/new [server] profile [title]` for a new topic or `/reset profile [server]` inside an existing session topic.

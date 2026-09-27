@@ -28,7 +28,11 @@ test("built-in prompt profiles use current models, variants, and System prompts"
   })
   assert.equal(profiles.luna.opencodezSystem, "codex_gpt_6_luna")
   assert.equal(profiles.terra.opencodezSystem, "codex_gpt_5_6_luna_terra")
-  assert.equal(profiles.d4flash.opencodezSystem, "default")
+  assert.deepEqual(profiles.d4flash, {
+    agent: "build",
+    model: { providerID: "deepseek", modelID: "deepseek-flash", variant: "max" },
+    opencodezSystem: "default",
+  })
   assert.equal(profiles.d4pro.opencodezSystem, "default")
   for (const [name, variant] of [["solm", "medium"], ["solh", "high"], ["sol", "high"], ["solx", "xhigh"], ["solmax", "max"]]) {
     assert.deepEqual(profiles[name], {

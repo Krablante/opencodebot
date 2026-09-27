@@ -56,7 +56,7 @@ For a generic OpenAI-compatible summary API and speech service, the operator-own
 If you use DeepSeek, one provider-specific setup can use:
 
 - `https://api.deepseek.com/chat/completions`;
-- `deepseek-v4-flash`;
+- `deepseek-flash` (DeepSeek V4.1 Flash);
 - thinking enabled;
 - `reasoning_effort: max`;
 - `max_tokens: 393216`;

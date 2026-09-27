@@ -1,7 +1,7 @@
 const defaultPromptProfiles = {
   d4flash: {
     agent: "build",
-    model: { providerID: "deepseek", modelID: "deepseek-v4-flash", variant: "max" },
+    model: { providerID: "deepseek", modelID: "deepseek-flash", variant: "max" },
     opencodezSystem: "default",
   },
   d4pro: {

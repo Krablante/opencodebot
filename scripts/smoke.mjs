@@ -207,7 +207,7 @@ async function smokeFinalVoiceFlow() {
         summary: {
           baseURL: url,
           apiKeyEnv: "DEEPSEEK_API_KEY",
-          model: "deepseek-v4-flash",
+          model: "deepseek-flash",
           defaultPrompt: "Сделай короткое суммари.",
           requestBody: { max_tokens: 393216, thinking: { type: "enabled" }, reasoning_effort: "max" },
         },
@@ -250,7 +250,7 @@ async function smokeFinalVoiceFlow() {
     assert.equal(sent.topicId, 77)
     assert.deepEqual(sent.bytes, opus)
     assert.equal(requests[0].url, "/chat/completions")
-    assert.equal(requests[0].body.model, "deepseek-v4-flash")
+    assert.equal(requests[0].body.model, "deepseek-flash")
     assert.equal(requests[0].body.reasoning_effort, "max")
     assert.equal(requests[0].body.messages[0].content, "Глобальный общий промпт.")
     assert.equal(requests[0].body.messages[1].content, "Полный финальный ответ.")

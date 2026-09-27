@@ -31,13 +31,15 @@
 
 | Профили | Модель | Варианты |
 | --- | --- | --- |
-| `d4flash`, `d4pro` | DeepSeek V4 Flash / Pro | max |
+| `d4flash`, `d4pro` | DeepSeek V4.1 Flash / V4 Pro | max |
 | `luna`, `lunah`, `lunamax` | GPT-6 Luna | xhigh / high / max |
 | `terra` | GPT-5.6 Terra | xhigh |
 | `gpt6`, `gpt6m` | GPT-6 Astra | high / medium |
 | `sol`, `solh`, `solm`, `solx`, `solmax` | GPT-6 Sol | high / high / medium / xhigh / max |
 
 Каждый профиль содержит `agent`, `model.providerID`, `model.modelID`, необязательный `model.variant` и `opencodezSystem`. Для систем Sol/Luna нужна версия OpenCodez с соответствующими встроенными System. Локальные записи дополняют или переопределяют встроенные; обновление бота не переписывает явно заданный профиль.
+
+`d4flash` использует DeepSeek V4.1 Flash с идентификатором `deepseek-flash`. Если `d4flash` явно задан в локальном `promptProfiles`, замените там старый `deepseek-v4-flash`: локальная запись перекрывает встроенный профиль.
 
 ## Файлы и ограничения
 
