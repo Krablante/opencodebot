@@ -24,6 +24,15 @@ export function withFinalAnswerMarker(text) {
     const prefix = quote[0]
     return `${prefix}${prefix.endsWith(">") ? " " : ""}${FINAL_ANSWER_MARKER} ${value.slice(prefix.length)}`
   }
+  const heading = value.match(/^(#{1,6})([ \t]+)(?=\S)/)
+  if (heading) return `${heading[1]}${heading[2]}${FINAL_ANSWER_MARKER} ${value.slice(heading[0].length)}`
+  // Keep the marker on its own line when it cannot sit inside the first Markdown block.
+  const standaloneBlock = /^(?:`{3,}|~{3,}|[-*+][ \t]+|\d{1,9}[.)][ \t]+|\|[^\n]*\n\||!\[)/.test(value)
+    || /^(?:[-*_][ \t]*){3,}(?:\n|$)/.test(value)
+    || /^<(?:h[1-6]|blockquote|details|table|ul|ol|pre|figure)\b/i.test(value)
+  if (standaloneBlock) {
+    return `${FINAL_ANSWER_MARKER}\n\n${value}`
+  }
   return `${FINAL_ANSWER_MARKER} ${value}`
 }
 

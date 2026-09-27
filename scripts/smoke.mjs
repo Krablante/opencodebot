@@ -64,7 +64,7 @@ async function smokeLocalInvariants() {
   await smokeUpdateManager()
   smokeSyntheticTextFilter()
   smokeNestedRichListNormalization()
-  await smokeFinalQuoteFormatting()
+  await smokeFinalBlockFormatting()
   smokeIncomingRichMessages()
   await smokeIncomingRichPolling()
   await smokePollingHostIsolation()
@@ -596,7 +596,7 @@ function smokeNestedRichListNormalization() {
   assert.match(codeNormalized, /2⁠\. back to top/)
 }
 
-async function smokeFinalQuoteFormatting() {
+async function smokeFinalBlockFormatting() {
   const source = "> **Да, уведомление после компакта возможно.** Топик получит `🗜️ session compacted`.\n> Продолжение цитаты.\n\nТекст после цитаты."
   const expected = "> 🏁 **Да, уведомление после компакта возможно.** Топик получит `🗜️ session compacted`.\n> Продолжение цитаты.\n\nТекст после цитаты."
   const markdown = prepareRichMarkdown(withFinalAnswerMarker(source))
@@ -604,6 +604,15 @@ async function smokeFinalQuoteFormatting() {
   assert.deepEqual(fromMarkdown(markdown).children.map((node) => node.type), ["blockquote", "paragraph"])
   assert.equal(withFinalAnswerMarker(">> **Nested**"), ">> 🏁 **Nested**")
   assert.equal(withFinalAnswerMarker("Обычный ответ"), "🏁 Обычный ответ")
+  const heading = "# Что на самом деле значит «уничтожить dotmd»\n\n> **Главный результат.** Содержимое цитаты.\n\n## Три разных dotmd"
+  const markedHeading = prepareRichMarkdown(withFinalAnswerMarker(heading))
+  assert.equal(markedHeading, "# 🏁 Что на самом деле значит «уничтожить dotmd»\n\n> **Главный результат.** Содержимое цитаты.\n\n## Три разных dotmd")
+  assert.deepEqual(fromMarkdown(markedHeading).children.map((node) => node.type), ["heading", "blockquote", "heading"])
+  assert.equal(withFinalAnswerMarker("### Подзаголовок"), "### 🏁 Подзаголовок")
+  assert.equal(withFinalAnswerMarker("```js\nconst x = 1\n```"), "🏁\n\n```js\nconst x = 1\n```")
+  assert.equal(withFinalAnswerMarker("- первый\n- второй"), "🏁\n\n- первый\n- второй")
+  assert.deepEqual(fromMarkdown(withFinalAnswerMarker("```js\nconst x = 1\n```")).children.map((node) => node.type), ["paragraph", "code"])
+  assert.deepEqual(fromMarkdown(withFinalAnswerMarker("- первый\n- второй")).children.map((node) => node.type), ["paragraph", "list"])
 
   const sent = []
   const renderer = new MirrorRenderer({
@@ -615,6 +624,8 @@ async function smokeFinalQuoteFormatting() {
   assert.equal(sent.length, 1)
   assert.equal(sent[0].markdown, expected)
   assert.equal(sent[0].skipEntityDetection, true)
+  await renderer.assistantMessage({ chatId: 123, topicId: 456, serverID: "test", sessionID: "heading" }, heading)
+  assert.equal(sent[1].markdown, markedHeading)
 }
 
 async function smokeMirrorModeCommands() {
