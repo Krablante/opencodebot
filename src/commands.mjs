@@ -33,6 +33,7 @@ export function createTelegramCommandHandlers({
   createPendingTopic,
   discardAttachmentBatch = async () => 0,
   detachBinding = () => {},
+  notifyLatestManualCompaction = async () => false,
   speech,
   finalVoice,
   questionManager,
@@ -419,7 +420,7 @@ export function createTelegramCommandHandlers({
       topicId: currentTopicId,
       text: t("commands.compact.starting"),
     })
-    const operation = { cancelled: false }
+    const operation = { cancelled: false, startedAt: Date.now() }
     compactOperations.set(compactOperationKey(binding), operation)
     promptQueue.setCompacting(binding, operation)
     void compactSessionInBackground({ binding, message, feedback, model: profile.model, operation }).catch((error) => {
@@ -436,11 +437,27 @@ export function createTelegramCommandHandlers({
         await updateCompactFeedback({ message, feedback, text: t("commands.compact.stopped") })
         return
       }
-      await updateCompactFeedback({
-        message,
-        feedback,
-        text: t("commands.compact.completed"),
-      })
+      let notified = false
+      try {
+        notified = await notifyLatestManualCompaction(binding, operation.startedAt)
+      } catch (error) {
+        logErrorEvent("compact.notice_failed", error, { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId })
+      }
+      if (notified) {
+        if (feedback?.message_id) {
+          try {
+            await telegram.deleteMessage({ chatId: message.chat.id, messageId: feedback.message_id, suppressFailureLog: true })
+          } catch (error) {
+            logErrorEvent("compact.feedback.delete_failed", error, { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId })
+            await updateCompactFeedback({ message, feedback, text: t("commands.compact.completed") })
+          }
+        }
+      } else {
+        const current = state.findBindingByTopic(message.chat.id, topicId(message))
+        if (current?.serverID === binding.serverID && current.sessionID === binding.sessionID) {
+          await updateCompactFeedback({ message, feedback, text: t("commands.compact.completed") })
+        }
+      }
       logInfo("compact.completed", { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId })
     } catch (error) {
       if (operation.cancelled) {

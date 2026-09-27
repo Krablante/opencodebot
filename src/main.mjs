@@ -167,6 +167,7 @@ const commandHandlers = createTelegramCommandHandlers({
   createPendingTopic,
   discardAttachmentBatch: promptRouter.discardAttachmentBatch,
   detachBinding: sessionReconciler.detachBinding,
+  notifyLatestManualCompaction: sessionReconciler.notifyLatestManualCompaction,
   speech,
   finalVoice,
   questionManager,

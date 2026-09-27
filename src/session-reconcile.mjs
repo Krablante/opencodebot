@@ -211,7 +211,7 @@ export function createSessionReconciler({
           ))
           if (messages === skippedBackendRequest) break
           const summary = [...messages].reverse().find((message) => message.info?.summary === true)
-          if (summary) await notifyAutoCompaction(binding, summary.info, { messages })
+          if (summary) await notifyCompletedCompaction(binding, summary.info, { messages })
           break
         }
         case "question.asked":
@@ -442,8 +442,8 @@ export function createSessionReconciler({
       scheduleReconcile(binding, 500)
       return
     }
-    if (info.summary === true && info.finish === "stop" && !state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
-      const notified = await notifyAutoCompaction(binding, info, { requireRemote: true })
+    if (info.summary === true && info.finish === "stop") {
+      const notified = await notifyCompletedCompaction(binding, info)
       if (notified === null) {
         scheduleReconcile(binding, 500)
         return
@@ -758,22 +758,30 @@ export function createSessionReconciler({
   }
 
   async function handleAssistantMessageUpdated(binding, info) {
-    if (!info?.id || !isCompleted(info) || state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
-      if (info?.finish === "stop" && state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
-        clearRunCheck(binding)
-        await promptQueue.markTerminalMirrored(binding)
-      }
-      return
-    }
+    if (!info?.id || !isCompleted(info)) return
     if (info.summary === true) {
       if (info.finish === "stop") {
-        const notified = await notifyAutoCompaction(binding, info, { requireRemote: true })
+        const notified = await notifyCompletedCompaction(binding, info)
         if (notified === null) {
           scheduleReconcile(binding, 500)
           return
         }
       }
+      if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
+        if (info.finish === "stop") {
+          clearRunCheck(binding)
+          await promptQueue.markTerminalMirrored(binding)
+        }
+        return
+      }
       await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
+      return
+    }
+    if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
+      if (info.finish === "stop") {
+        clearRunCheck(binding)
+        await promptQueue.markTerminalMirrored(binding)
+      }
       return
     }
     if (info.finish === "stop") {
@@ -786,9 +794,9 @@ export function createSessionReconciler({
     }
   }
 
-  async function notifyAutoCompaction(binding, info, { messages = [], requireRemote = false } = {}) {
+  async function notifyCompletedCompaction(binding, info, { messages = [] } = {}) {
     if (info?.summary !== true || info.finish !== "stop" || info.error || !isCompleted(info) || !info.parentID) return false
-    if (state.isCompactionNotified(binding.serverID, binding.sessionID, info.parentID)) return false
+    if (state.isCompactionNotified(binding.serverID, binding.sessionID, info.parentID)) return true
     let user = messages.find((message) => (message.info || message).id === info.parentID)
     if (!user) {
       user = await backendRequest(binding.serverID, "compaction marker", () => opencode.message(
@@ -799,13 +807,40 @@ export function createSessionReconciler({
       ))
       if (user === skippedBackendRequest) return null
     }
-    const part = user?.parts?.find((item) => item.type === "compaction" && item.auto === true)
-    if (!part || (requireRemote && part.remote?.providerID !== "openai")) return false
+    const part = user?.parts?.find((item) => item.type === "compaction" && typeof item.auto === "boolean")
+    if (!part) return false
     if (!activeBinding(binding)) return false
     await telegram.sendMessage({ chatId: binding.chatId, topicId: binding.topicId, text: "🗜️ session compacted", format: "plain" })
     await state.markCompactionNotified(binding.serverID, binding.sessionID, info.parentID)
-    logInfo("compact.auto_notified", { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId })
+    logInfo("compact.notified", { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId })
     return true
+  }
+
+  function notifyLatestManualCompaction(binding, since) {
+    return runAfterFlight(bindingOperations, bindingKey(binding), async () => {
+      if (!activeBinding(binding)) return false
+      const messages = await backendRequest(binding.serverID, "completed manual compaction", () => opencode.messages(
+        binding.serverID,
+        binding.sessionID,
+        { directory: binding.directory, limit: 10 },
+      ))
+      if (messages === skippedBackendRequest) return false
+      for (const message of [...messages].reverse()) {
+        const info = message.info
+        if (info?.summary !== true || info.finish !== "stop" || !Number.isFinite(info.time?.completed) || info.time.completed < since || !info.parentID) continue
+        const parent = messages.find((item) => item.info?.id === info.parentID)
+        const marker = parent || await backendRequest(binding.serverID, "manual compaction marker", () => opencode.message(
+          binding.serverID,
+          binding.sessionID,
+          info.parentID,
+          { directory: binding.directory },
+        ))
+        if (marker === skippedBackendRequest) return false
+        if (!marker?.parts?.some((part) => part.type === "compaction" && part.auto === false)) continue
+        return notifyCompletedCompaction(binding, info, { messages: [marker] })
+      }
+      return false
+    })
   }
 
   async function mirrorPartUpdate(binding, properties) {
@@ -1232,8 +1267,8 @@ export function createSessionReconciler({
       }
       if (info.role !== "assistant" || !info.id) continue
       if (!isCompleted(info)) continue
-      if (info.summary === true && info.finish === "stop" && !state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
-        const notified = await notifyAutoCompaction(binding, info, { messages, requireRemote: true })
+      if (info.summary === true && info.finish === "stop") {
+        const notified = await notifyCompletedCompaction(binding, info, { messages })
         if (notified === null) return
       }
       if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
@@ -1458,6 +1493,7 @@ export function createSessionReconciler({
   return {
     clearRetryStatus,
     handleOpenCodeEvent,
+    notifyLatestManualCompaction,
     reconcileBinding,
     reconcileLoop,
     reconcileSessions,

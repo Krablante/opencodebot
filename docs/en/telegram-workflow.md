@@ -122,19 +122,20 @@ OpenCodez `sessionStatus`, not the prompt queue's in-memory busy hint; stale que
 compaction after a final response, while a genuinely non-idle backend still rejects it. A separate in-memory
 `compactOperations` guard prevents duplicate compaction requests that are actually in flight. The bot calls OpenCodez
 `POST /session/:sessionID/summarize` with `auto=false` in the background, so Telegram polling remains responsive during
-a long summary run. A single status message moves from `Compacting context…` to a concise success or failure result.
+a long summary run. A status message shows `Compacting context…` while it runs. On success the bot removes that status
+and posts the same completion marker as other compactions; on failure the status changes to the error.
 Prompts received after the operation starts use the ordinary per-session queue and are released after OpenCodez is idle
 and the summarize request has completed successfully; queue release does not depend on receiving a terminal SSE event.
 The command also refreshes the binding's bounded reconcile lease before it starts. OpenCodez's internal assistant message
 marked `summary=true` is recorded as handled but never mirrored into Telegram. `/compact` does not create a session, change the selected model,
 delete history, or modify OpenCodez/Harness deployment state. Use `/kill` if an in-progress compaction must be aborted.
 
-Successful automatic compaction posts the short `🗜️ session compacted` marker in the active session topic, including when
-the ChatGPT Responses wire compacts remotely during a running turn. The marker can arrive before the final answer if
-OpenCodez continues working. It is shown in both mirror modes and contains no summary or private context. A manual
-`/compact` keeps its existing editable status message instead. Closed, reset, and unbound topics receive no marker.
-The bot tracks delivered compactions across restarts and checks completed remote compactions during recent-session
-recovery if their live event was missed.
+Every successful completed compaction posts one `🗜️ session compacted` message in the active session topic, whether
+started automatically, by `/compact`, or manually in OpenCodez. The marker can arrive before the final answer if
+OpenCodez continues working. It appears in both mirror modes and contains no summary or private context. Closed,
+reset, and unbound topics receive no marker. The bot tracks delivered compactions across restarts and checks recent
+session history if a live event was missed. If a `/compact` notification cannot be delivered, its status message
+still changes to the success result.
 
 `/context` exports the latest three main-session user turns from the topic; `/context N` overrides the count once and
 `/set_context N` stores a personal default for that Telegram user. `N` is limited to 1–10 and counts both completed and

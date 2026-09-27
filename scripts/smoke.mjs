@@ -105,7 +105,7 @@ async function smokeLocalInvariants() {
   await smokeKillCommandAbortFailure()
   await smokeKillSuppressesAbortFallout()
   await smokeManualCompactionSuppression()
-  await smokeAutomaticCompactionMarker()
+  await smokeCompactionMarker()
   await smokeOpenCodeSummarizeClient()
   await smokeQueueDrainsOnSessionIdle()
   await smokeIncompleteRunNotice()
@@ -2145,8 +2145,10 @@ async function smokeCompactCommand() {
   const binding = { serverID: "nuc", sessionID: "ses_compact", directory: "/tmp/work", topicId: 456 }
   const sent = []
   const edited = []
+  const deleted = []
   const summarized = []
   let compactDeferred = null
+  let deliverNotice = true
   let abortCalls = 0
   const promptQueue = new PromptQueue({
     onPrompt: async () => {},
@@ -2167,6 +2169,9 @@ async function smokeCompactCommand() {
       },
       async editMessageText(message) {
         edited.push(message)
+      },
+      async deleteMessage(message) {
+        deleted.push(message.messageId)
       },
     },
     opencode: {
@@ -2189,6 +2194,11 @@ async function smokeCompactCommand() {
       },
     },
     promptQueue,
+    notifyLatestManualCompaction: async () => {
+      if (!deliverNotice) return false
+      sent.push({ chatId: 123, topicId: 456, text: "🗜️ session compacted", format: "plain" })
+      return true
+    },
     multipartPrompts: { async flushKey() {} },
     createPendingTopic: async () => {},
   })
@@ -2214,10 +2224,19 @@ async function smokeCompactCommand() {
   assert.equal(summarized.length, 1)
   resolveInitialCompact(true)
   await wait(0)
-  assert.match(edited[0].text, /Context compacted/)
+  assert.deepEqual(deleted, [1])
+  assert.equal(sent.filter((item) => item.text === "🗜️ session compacted").length, 1)
+  assert.deepEqual(edited, [])
   assert.equal(promptQueue.isBusy(binding), false)
 
   promptQueue.clear(binding)
+  deliverNotice = false
+  compactDeferred = null
+  await handlers.handle(message, { name: "compact", args: "" }, "123:456")
+  await wait(0)
+  assert.match(edited.at(-1).text, /Context compacted/)
+  assert.deepEqual(deleted, [1])
+
   let resolveCompact
   compactDeferred = new Promise((resolve) => {
     resolveCompact = resolve
@@ -3213,7 +3232,7 @@ async function smokeManualCompactionSuppression() {
   assert.deepEqual(sent, ["queued after compact"])
 }
 
-async function smokeAutomaticCompactionMarker() {
+async function smokeCompactionMarker() {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-auto-compact-smoke-"))
   try {
     const statePath = path.join(root, "state.json")
@@ -3263,17 +3282,34 @@ async function smokeAutomaticCompactionMarker() {
     user = { info: { id: "user-manual" }, parts: [{ type: "compaction", auto: false, remote: { providerID: "openai" } }] }
     summary = { info: { id: "summary-manual", role: "assistant", parentID: "user-manual", summary: true, finish: "stop", time: { completed: Date.now() } } }
     await event("session.compacted", {})
-    assert.equal(sent.length, 1)
+    assert.equal(sent.length, 2)
+    await event("message.updated", { info: { ...summary.info, sessionID: binding.sessionID } })
+    assert.equal(sent.length, 2)
+
+    user = { info: { id: "user-manual-local" }, parts: [{ type: "compaction", auto: false }] }
+    summary = { info: { id: "summary-manual-local", role: "assistant", parentID: "user-manual-local", summary: true, finish: "stop", time: { completed: Date.now() } } }
+    await reloaded.markAssistantMirrored(binding.serverID, binding.sessionID, summary.info.id)
+    await event("message.updated", { info: { ...summary.info, sessionID: binding.sessionID } })
+    assert.equal(sent.length, 3)
+    await event("message.updated", { info: { ...summary.info, sessionID: binding.sessionID } })
+    assert.equal(sent.length, 3)
+
+    user = { info: { id: "user-command" }, parts: [{ type: "compaction", auto: false }] }
+    summary = { info: { id: "summary-command", role: "assistant", parentID: "user-command", summary: true, finish: "stop", time: { completed: Date.now() } } }
+    assert.equal(await reconciler.notifyLatestManualCompaction(binding, Date.now() - 1000), true)
+    assert.equal(sent.length, 4)
+    await event("session.compacted", {})
+    assert.equal(sent.length, 4)
 
     user = { info: { id: "user-failed" }, parts: [{ type: "compaction", auto: true }] }
     summary = { info: { id: "summary-failed", role: "assistant", parentID: "user-failed", summary: true, finish: "error", error: { name: "Error" }, time: { completed: Date.now() } } }
     await event("session.compacted", {})
-    assert.equal(sent.length, 1)
+    assert.equal(sent.length, 4)
 
     user = { info: { id: "user-local" }, parts: [{ type: "compaction", auto: true }] }
     summary = { info: { id: "summary-local", role: "assistant", parentID: "user-local", summary: true, finish: "stop", time: { completed: Date.now() } } }
     await event("session.compacted", {})
-    assert.equal(sent.length, 2)
+    assert.equal(sent.length, 5)
 
     const now = Date.now()
     await reloaded.bindTopic({
@@ -3284,15 +3320,15 @@ async function smokeAutomaticCompactionMarker() {
     user = { info: { id: "user-recovered", role: "user", time: { created: now } }, parts: [{ type: "compaction", auto: true, remote: { providerID: "openai" } }] }
     summary = { info: { id: "summary-recovered", role: "assistant", parentID: "user-recovered", summary: true, finish: "stop", time: { created: now, completed: now } } }
     await reconciler.reconcileBinding(reloaded.findBinding(binding.serverID, binding.sessionID))
-    assert.equal(sent.length, 3)
+    assert.equal(sent.length, 6)
     await reconciler.reconcileBinding(reloaded.findBinding(binding.serverID, binding.sessionID))
-    assert.equal(sent.length, 3)
+    assert.equal(sent.length, 6)
 
     await reloaded.disableBinding(binding.serverID, binding.sessionID, "Telegram topic closed")
     user = { info: { id: "user-closed" }, parts: [{ type: "compaction", auto: true, remote: { providerID: "openai" } }] }
     summary = { info: { id: "summary-closed", role: "assistant", parentID: "user-closed", summary: true, finish: "stop", time: { completed: Date.now() } } }
     await event("session.compacted", {})
-    assert.equal(sent.length, 3)
+    assert.equal(sent.length, 6)
   } finally {
     await rm(root, { recursive: true, force: true })
   }
