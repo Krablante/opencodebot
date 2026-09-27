@@ -19,6 +19,11 @@ export function prepareRichMarkdown(markdown, { imagesAsLinks = false } = {}) {
 export function withFinalAnswerMarker(text) {
   const value = String(text || "").trim()
   if (!value || value.startsWith(FINAL_ANSWER_MARKER)) return value
+  const quote = value.match(/^(?:>[ \t]?)+/)
+  if (quote) {
+    const prefix = quote[0]
+    return `${prefix}${prefix.endsWith(">") ? " " : ""}${FINAL_ANSWER_MARKER} ${value.slice(prefix.length)}`
+  }
   return `${FINAL_ANSWER_MARKER} ${value}`
 }
 

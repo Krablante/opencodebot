@@ -4,6 +4,7 @@ import { createServer } from "node:http"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { fromMarkdown } from "mdast-util-from-markdown"
 
 import {
   applyArtifactUploadFilenames,
@@ -28,6 +29,7 @@ import { bindPendingTopicSession } from "../src/prompt-routing.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { createQuestionManager } from "../src/questions.mjs"
 import { MirrorRenderer, richWebPromptMessages, webPromptMessages } from "../src/render.mjs"
+import { prepareRichMarkdown, withFinalAnswerMarker } from "../src/rich-markdown.mjs"
 import { createRunAlerter } from "../src/run-alerts.mjs"
 import { normalizeNestedRichLists } from "../src/rich-list-normalization.mjs"
 import { bindingSessionReconcileRefresh, createSessionReconciler, isManualCompactionPart, normalizeSessionError, shouldSkipAssistantForCatchup, shouldSyncManagedTopicTitle } from "../src/session-reconcile.mjs"
@@ -62,6 +64,7 @@ async function smokeLocalInvariants() {
   await smokeUpdateManager()
   smokeSyntheticTextFilter()
   smokeNestedRichListNormalization()
+  await smokeFinalQuoteFormatting()
   smokeIncomingRichMessages()
   await smokeIncomingRichPolling()
   await smokePollingHostIsolation()
@@ -591,6 +594,27 @@ function smokeNestedRichListNormalization() {
   assert.match(codeNormalized, /```js\nconst value = 1\n```/)
   assert.match(codeNormalized, / • nested follow-up/)
   assert.match(codeNormalized, /2⁠\. back to top/)
+}
+
+async function smokeFinalQuoteFormatting() {
+  const source = "> **Да, уведомление после компакта возможно.** Топик получит `🗜️ session compacted`.\n> Продолжение цитаты.\n\nТекст после цитаты."
+  const expected = "> 🏁 **Да, уведомление после компакта возможно.** Топик получит `🗜️ session compacted`.\n> Продолжение цитаты.\n\nТекст после цитаты."
+  const markdown = prepareRichMarkdown(withFinalAnswerMarker(source))
+  assert.equal(markdown, expected)
+  assert.deepEqual(fromMarkdown(markdown).children.map((node) => node.type), ["blockquote", "paragraph"])
+  assert.equal(withFinalAnswerMarker(">> **Nested**"), ">> 🏁 **Nested**")
+  assert.equal(withFinalAnswerMarker("Обычный ответ"), "🏁 Обычный ответ")
+
+  const sent = []
+  const renderer = new MirrorRenderer({
+    telegram: { async sendRichMessage(payload) { sent.push(payload); return { message_id: 1 } } },
+    state: {},
+    config: { mirror: { maxTelegramChars: 4096 } },
+  })
+  await renderer.assistantMessage({ chatId: 123, topicId: 456, serverID: "test", sessionID: "quote" }, source)
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0].markdown, expected)
+  assert.equal(sent[0].skipEntityDetection, true)
 }
 
 async function smokeMirrorModeCommands() {

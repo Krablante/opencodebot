@@ -490,6 +490,8 @@ errors propagate rather than triggering a second send in another format. Recover
 `mirror.text.rich_fallback` without answer text or image URLs.
 
 Real final answers are identified by `finish=stop` and marked with `🏁 ` on the exact delivered text block being finalized.
+If that block starts with a Markdown quote, the marker goes inside the first quote line so Telegram renders the quote
+instead of a literal `>`.
 The bot pins the user prompt that started the run: the original Telegram message for Telegram-origin prompts, or the
 mirrored user message for web-origin prompts.
 
