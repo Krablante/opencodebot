@@ -129,6 +129,13 @@ The command also refreshes the binding's bounded reconcile lease before it start
 marked `summary=true` is recorded as handled but never mirrored into Telegram. `/compact` does not create a session, change the selected model,
 delete history, or modify OpenCodez/Harness deployment state. Use `/kill` if an in-progress compaction must be aborted.
 
+Successful automatic compaction posts the short `🗜️ session compacted` marker in the active session topic, including when
+the ChatGPT Responses wire compacts remotely during a running turn. The marker can arrive before the final answer if
+OpenCodez continues working. It is shown in both mirror modes and contains no summary or private context. A manual
+`/compact` keeps its existing editable status message instead. Closed, reset, and unbound topics receive no marker.
+The bot tracks delivered compactions across restarts and checks completed remote compactions during recent-session
+recovery if their live event was missed.
+
 `/context` exports the latest three main-session user turns from the topic; `/context N` overrides the count once and
 `/set_context N` stores a personal default for that Telegram user. `N` is limited to 1–10 and counts both completed and
 interrupted turns. A completed turn contains the user prompt plus its final `finish=stop` answer. A ledger-marked

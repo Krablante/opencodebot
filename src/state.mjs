@@ -35,6 +35,7 @@ export class StateStore {
       this.data.promptOrigins ||= []
       this.data.mirroredAssistantBySession ||= {}
       this.data.mirroredUserBySession ||= {}
+      this.data.compactionNotices = Array.isArray(this.data.compactionNotices) ? this.data.compactionNotices : []
       this.data.finalNotifications ||= { enabledUserIds: [], sentMessages: [] }
       this.data.finalNotifications.enabledUserIds ||= []
       this.data.finalNotifications.sentMessages ||= []
@@ -784,6 +785,21 @@ export class StateStore {
     return this.appendMirrorMarkers("user", serverID, sessionID, [messageID])
   }
 
+  isCompactionNotified(serverID, sessionID, messageID) {
+    return this.data.compactionNotices.includes(`${serverID}:${sessionID}:${messageID}`)
+  }
+
+  async markCompactionNotified(serverID, sessionID, messageID) {
+    const key = `${serverID}:${sessionID}:${messageID}`
+    if (this.data.compactionNotices.includes(key)) return false
+    return this.update((data) => {
+      if (data.compactionNotices.includes(key)) return false
+      data.compactionNotices.push(key)
+      if (data.compactionNotices.length > 1000) data.compactionNotices = data.compactionNotices.slice(-1000)
+      return true
+    })
+  }
+
   questionRecord(requestID) {
     return this.data.questionMessages?.find((item) => item.requestID === requestID) || null
   }
@@ -879,6 +895,7 @@ function defaultState() {
     promptOrigins: [],
     mirroredAssistantBySession: {},
     mirroredUserBySession: {},
+    compactionNotices: [],
     debugEnabled: false,
     finalNotifications: { enabledUserIds: [], sentMessages: [] },
     runAlerts: [],
@@ -962,6 +979,11 @@ function pruneState(data) {
   let changed = false
   changed = pruneMirroredBuckets(data.mirroredAssistantBySession) || changed
   changed = pruneMirroredBuckets(data.mirroredUserBySession) || changed
+  const compactionNotices = data.compactionNotices.filter((key) => typeof key === "string")
+  if (compactionNotices.length !== data.compactionNotices.length || compactionNotices.length > 1000) {
+    data.compactionNotices = compactionNotices.slice(-1000)
+    changed = true
+  }
   const incompleteRunHistory = data.incompleteRunHistory.filter((item) => item && typeof item.key === "string")
   if (incompleteRunHistory.length !== data.incompleteRunHistory.length || incompleteRunHistory.length > 1000) {
     data.incompleteRunHistory = incompleteRunHistory.slice(-1000)
@@ -1062,6 +1084,7 @@ function removeBindingState(data, binding, { createPending = false, promptProfil
   data.runAlerts = (data.runAlerts || []).filter((key) => !key.includes(`:${serverID}:${sessionID}:`))
   delete data.mirroredAssistantBySession[mirrorKey]
   delete data.mirroredUserBySession[mirrorKey]
+  data.compactionNotices = data.compactionNotices.filter((key) => !key.startsWith(`${serverID}:${sessionID}:`))
   return { binding: { ...binding }, pendingCreated }
 }
 

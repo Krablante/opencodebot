@@ -203,6 +203,17 @@ export function createSessionReconciler({
           if (properties.messageID) await state.markUserMirrored(server.id, sessionID, properties.messageID)
           break
         }
+        case "session.compacted": {
+          const messages = await backendRequest(server.id, "completed compaction", () => opencode.messages(
+            server.id,
+            sessionID,
+            { directory: binding.directory, limit: 10 },
+          ))
+          if (messages === skippedBackendRequest) break
+          const summary = [...messages].reverse().find((message) => message.info?.summary === true)
+          if (summary) await notifyAutoCompaction(binding, summary.info, { messages })
+          break
+        }
         case "question.asked":
         case "question.replied":
         case "question.rejected":
@@ -430,6 +441,13 @@ export function createSessionReconciler({
     if (!isCompleted(info)) {
       scheduleReconcile(binding, 500)
       return
+    }
+    if (info.summary === true && info.finish === "stop" && !state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
+      const notified = await notifyAutoCompaction(binding, info, { requireRemote: true })
+      if (notified === null) {
+        scheduleReconcile(binding, 500)
+        return
+      }
     }
     if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
       if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding)
@@ -748,6 +766,13 @@ export function createSessionReconciler({
       return
     }
     if (info.summary === true) {
+      if (info.finish === "stop") {
+        const notified = await notifyAutoCompaction(binding, info, { requireRemote: true })
+        if (notified === null) {
+          scheduleReconcile(binding, 500)
+          return
+        }
+      }
       await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
       return
     }
@@ -759,6 +784,28 @@ export function createSessionReconciler({
     if (renderer.hasAssistantMessage?.(binding, info.id) || info.finish === "tool-calls") {
       await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
     }
+  }
+
+  async function notifyAutoCompaction(binding, info, { messages = [], requireRemote = false } = {}) {
+    if (info?.summary !== true || info.finish !== "stop" || info.error || !isCompleted(info) || !info.parentID) return false
+    if (state.isCompactionNotified(binding.serverID, binding.sessionID, info.parentID)) return false
+    let user = messages.find((message) => (message.info || message).id === info.parentID)
+    if (!user) {
+      user = await backendRequest(binding.serverID, "compaction marker", () => opencode.message(
+        binding.serverID,
+        binding.sessionID,
+        info.parentID,
+        { directory: binding.directory },
+      ))
+      if (user === skippedBackendRequest) return null
+    }
+    const part = user?.parts?.find((item) => item.type === "compaction" && item.auto === true)
+    if (!part || (requireRemote && part.remote?.providerID !== "openai")) return false
+    if (!activeBinding(binding)) return false
+    await telegram.sendMessage({ chatId: binding.chatId, topicId: binding.topicId, text: "🗜️ session compacted", format: "plain" })
+    await state.markCompactionNotified(binding.serverID, binding.sessionID, info.parentID)
+    logInfo("compact.auto_notified", { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId })
+    return true
   }
 
   async function mirrorPartUpdate(binding, properties) {
@@ -1185,6 +1232,10 @@ export function createSessionReconciler({
       }
       if (info.role !== "assistant" || !info.id) continue
       if (!isCompleted(info)) continue
+      if (info.summary === true && info.finish === "stop" && !state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
+        const notified = await notifyAutoCompaction(binding, info, { messages, requireRemote: true })
+        if (notified === null) return
+      }
       if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
         if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding)
         continue

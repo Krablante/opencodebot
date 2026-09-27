@@ -585,6 +585,8 @@ The mirror-marker references above are one logical part of durable state but are
 journal `<statePath>.mirror-markers.ndjson`; marker maps are not written to `state.json`. Startup loads the compact journal
 before reconciliation. New markers append tens of bytes and duplicate updates are no-ops; historical assistant markers
 skipped during catch-up are appended in one binding-level batch instead of rewriting the complete state file per message.
+`state.json` also keeps a bounded set of delivered automatic compaction notices, keyed by the OpenCodez compaction
+message ID. Keep it when backing up or restarting the bot; losing it can repeat a previously sent topic marker.
 
 Reconcile avoids repeated full-history reads by paging backward to its durable high-water cursor or window boundary. The
 common path requests five messages first; only a burst that does not reach the cursor continues with 20-message fallback

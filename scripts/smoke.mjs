@@ -105,6 +105,7 @@ async function smokeLocalInvariants() {
   await smokeKillCommandAbortFailure()
   await smokeKillSuppressesAbortFallout()
   await smokeManualCompactionSuppression()
+  await smokeAutomaticCompactionMarker()
   await smokeOpenCodeSummarizeClient()
   await smokeQueueDrainsOnSessionIdle()
   await smokeIncompleteRunNotice()
@@ -3210,6 +3211,91 @@ async function smokeManualCompactionSuppression() {
     properties: { sessionID: binding.sessionID, status: { type: "idle" } },
   })
   assert.deepEqual(sent, ["queued after compact"])
+}
+
+async function smokeAutomaticCompactionMarker() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-auto-compact-smoke-"))
+  try {
+    const statePath = path.join(root, "state.json")
+    const state = new StateStore(statePath)
+    await state.load()
+    const binding = { chatId: 123, topicId: 456, serverID: "nuc", sessionID: "ses_auto_compact", directory: "/tmp/work" }
+    await state.bindTopic(binding)
+    const sent = []
+    let user = { info: { id: "user-auto" }, parts: [{ type: "compaction", auto: true, remote: { providerID: "openai" } }] }
+    let summary = { info: { id: "summary-auto", role: "assistant", parentID: "user-auto", summary: true, finish: "stop", time: { completed: Date.now() } } }
+    const opencode = {
+      async messages() { return [user, summary] },
+      async message(_serverID, _sessionID, messageID) { return messageID === user.info.id ? user : summary },
+      async messagePage() { return { messages: [user, summary] } },
+      async getSession() { return { time: { updated: Date.now() } } },
+    }
+    const makeReconciler = (current) => createSessionReconciler({
+      config: { telegram: { autocreateTopics: false }, reconcile: {} },
+      state: current,
+      telegram: { async sendMessage(payload) { sent.push(payload) } },
+      opencode,
+      renderer: {},
+      promptQueue: new PromptQueue(async () => {}),
+      backendRequest: async (_serverID, _description, task) => task(),
+      skippedBackendRequest: Symbol("skipped"),
+      createTopicForSession: async () => null,
+      createTopicForWebSession: async () => null,
+      isInternalSession: () => false,
+      activateBindingForPrompt: async () => {},
+      maybeExtendBindingActivity: async () => {},
+      logError: () => {},
+      shouldStop: () => false,
+    })
+    let reconciler = makeReconciler(state)
+    const event = (type, properties) => reconciler.handleOpenCodeEvent({ id: "nuc" }, { type, properties: { sessionID: binding.sessionID, ...properties } })
+    await event("message.updated", { info: { ...summary.info, sessionID: binding.sessionID } })
+    await event("session.compacted", {})
+    assert.deepEqual(sent, [{ chatId: 123, topicId: 456, text: "🗜️ session compacted", format: "plain" }])
+    assert.equal(state.isCompactionNotified(binding.serverID, binding.sessionID, user.info.id), true)
+
+    const reloaded = new StateStore(statePath)
+    await reloaded.load()
+    reconciler = makeReconciler(reloaded)
+    await event("session.compacted", {})
+    assert.equal(sent.length, 1)
+
+    user = { info: { id: "user-manual" }, parts: [{ type: "compaction", auto: false, remote: { providerID: "openai" } }] }
+    summary = { info: { id: "summary-manual", role: "assistant", parentID: "user-manual", summary: true, finish: "stop", time: { completed: Date.now() } } }
+    await event("session.compacted", {})
+    assert.equal(sent.length, 1)
+
+    user = { info: { id: "user-failed" }, parts: [{ type: "compaction", auto: true }] }
+    summary = { info: { id: "summary-failed", role: "assistant", parentID: "user-failed", summary: true, finish: "error", error: { name: "Error" }, time: { completed: Date.now() } } }
+    await event("session.compacted", {})
+    assert.equal(sent.length, 1)
+
+    user = { info: { id: "user-local" }, parts: [{ type: "compaction", auto: true }] }
+    summary = { info: { id: "summary-local", role: "assistant", parentID: "user-local", summary: true, finish: "stop", time: { completed: Date.now() } } }
+    await event("session.compacted", {})
+    assert.equal(sent.length, 2)
+
+    const now = Date.now()
+    await reloaded.bindTopic({
+      ...binding,
+      reconcileAfter: new Date(now - 60_000).toISOString(),
+      reconcileUntil: new Date(now + 60_000).toISOString(),
+    })
+    user = { info: { id: "user-recovered", role: "user", time: { created: now } }, parts: [{ type: "compaction", auto: true, remote: { providerID: "openai" } }] }
+    summary = { info: { id: "summary-recovered", role: "assistant", parentID: "user-recovered", summary: true, finish: "stop", time: { created: now, completed: now } } }
+    await reconciler.reconcileBinding(reloaded.findBinding(binding.serverID, binding.sessionID))
+    assert.equal(sent.length, 3)
+    await reconciler.reconcileBinding(reloaded.findBinding(binding.serverID, binding.sessionID))
+    assert.equal(sent.length, 3)
+
+    await reloaded.disableBinding(binding.serverID, binding.sessionID, "Telegram topic closed")
+    user = { info: { id: "user-closed" }, parts: [{ type: "compaction", auto: true, remote: { providerID: "openai" } }] }
+    summary = { info: { id: "summary-closed", role: "assistant", parentID: "user-closed", summary: true, finish: "stop", time: { completed: Date.now() } } }
+    await event("session.compacted", {})
+    assert.equal(sent.length, 3)
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
 }
 
 async function smokeQueueDrainsOnSessionIdle() {
