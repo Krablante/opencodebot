@@ -35,9 +35,9 @@
 | `luna`, `lunah`, `lunamax` | GPT-6 Luna | xhigh / high / max |
 | `terra` | GPT-5.6 Terra | xhigh |
 | `gpt6`, `gpt6m` | GPT-6 Astra | high / medium |
-| `sol`, `solh`, `solm`, `solx`, `solmax` | GPT-6 Sol | high / high / medium / xhigh / max |
+| `sol`, `solh`, `solm`, `solx`, `solmax` | GPT-6.1 Sol | high / high / medium / xhigh / max |
 
-Каждый профиль содержит `agent`, `model.providerID`, `model.modelID`, необязательный `model.variant` и `opencodezSystem`. Для систем Sol/Luna нужна версия OpenCodez с соответствующими встроенными System. Локальные записи дополняют или переопределяют встроенные; обновление бота не переписывает явно заданный профиль.
+Каждый профиль содержит `agent`, `model.providerID`, `model.modelID`, необязательный `model.variant` и `opencodezSystem`. Для GPT-6.1 Sol на выбранном сервере нужен OpenCodez `1.18.33+opencodez.1` или новее. Локальные записи дополняют или переопределяют встроенные; обновление бота не переписывает явно заданный профиль. Если Sol задан локально, поменяйте вместе модель на `gpt-6.1-sol` и System на `codex_gpt_6_1_sol`.
 
 `d4flash` использует DeepSeek V4.1 Flash с идентификатором `deepseek-flash`. Если `d4flash` явно задан в локальном `promptProfiles`, замените там старый `deepseek-v4-flash`: локальная запись перекрывает встроенный профиль.
 

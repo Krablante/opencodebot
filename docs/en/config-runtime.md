@@ -291,8 +291,8 @@ prompt metadata the bot can know before the first prompt: agent and model.
 
 `promptProfiles` are named launch profiles for `/new` and `/reset [profile] [server]`. The built-in defaults are `d4flash`,
 `d4pro`, `luna`, `lunah`, `lunamax`, `terra`, `gpt6`, `gpt6m`, `sol`, `solm`, `solx`, `solh`, and `solmax`. The Astra profiles share the bundled
-`codex_gpt_6_astra` System and select `high` and `medium` variants respectively. Sol and Luna use GPT-6 and their
-distinct bundled `codex_gpt_6_sol` and `codex_gpt_6_luna` Systems. Runtime config is
+`codex_gpt_6_astra` System and select `high` and `medium` variants respectively. Sol uses GPT-6.1 Sol with
+`codex_gpt_6_1_sol`; Luna keeps GPT-6 Luna with `codex_gpt_6_luna`. Runtime config is
 merged with those defaults, so you can add a profile or override an existing profile without copying every default. `/reset` without
 arguments inherits profile/server/directory; one argument may select a profile or server; two arguments are profile then
 server. Same-server reset preserves the current directory, while cross-server reset preflights the target and uses its
@@ -310,20 +310,21 @@ Without a profile, `/new` uses `defaultPrompt`, while `/reset` keeps the topic's
 
 | Profile | Model | Reasoning |
 | --- | --- | --- |
-| `sol` | GPT-6 Sol | high |
-| `solm` | GPT-6 Sol | medium |
-| `solx` | GPT-6 Sol | xhigh |
-| `solh` | GPT-6 Sol | high (same settings as `sol`) |
-| `solmax` | GPT-6 Sol | max |
+| `sol` | GPT-6.1 Sol | high |
+| `solm` | GPT-6.1 Sol | medium |
+| `solx` | GPT-6.1 Sol | xhigh |
+| `solh` | GPT-6.1 Sol | high (same settings as `sol`) |
+| `solmax` | GPT-6.1 Sol | max |
 | `luna` | GPT-6 Luna | xhigh |
 | `lunah` | GPT-6 Luna | high |
 | `lunamax` | GPT-6 Luna | max |
 
-These bundled System names require OpenCodez `1.18.32+opencodez.1` or newer.
+The GPT-6.1 Sol System requires OpenCodez `1.18.33+opencodez.1` or newer on
+each server where a Sol profile can run.
 Upgrading the bot refreshes built-in defaults, but explicit entries in local
 `promptProfiles` remain overrides. If an older `config.example.json` was copied
 wholesale, remove its old Sol/Luna entries to inherit the new defaults, or update
-their model, variant, and System together. In particular, `sol` now means `high`;
+their model, variant, and System together. Keep the `sol` variant at `high` and
 use `solx` for `xhigh`. The loader never rewrites user configuration, changes a
 private prompt name, or migrates existing session history. No OpenCodez restart
 or upgrade is performed by the bot updater.
@@ -349,13 +350,13 @@ Example:
   "promptProfiles": {
     "sol": {
       "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-6-sol", "variant": "high" },
-      "opencodezSystem": "codex_gpt_6_sol"
+      "model": { "providerID": "openai", "modelID": "gpt-6.1-sol", "variant": "high" },
+      "opencodezSystem": "codex_gpt_6_1_sol"
     },
     "solmax": {
       "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-6-sol", "variant": "max" },
-      "opencodezSystem": "codex_gpt_6_sol"
+      "model": { "providerID": "openai", "modelID": "gpt-6.1-sol", "variant": "max" },
+      "opencodezSystem": "codex_gpt_6_1_sol"
     }
   }
 }

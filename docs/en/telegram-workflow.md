@@ -208,7 +208,7 @@ Examples:
 
 The default profiles are `d4flash`, `d4pro`, `luna`, `lunah`, `lunamax`, `terra`, `gpt6`, `gpt6m`, `sol`, `solm`, `solx`, `solh`, and `solmax`. They
 are host-independent Telegram-created-session profiles. `gpt6` and `gpt6m` use GPT-6 Astra and its bundled OpenCodez
-System prompt with `high` and `medium` variants respectively. GPT-6 Sol uses `sol=high`, `solm=medium`, `solx=xhigh`,
+System prompt with `high` and `medium` variants respectively. GPT-6.1 Sol uses `sol=high`, `solm=medium`, `solx=xhigh`,
 `solh=high`, and `solmax=max`; GPT-6 Luna uses `luna=xhigh`, `lunah=high`, and `lunamax=max`. Both use their own
 bundled OpenCodez System prompt. See [Prompt Profiles](config-runtime.md#prompt-profiles) for upgrade/override behavior. Each profile keeps its
 agent, model, variant, and OpenCodez System prompt in config. After creating the session and before sending the first

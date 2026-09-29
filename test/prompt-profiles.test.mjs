@@ -23,8 +23,8 @@ test("built-in prompt profiles use current models, variants, and System prompts"
   })
   assert.deepEqual(profiles.sol, {
     agent: "build",
-    model: { providerID: "openai", modelID: "gpt-6-sol", variant: "high" },
-    opencodezSystem: "codex_gpt_6_sol",
+    model: { providerID: "openai", modelID: "gpt-6.1-sol", variant: "high" },
+    opencodezSystem: "codex_gpt_6_1_sol",
   })
   assert.equal(profiles.luna.opencodezSystem, "codex_gpt_6_luna")
   assert.equal(profiles.terra.opencodezSystem, "codex_gpt_5_6_luna_terra")
@@ -37,8 +37,8 @@ test("built-in prompt profiles use current models, variants, and System prompts"
   for (const [name, variant] of [["solm", "medium"], ["solh", "high"], ["sol", "high"], ["solx", "xhigh"], ["solmax", "max"]]) {
     assert.deepEqual(profiles[name], {
       agent: "build",
-      model: { providerID: "openai", modelID: "gpt-6-sol", variant },
-      opencodezSystem: "codex_gpt_6_sol",
+      model: { providerID: "openai", modelID: "gpt-6.1-sol", variant },
+      opencodezSystem: "codex_gpt_6_1_sol",
     })
   }
   assert.deepEqual(profileFromMessages([{ info: { role: "user", agent: "build", model: profiles.sol.model } }]), {
@@ -67,7 +67,7 @@ test("/new resolves a profile and preserves an unknown token as title text", asy
   }, "nuc", "ses_test", parsed.promptProfile)
   assert.deepEqual(calls, [
     ["model", "nuc", "ses_test", profiles.sol.model, {}],
-    ["system", "nuc", "ses_test", "codex_gpt_6_sol", {}],
+    ["system", "nuc", "ses_test", "codex_gpt_6_1_sol", {}],
   ])
   assert.equal(parseNewTopicArgs("nuc custom-token old-chat", options).title, "custom-token old-chat")
 })
@@ -127,11 +127,11 @@ test("OpenCodez System selection sends the current minimal payload", async (cont
 
   const address = server.address()
   const client = new OpenCodeClient({ opencode: { servers: [{ id: "test", url: `http://127.0.0.1:${address.port}` }], password: "test" } })
-  await client.selectSystemPrompt("test", "ses_test", "codex_gpt_5_6_sol")
+  await client.selectSystemPrompt("test", "ses_test", "codex_gpt_6_1_sol")
 
   assert.deepEqual(received, {
     method: "POST",
     url: "/opencodez/prompts/select",
-    body: { sessionID: "ses_test", name: "codex_gpt_5_6_sol" },
+    body: { sessionID: "ses_test", name: "codex_gpt_6_1_sol" },
   })
 })

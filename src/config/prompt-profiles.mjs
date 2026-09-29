@@ -37,8 +37,8 @@ function astraProfile(variant) {
 function solProfile(variant) {
   return {
     agent: "build",
-    model: { providerID: "openai", modelID: "gpt-6-sol", variant },
-    opencodezSystem: "codex_gpt_6_sol",
+    model: { providerID: "openai", modelID: "gpt-6.1-sol", variant },
+    opencodezSystem: "codex_gpt_6_1_sol",
   }
 }
 
