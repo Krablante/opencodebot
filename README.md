@@ -18,7 +18,7 @@ OpenCodez API + one event stream per server
        Telegram forum topics
 ```
 
-A Telegram topic follows one main OpenCodez session. Assistant text arrives in completed blocks; tools appear as compact status in full mode. Hidden reasoning, raw tool arguments, and child sessions stay out of the mirror. The bot persists topic bindings, delivery markers, and incoming Telegram receipts so it can recover after a restart. Its `/q` prompt queue remains in memory.
+A Telegram topic follows one main OpenCodez session. Assistant text arrives in completed blocks. Economy mode is the default and hides ordinary tool status; `/mode full` enables compact tool status. A saved mode survives restarts and updates. Hidden reasoning, raw tool arguments, and child sessions stay out of the mirror. The bot persists topic bindings, delivery markers, and incoming Telegram receipts so it can recover after a restart. Its `/q` prompt queue remains in memory.
 
 Beyond the mirror, you can enable speech transcription, a separate final-answer voice reply, or an artifact gateway that lets OpenCodez send files to one chosen Telegram topic. These are optional. Remote browser access through WireGuard and a local Telegram Bot API sidecar are optional too.
 

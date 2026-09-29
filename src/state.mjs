@@ -888,7 +888,7 @@ function defaultState() {
   return {
     version: 1,
     ui: {},
-    telegram: { mirrorMode: "full", contextTurnsByUser: {}, artifactsTopic: null, soundsTopic: null, controlMenu: null },
+    telegram: { mirrorMode: "economy", contextTurnsByUser: {}, artifactsTopic: null, soundsTopic: null, controlMenu: null },
     bindings: [],
     pendingTopics: {},
     pendingPrompts: [],
@@ -923,7 +923,7 @@ function normalizeUpdatesState(value = {}) {
 }
 
 function normalizeMirrorMode(value) {
-  return String(value || "").trim().toLowerCase() === "economy" ? "economy" : "full"
+  return String(value || "").trim().toLowerCase() === "full" ? "full" : "economy"
 }
 
 function normalizeContextTurnsByUser(value) {

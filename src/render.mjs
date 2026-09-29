@@ -511,7 +511,7 @@ export class MirrorRenderer {
   }
 
   mirrorMode() {
-    return this.state?.mirrorMode?.() === "economy" ? "economy" : "full"
+    return this.state?.mirrorMode?.() === "full" ? "full" : "economy"
   }
 
   key(binding) {

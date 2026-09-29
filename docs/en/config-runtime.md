@@ -370,6 +370,8 @@ Then start a topic with:
 
 ## Mirror Modes
 
+Economy is the default on first startup and when the saved mode is missing or invalid. A saved `full` or `economy` choice survives restarts and updates. Use `/mode` to check the current mode, or `/mode full` to enable compact tool status globally; the mode is stored in state rather than configuration JSON.
+
 The bot has two persistent global mirror modes controlled by `/mode full` and `/mode economy`. Both modes emit one short
 robot notice with the web-visible task title when a task/subagent is spawned. Full mode mirrors user-facing OpenCodez
 activity and compacts tool status into expandable quotes. Economy mode keeps each unique assistant progress message,

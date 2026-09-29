@@ -636,7 +636,7 @@ async function smokeMirrorModeCommands() {
     const state = new StateStore(statePath)
     await state.load()
     configureI18n({ state, defaultLanguage: "en" })
-    assert.equal(state.mirrorMode(), "full")
+    assert.equal(state.mirrorMode(), "economy")
     let menuRefreshes = 0
     const handlers = createTelegramCommandHandlers({
       config: { promptProfiles: {} },
