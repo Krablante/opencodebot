@@ -14,7 +14,7 @@ Answers today counts completed main-session text answers successfully delivered 
 
 The day uses `ui.timeZone` when configured, otherwise the update schedule's time zone or the process's local time zone. A single local-midnight timer refreshes Home from cached data, including across DST changes. Tracking starts when this feature is first installed; on that first day, Home shows its start time instead of implying that earlier replies were counted. Old conversation histories are not scanned for backfill.
 
-The compact Servers line uses the existing event-stream connections for every configured server, including servers without topic bindings. It distinguishes available, unavailable and still-checking connections. Disconnects and reconnects update the panel without a separate health poll. When execution status for a bound server is unknown, Running shows the known count plus `?` rather than treating that server as idle.
+The compact Servers line uses the existing event-stream connections for every configured server, including servers without topic bindings. It distinguishes available, unavailable and still-checking connections. Disconnects and reconnects update the panel without a separate health poll. Running shows the number of sessions with a known active status; server availability is reported separately in the Servers line.
 
 ## Recent topics
 

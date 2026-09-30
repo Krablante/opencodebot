@@ -431,7 +431,7 @@ export class ControlMenu {
     const busy = bindings.filter((binding) => !unknown(binding) && this.sessionIsBusy(binding, sessionSnapshot)).length
     const L = (ru, en) => localText(ru, en, getLanguage())
     const text = `<h2>✦ OpenCodeBot</h2><p>${L("Рабочее пространство в Telegram", "Your workspace in Telegram")}</p>` + menuTable([
-      [L("В работе", "Running"), bindings.some(unknown) ? `${busy} + ?` : String(busy)], [L("В очереди", "Queued"), String(queued)],
+      [L("В работе", "Running"), String(busy)], [L("В очереди", "Queued"), String(queued)],
       [L("Ответов сегодня", "Answers today"), String(this.state.answersToday())],
     ].map(([label, value]) => [label, `<b>${value}</b>`])) + `<p>${this.serverSummary()}</p>` + this.answerStatsPeriod()
     return this.view(text, [
