@@ -36,14 +36,13 @@ export class LaunchMenu {
       name: "", directory: this.opencode.defaultNewSessionDirectory(serverID), profileName: this.settings.launchProfileName(),
     }
     this.drafts.set(d.id, d)
-    const sent = await this.telegram.sendRichMessage({ chatId: d.chatId, topicId: d.topicId, html: await this.render(d),
-      ephemeral: { receiver_user_id: userId, callback_query_id: query.id } })
-    if (!sent?.ephemeral_message_id) {
-      this.drafts.delete(d.id)
-      throw new Error("Bot API 10.3 ephemeral messages are required. Update your local Bot API server.")
+    try {
+      if (page === "new") await this.ask(d, "title", this.text("Как назвать новую тему?", "What should the new topic be called?"))
+      await this.sendCard(d, query.id)
+    } catch (error) {
+      await this.close(d)
+      throw error
     }
-    d.messageId = sent.ephemeral_message_id
-    if (page === "new") await this.ask(d, "title", this.text("Как назвать новую тему?", "What should the new topic be called?"))
     return d
   }
 
@@ -63,7 +62,7 @@ export class LaunchMenu {
       d.expires = Date.now() + INPUT_TTL
       try {
         await this.act(d, action)
-        if (this.drafts.has(id)) await this.draw(d)
+        if (this.drafts.has(id)) await this.draw(d, query.id)
       } catch (error) {
         logErrorEvent("launch_menu.action_failed", error, { action: parts[0] })
         const translated = {
@@ -182,6 +181,7 @@ export class LaunchMenu {
         promptProfileName: d.profileName || null, promptProfile: structuredClone(profile),
       })
       if (!topic?.message_thread_id) throw new Error("Topic was not created")
+      this.inputs.delete(d.userId)
       d.page = "created"; d.topicLink = telegramMessageLink(d.chatId, topic.message_thread_id)
       return
     }
@@ -231,21 +231,50 @@ export class LaunchMenu {
   }
 
   async ask(d, field, text) {
-    const previous = this.inputs.get(d.userId)
-    if (previous) await this.telegram.deleteMessage({ chatId: d.chatId, messageId: previous.messageId }).catch(() => {})
-    const prompt = await this.telegram.sendMessage({ chatId: d.chatId, topicId: d.topicId, text: `<b>${escapeHtml(text)}</b>\n<a href="tg://user?id=${d.userId}">${this.text("Ответь на это сообщение.", "Reply to this message.")}</a> ${this.text("/cancel — отменить ввод.", "/cancel cancels input.")}`,
-      replyMarkup: { force_reply: true, selective: true } })
-    this.inputs.set(d.userId, { draftId: d.id, field, messageId: prompt.message_id })
+    d.inputRequest = { field, prompt: text }
+  }
+
+  async sendCard(d, callbackQueryId) {
+    const oldMessageId = d.messageId
+    const input = d.inputRequest
+    // Telegram cannot toggle Force Reply through an edit. A fresh personal card
+    // activates each input request; retire the previous card only after success.
+    const sent = await this.telegram.sendRichMessage({ chatId: d.chatId, topicId: d.topicId, html: await this.render(d),
+      ephemeral: { receiver_user_id: d.userId, callback_query_id: callbackQueryId },
+      ...(input ? { replyMarkup: { force_reply: true, input_field_placeholder: input.prompt.slice(0, 64) } } : {}),
+    })
+    if (!sent?.ephemeral_message_id) throw new Error("Bot API 10.3 ephemeral messages are required. Update your local Bot API server.")
+    d.messageId = sent.ephemeral_message_id
+    if (input) this.inputs.set(d.userId, { ...input, draftId: d.id, messageId: d.messageId })
+    delete d.inputRequest
+    if (oldMessageId && oldMessageId !== d.messageId) await this.deleteCard(d, oldMessageId)
+    return sent
+  }
+
+  async deleteCard(d, messageId = d.messageId) {
+    if (messageId) await this.telegram.request("deleteEphemeralMessage", {
+      chat_id: d.chatId, receiver_user_id: d.userId, ephemeral_message_id: messageId,
+    }, 0, { suppressFailureLog: true }).catch(() => {})
+  }
+
+  async deleteInputMessage(d, message) {
+    if (message.ephemeral_message_id) await this.deleteCard(d, message.ephemeral_message_id)
+    else if (message.message_id) await this.telegram.deleteMessage({ chatId: d.chatId, messageId: message.message_id }).catch(() => {})
   }
 
   async handleMessage(message) {
     const input = this.inputs.get(message.from?.id)
     const d = input && this.drafts.get(input.draftId)
-    if (!d || d.expires < Date.now() || String(message.chat.id) !== String(d.chatId) || topicId(message) !== d.topicId
-      || (message.reply_to_message?.message_id !== input.messageId && message.text !== "/cancel")) return false
+    if (!d || d.expires < Date.now() || String(message.chat.id) !== String(d.chatId) || topicId(message) !== d.topicId) return false
+    const replyId = message.reply_to_message?.ephemeral_message_id
+    const cancel = message.text === "/cancel"
+    // Telegram may omit reply_to_message on an ephemeral reply. Only a private
+    // message in this actor's active input context can use that fallback.
+    if (!cancel && (replyId !== undefined ? Number(replyId) !== input.messageId
+      : message.reply_to_message || !message.ephemeral_message_id)) return false
     const value = String(message.text || "").trim()
-    if (!value) return true
     try {
+      if (!value) throw new Error(this.text("Введи текст в строке сообщения.", "Enter text in the message input."))
       if (value !== "/cancel") {
         if (input.field === "title") { if (value.length > 100) throw new Error(this.text("Название должно быть не длиннее 100 символов.", "Use at most 100 characters.")); d.name = value }
         if (input.field === "profileName") { if (!/^[\p{L}\p{N}][\p{L}\p{N}_-]{0,39}$/u.test(value)) throw new Error(this.text("Используй буквы, цифры, _ и -; не больше 40 символов.", "Use letters, digits, _ and -; at most 40 characters.")); d.profileDraftName = value }
@@ -258,17 +287,20 @@ export class LaunchMenu {
           delete d.launchVariant
         }
       }
-      await this.telegram.deleteMessage({ chatId: d.chatId, messageId: message.message_id }).catch(() => {})
-      await this.telegram.deleteMessage({ chatId: d.chatId, messageId: input.messageId }).catch(() => {})
+      await this.deleteInputMessage(d, message)
       this.inputs.delete(d.userId)
       await this.draw(d)
     } catch (error) {
-      await this.telegram.replyMessage({ message, text: escapeHtml(error.message) })
+      await this.deleteInputMessage(d, message)
+      d.error = error.message
+      await this.ask(d, input.field, input.prompt)
+      await this.draw(d)
     }
     return true
   }
 
-  async draw(d) {
+  async draw(d, callbackQueryId) {
+    if (d.inputRequest) return this.sendCard(d, callbackQueryId)
     const html = await this.render(d)
     try { await this.telegram.editRichMessage({ chatId: d.chatId, receiverUserId: d.userId, ephemeralMessageId: d.messageId, html }) }
     catch (error) { if (!/message is not modified/i.test(error.message)) throw error }
@@ -281,12 +313,14 @@ export class LaunchMenu {
     const back = b(this.text("‹ Назад", "‹ Back"), d.editing ? "editback" : "new")
     const close = b(this.text("Закрыть", "Close"), "close")
     const footer = `<footer>${this.text("Личный экран · другие участники не видят этот выбор", "Personal screen · other members cannot see these choices")}</footer>`
+    const currentInput = this.inputs.get(d.userId)
+    const input = d.inputRequest || (currentInput?.draftId === d.id ? currentInput : null)
     let body = "", rows = []
     if (d.page === "new") {
       await this.prepareLaunch(d)
       const server = this.config.opencode.servers.find((s) => s.id === d.serverID)
       const serverLabel = server?.label && server.label !== d.serverID ? `${server.label} · ${d.serverID}` : d.serverID
-      body = `<h2>✦ ${this.text("Новая тема", "New topic")}</h2><p>${escapeHtml(d.name || this.text("Выбери название и начни работу", "Choose a name and start working"))}</p>` + this.profileTable(d.profileName, d.launchProfile, true, d.launchReasoning)
+      body = `<h2>✦ ${this.text("Новая тема", "New topic")}</h2><p>${escapeHtml(d.name || (input?.field === "title" ? input.prompt : this.text("Выбери название и начни работу", "Choose a name and start working")))}</p>` + this.profileTable(d.profileName, d.launchProfile, true, d.launchReasoning)
       body += `<p>${this.text("Сервер", "Server")}: <b>${escapeHtml(serverLabel)}</b></p>`
       body += `<details><summary>${this.text("Рабочая папка", "Working directory")}</summary><code>${escapeHtml(d.directory || this.text("По умолчанию", "Server default"))}</code></details>`
       if (d.launchError) body += `<blockquote>${escapeHtml(d.launchError)}</blockquote>`
@@ -371,7 +405,9 @@ export class LaunchMenu {
     }
     const notice = d.error || d.notice
     d.error = ""; d.notice = ""
-    return body + (notice ? `<blockquote>${escapeHtml(notice)}</blockquote>` : "") + buttonRows(rows) + footer
+    const question = input && !(d.page === "new" && !d.name && input.field === "title") ? `<b>${escapeHtml(input.prompt)}</b><br>` : ""
+    const inputHint = input ? `<blockquote>${question}${this.text("Ответь на эту карточку в строке сообщения. /cancel — отменить ввод.", "Reply to this card using the message input. /cancel cancels input.")}</blockquote>` : ""
+    return body + inputHint + (notice ? `<blockquote>${escapeHtml(notice)}</blockquote>` : "") + buttonRows(rows) + footer
   }
 
   profileTable(name, p = {}, compact = false, reasoning) {
@@ -386,8 +422,8 @@ export class LaunchMenu {
   async close(d) {
     this.drafts.delete(d.id)
     const input = this.inputs.get(d.userId)
-    if (input?.draftId === d.id) { this.inputs.delete(d.userId); await this.telegram.deleteMessage({ chatId: d.chatId, messageId: input.messageId }).catch(() => {}) }
-    if (d.messageId) await this.telegram.request("deleteEphemeralMessage", { chat_id: d.chatId, receiver_user_id: d.userId, ephemeral_message_id: d.messageId }).catch(() => {})
+    if (input?.draftId === d.id) this.inputs.delete(d.userId)
+    await this.deleteCard(d)
   }
 
   expire() {

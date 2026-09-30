@@ -178,12 +178,18 @@ export function createTelegramPolling({
     }
 
     const artifactsTopic = state.isArtifactsTopic(message.chat.id, topicId(message))
-    // Artifact topics keep file-upload semantics; elsewhere voice notes are transcript-only drafts.
-    if (!artifactsTopic && message.voice && (await handleVoiceMessage?.(message))) return
-
     const inputMessage = message.rich_message && !message.text ? { ...message, text } : message
     if (await commandHandlers.handleMessage?.(inputMessage)) return
     if (await questionManager?.handleReplyMessage?.(inputMessage)) return
+
+    // An expired/foreign personal-menu answer must never become a public agent
+    // prompt, attachment or transcription. Explicit private commands still work.
+    if (message.ephemeral_message_id || message.reply_to_message?.ephemeral_message_id) {
+      if (text.startsWith("/")) await commandHandlers.handle(inputMessage, parseCommand(text), multipartPromptKey(message))
+      return
+    }
+    // Artifact topics keep file-upload semantics; elsewhere voice notes are transcript-only drafts.
+    if (!artifactsTopic && message.voice && (await handleVoiceMessage?.(message))) return
 
     const promptKey = multipartPromptKey(message)
     if (artifactsTopic) {

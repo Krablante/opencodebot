@@ -40,7 +40,9 @@ Edits affect future launches. Existing sessions retain their model and launch sn
 
 Ephemeral screens are visible only to the operator who opened them. The bot checks the actor, chat, ephemeral message ID, draft lifetime and screen revision before applying a callback. Drafts expire after 15 minutes and disappear on restart. Saved settings persist. A stale or foreign callback cannot apply a choice.
 
-Text fields use a temporary Force Reply in the same topic. The response belongs to that actor and prompt. `/cancel` and Close cancel input; accepted input and its temporary prompt are removed. Provider keys follow the separate pre-journal path described in [first run](first-run.md).
+Topic/profile fields use Force Reply on the personal Rich Message card itself. Opening New topic sends one card containing its title question and buttons. Requesting another field activates a fresh personal card and retires the previous card after successful delivery, because Telegram cannot toggle Force Reply through a keyboard edit. Successful input updates that card; validation errors stay on the personal card too. No separate public question or error message is sent.
+
+Input belongs to the actor, chat, topic and active card. Telegram can omit `reply_to_message` for an ephemeral reply; in that case, only an ephemeral message within that actor's active input context is accepted. Ordinary unquoted text is not consumed. `/cancel` cancels the field, and Close cancels the draft. Answer messages are removed when possible. Unhandled private menu answers cannot become agent prompts, file uploads or transcriptions. Explicit private commands remain available. Provider keys follow the separate pre-journal path described in [first run](first-run.md).
 
 ## Settings and guide
 

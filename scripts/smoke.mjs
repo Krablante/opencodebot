@@ -149,9 +149,10 @@ async function smokeWorkspacePreferences() {
     await state.disableFinalNotificationsFor(42)
     assert.equal(state.data.preferences.notificationChoices[42], false)
     const messages = []
+    let personalMessageId = 9
     let acceptedKey = ""
     const telegram = {
-      sendRichMessage: async (payload) => { messages.push(payload); return { ephemeral_message_id: 10 } },
+      sendRichMessage: async (payload) => { messages.push(payload); return { ephemeral_message_id: ++personalMessageId } },
       editRichMessage: async (payload) => { messages.push(payload) },
       sendMessage: async (payload) => { messages.push(payload); return { message_id: 11 } },
       answerCallbackQuery: async (payload) => { messages.push(payload) },
@@ -168,6 +169,29 @@ async function smokeWorkspacePreferences() {
     await launch.act(draft, "create")
     assert.equal(draft.page, "created")
     await launch.close(draft)
+    const beforeInput = messages.length
+    const personal = await launch.open({ from: { id: 42 }, message: { chat: { id: -1001 } } })
+    assert.equal(messages.length, beforeInput + 1, "Creation opens one personal card, without a public question")
+    assert.equal(messages.at(-1).replyMarkup.force_reply, true)
+    const answer = { from: { id: 42 }, chat: { id: -1001 }, ephemeral_message_id: 500, text: "First title", reply_to_message: { ephemeral_message_id: personal.messageId } }
+    assert.equal(await launch.handleMessage(answer), true)
+    assert.equal(personal.name, "First title")
+    const oldCardId = personal.messageId
+    await launch.ask(personal, "title", "Topic title")
+    await launch.draw(personal)
+    assert.notEqual(personal.messageId, oldCardId)
+    assert.equal(await launch.handleMessage({ ...answer, text: "Stale title" }), false)
+    assert.equal(await launch.handleMessage({ ...answer, from: { id: 43 } }), false)
+    assert.equal(await launch.handleMessage({ ...answer, reply_to_message: undefined, ephemeral_message_id: undefined }), false)
+    assert.equal(await launch.handleMessage({ ...answer, reply_to_message: undefined, text: "Private title" }), true)
+    assert.equal(personal.name, "Private title", "Private replies may omit reply_to_message")
+    await launch.ask(personal, "title", "Topic title")
+    await launch.draw(personal)
+    assert.equal(await launch.handleMessage({ ...answer, reply_to_message: undefined, text: "x".repeat(101) }), true)
+    assert.ok(messages.at(-1).html.includes("100 characters"), "Invalid input stays on the personal card")
+    assert.equal(await launch.handleMessage({ ...answer, reply_to_message: undefined, text: "/cancel" }), true)
+    assert.equal(launch.inputs.has(42), false)
+    await launch.close(personal)
     const setup = new Setup({ config: c, state, settings: { storeGroqKey: async (key) => { acceptedKey = key } }, telegram, speech: {} })
     await state.update((data) => { data.preferences.audioInputs = { 42: { chatId: -1001, topicId: 9, promptId: 77, expires: Date.now() + 10000 } } })
     const safe = await setup.prepareUpdate({ update_id: 1, message: { chat: { id: -1001 }, from: { id: 42 }, message_thread_id: 9, message_id: 80, text: "gsk_disposable_key" } })
@@ -484,6 +508,7 @@ async function smokeIncomingRichPolling() {
   const handled = []
   let stopped = false
   let delivered = false
+  const privateCommands = []
   const richMessage = {
     message_id: 77,
     message_thread_id: 88,
@@ -514,11 +539,18 @@ async function smokeIncomingRichPolling() {
       async getUpdates() {
         if (delivered) { await wait(5); return [] }
         delivered = true
-        return [{ update_id: 1, message: richMessage }]
+        return [
+          { update_id: 1, message: { ...richMessage, rich_message: undefined, text: "Stale personal input", ephemeral_message_id: 501 } },
+          { update_id: 2, message: { ...richMessage, ephemeral_message_id: 502 } },
+          { update_id: 3, message: { ...richMessage, rich_message: undefined, voice: { file_id: "private-voice" }, ephemeral_message_id: 503 } },
+          { update_id: 4, message: { ...richMessage, rich_message: undefined, text: "/new", ephemeral_message_id: 504 } },
+          { update_id: 5, message: richMessage },
+        ]
       },
       async sendMessage() {},
     },
-    commandHandlers: { async handle() { return false } },
+    commandHandlers: { async handle(_message, command) { privateCommands.push(command.name); return true } },
+    handleVoiceMessage: async () => { throw new Error("Private menu voice must not be transcribed") },
     handleTopicLifecycleMessage: async () => false,
     handleAttachmentMessage: async (_message, promptKey, files, caption) => {
       handled.push({ caption, files, promptKey })
@@ -526,9 +558,9 @@ async function smokeIncomingRichPolling() {
     },
     extractTelegramFiles,
     hasPendingAttachmentBatch: () => false,
-    queueTelegramPrompt: async () => {},
+    queueTelegramPrompt: async () => { throw new Error("Private menu input must not become an agent prompt") },
     flushAttachmentText: async () => {},
-    promptContext: () => null,
+    promptContext: () => ({}),
     multipartPromptKey: () => "-1001:88:7",
     flushPromptKey: async () => {},
     logError: (error) => { throw error },
@@ -536,6 +568,7 @@ async function smokeIncomingRichPolling() {
   try { await polling.poll({ shouldStop: () => stopped }) }
   finally { await rm(directory, { recursive: true, force: true }) }
   assert.equal(handled.length, 1)
+  assert.deepEqual(privateCommands, ["new"])
   assert.equal(handled[0].caption, "inspect this image")
   assert.equal(handled[0].files[0].fileID, "rich-image")
   assert.equal(handled[0].promptKey, "-1001:88:7")
