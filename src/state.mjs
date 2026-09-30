@@ -191,6 +191,63 @@ export class StateStore {
 
   // Telegram runtime and artifact target.
 
+  async initializeAnswerStats(timeZone, now = Date.now()) {
+    this.answerDayFormatter = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" })
+    await this.update((data) => {
+      data.answerStats ||= { startedAt: now, answers: [] }
+      this.rebuildAnswerStats(now)
+    })
+  }
+
+  answerDay(now = Date.now()) {
+    const parts = this.answerDayFormatter.formatToParts(now)
+    return ["year", "month", "day"].map((type) => parts.find((part) => part.type === type).value).join("-")
+  }
+
+  rebuildAnswerStats(now) {
+    const stats = this.data.answerStats
+    stats.answers = stats.answers.filter((answer) => answer.at >= now - 8 * 24 * 60 * 60_000)
+    this.answerKeys = new Set(stats.answers.map((answer) => answer.key))
+    this.answerCounts = new Map()
+    for (const answer of stats.answers) {
+      const day = this.answerDay(answer.at)
+      this.answerCounts.set(day, (this.answerCounts.get(day) || 0) + 1)
+    }
+    this.answerPruneDay = this.answerDay(now)
+  }
+
+  async recordDeliveredAnswer(binding, assistantMessageID, now = Date.now()) {
+    if (!assistantMessageID || String(binding.chatId) !== String(this.chatId)) return false
+    const key = `${binding.serverID}:${binding.sessionID}:${assistantMessageID}`
+    if (this.answerKeys.has(key)) return false
+    return this.update((data) => {
+      const day = this.answerDay(now)
+      if (this.answerPruneDay !== day) this.rebuildAnswerStats(now)
+      if (this.answerKeys.has(key)) return false
+      data.answerStats.answers.push({ key, at: now })
+      this.answerKeys.add(key)
+      this.answerCounts.set(day, (this.answerCounts.get(day) || 0) + 1)
+      return true
+    })
+  }
+
+  answersToday(now = Date.now()) {
+    return this.answerDayFormatter ? this.answerCounts.get(this.answerDay(now)) || 0 : 0
+  }
+
+  nextAnswerDayAt(now = Date.now()) {
+    if (!this.answerDayFormatter) return null
+    const day = this.answerDay(now)
+    let left = now, right = now + 27 * 60 * 60_000
+    // Find the local date boundary; DST makes a fixed 24-hour timer inaccurate.
+    while (right - left > 1000) {
+      const mid = Math.floor((left + right) / 2)
+      if (this.answerDay(mid) === day) left = mid
+      else right = mid
+    }
+    return right
+  }
+
   artifactsTopic() {
     return this.data.telegram.artifactsTopic || null
   }

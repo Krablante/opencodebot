@@ -1,5 +1,4 @@
 export const ru = {
-  "controlMenu.hostsUnavailable": ({ servers }) => `Нет связи: ${servers}. Статус выполнения на них недоступен.`,
   "prompt.setupProfileMissing": "Профиль запуска больше не настроен. Выполни /reset с доступным профилем.",
   "reconcile.sessionFailed": "❌ <b>Ошибка выполнения OpenCodez</b>",
   "reconcile.queueCleared": "<b>Очищена очередь промптов:</b>",

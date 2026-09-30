@@ -14,14 +14,18 @@ import { guideDocument } from "../src/user-guide.mjs"
 const output = path.resolve(process.argv[2] || "/tmp/opencodez/opencodebot-ui")
 await fs.mkdir(output, { recursive: true })
 const config = loadConfig(path.resolve("config.example.json"))
-config.opencode.servers.push({ ...config.opencode.servers[0], id: "workstation", label: "Workstation" })
+for (const id of ["workstation", "laptop", "lab", "backup"]) config.opencode.servers.push({ ...config.opencode.servers[0], id, label: id })
 const state = new StateStore(path.join(output, "preview-state.json"))
 const opencode = new OpenCodeClient(config)
 const settings = new UserSettings({ config, state, opencode })
 await settings.initialize()
+state.data.telegram.chatId = -1001000000000
+state.data.answerStats = { startedAt: Date.now() - 24 * 60 * 60_000, answers: Array.from({ length: 12 }, (_, i) => ({ key: `local:preview:answer-${i}`, at: Date.now() })) }
+await state.initializeAnswerStats(config.ui.timeZone)
 const queue = { status: () => [], isBusy: () => false }
 const voice = new FinalVoiceModule({ config: config.finalVoice, state, telegram: {} })
 const menu = new ControlMenu({ config, state, opencode, promptQueue: queue, finalVoice: voice })
+menu.serverConnections = new Map(config.opencode.servers.map((server) => [server.id, server.id === "backup" ? "unavailable" : "available"]))
 const launch = new LaunchMenu({ config, state, opencode, settings })
 const catalog = { entries: [], models: Object.values(config.promptProfiles).map((p) => ({ id: p.model.modelID, name: p.model.providerID === "openai" ? "GPT-6.1 Sol" : "DeepSeek V4.1 Flash", providerID: p.model.providerID, providerName: p.model.providerID, family: p.model.providerID === "openai" ? "Sol" : "DeepSeek", variants: p.model.providerID === "openai" ? ["medium", "high", "xhigh"] : ["low", "high", "max"] })).filter((m, i, list) => list.findIndex((other) => other.id === m.id) === i) }
 settings.catalog = async () => catalog
@@ -48,7 +52,7 @@ for (const language of ["ru", "en"]) {
   const servers = await launch.render({ ...draft, page: "servers" })
   const modelDraft = { ...draft, page: "models", editing: true, catalog, query: "", profile: config.promptProfiles.sol }
   const models = await launch.render(modelDraft)
-  for (const [name, html] of [["home", richView(home.text, home.replyMarkup)], ["recent", richView(recent.text, recent.replyMarkup)], ["new", topic], ["input", input], ["servers", servers], ["models", models]]) await fs.writeFile(path.join(output, `${name}-${language}.html`), shell(`<main>${html}</main>`))
+  for (const [name, html] of [["home", richView(home.text, home.replyMarkup)], ["recent", richView(recent.text, recent.replyMarkup)], ["new", topic], ["input", input], ["servers", servers], ["models", models]]) await fs.writeFile(path.join(output, `${name}-${language}.html`), shell(`${name === "home" ? "<style>main>table td:first-child{width:68%}main>table td:last-child{text-align:right}</style>" : ""}<main>${html}</main>`))
   const guide = guideDocument(language).replace(/<h1>[^\p{L}]+/gu, "<h1>").replace("</section>", `<div class="illustration"><main>${topic}</main><div class="annotation">${language === "ru" ? "Пример создания темы: модель видна целиком, основные действия расположены рядом. Рабочий топик после создания остаётся чистым чатом." : "Topic creation example: the full model ID is visible and actions stay close together. The working topic remains a clean conversation."}</div></div></section>`)
   await fs.writeFile(path.join(output, `guide-${language}.html`), shell(guide))
 }

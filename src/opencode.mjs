@@ -225,7 +225,7 @@ export class OpenCodeClient {
     }, `OpenCodez ${server.id} ${pathname}`)
   }
 
-  async subscribeEvents(serverID, onEvent, signal, { onConnected } = {}) {
+  async subscribeEvents(serverID, onEvent, signal, { onConnected, onConnectionStateChange } = {}) {
     const server = this.server(serverID)
     const requestOptions = this.requestOptions(server, { mirror: true })
     const eventPath = this.config.opencode.mirrorScope === "global" ? "/global/event" : "/event"
@@ -251,6 +251,7 @@ export class OpenCodeClient {
         retryDelayMs = 2500
         offlineSince = 0
         lastOfflineLogAt = 0
+        onConnectionStateChange?.(server, "available")
         if (onConnected) {
           try {
             await onConnected(server, { reconnected })
@@ -262,6 +263,7 @@ export class OpenCodeClient {
         if (!signal?.aborted) throw new Error("event stream closed")
       } catch (error) {
         if (signal?.aborted) return
+        onConnectionStateChange?.(server, "unavailable")
         const now = Date.now()
         if (!offlineSince) offlineSince = now
         if (!lastOfflineLogAt || now - lastOfflineLogAt >= 600_000) {

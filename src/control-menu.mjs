@@ -35,6 +35,7 @@ export class ControlMenu {
     this.menuOperation = Promise.resolve()
     this.cachedSessionSnapshot = null
     this.statusEvents = new Map()
+    this.serverConnections = new Map((config.opencode?.servers || []).map((server) => [server.id, "connecting"]))
   }
 
   async start() {
@@ -43,6 +44,7 @@ export class ControlMenu {
     const message = await this.ensureMenu("home", null, { replace: Boolean(existing && (!existing.createdAt || Date.now() - existing.createdAt >= 24 * 60 * 60_000)) })
     if (existing) await this.pinMenu(message?.message_id)
     this.scheduleRotation()
+    this.scheduleAnswerDayRefresh()
     return message
   }
 
@@ -353,6 +355,7 @@ export class ControlMenu {
     if (existing) await this.retireMenu(existing)
     await this.pinMenu(sent.message_id)
     this.scheduleRotation()
+    this.scheduleAnswerDayRefresh()
     logInfo("control_menu.created", { chatId: this.chatId(), messageId: sent.message_id })
     return sent
   }
@@ -418,16 +421,44 @@ export class ControlMenu {
   renderHome(sessionSnapshot) {
     const bindings = this.activeBindings()
     const queued = bindings.reduce((total, binding) => total + this.promptQueue.status(binding).length, 0)
-    const busy = bindings.filter((binding) => this.sessionIsBusy(binding, sessionSnapshot)).length
+    const unknown = (binding) => sessionSnapshot?.failedServers.has(binding.serverID) || this.serverConnections.get(binding.serverID) === "unavailable"
+    const busy = bindings.filter((binding) => !unknown(binding) && this.sessionIsBusy(binding, sessionSnapshot)).length
     const L = (ru, en) => localText(ru, en, getLanguage())
     const text = `<h2>✦ OpenCodeBot</h2><p>${L("Рабочее пространство в Telegram", "Your workspace in Telegram")}</p>` + menuTable([
-      [L("В работе", "Running"), String(busy)], [L("В очереди", "Queued"), String(queued)],
-    ]) + (sessionSnapshot?.failedServers.size ? `<blockquote>${t("controlMenu.hostsUnavailable", { servers: escapeHtml([...sessionSnapshot.failedServers].join(", ")) })}</blockquote>` : "")
+      [L("В работе", "Running"), bindings.some(unknown) ? `${busy} + ?` : String(busy)], [L("В очереди", "Queued"), String(queued)],
+      [L("Ответов сегодня", "Answers today"), String(this.state.answersToday())],
+    ].map(([label, value]) => [label, `<b>${value}</b>`])) + `<p>${this.serverSummary()}</p>` + this.answerStatsPeriod()
     return this.view(text, [
       [{ ...this.callback(L("＋ Новая тема", "＋ New topic"), "new"), style: "primary" }],
       [this.callback(L("Недавние темы", "Recent topics"), "sessions"), this.callback(L("Профили", "Profiles"), "profiles")],
       [this.callback(L("Настройки", "Settings"), "settings"), this.callback(L("Как пользоваться", "How to use"), "help")],
     ])
+  }
+
+  serverSummary() {
+    const states = [...this.serverConnections]
+    const available = states.filter(([, status]) => status === "available").length
+    const offline = states.filter(([, status]) => status === "unavailable").map(([id]) => id)
+    const checking = states.filter(([, status]) => status === "connecting").map(([id]) => id)
+    const L = (ru, en) => localText(ru, en, getLanguage())
+    return `${L("Серверы", "Servers")}: ${L(`${available} из ${states.length}`, `${available} of ${states.length}`)}`
+      + (offline.length ? ` · ${escapeHtml(offline.join(", "))} ${L(offline.length === 1 ? "недоступен" : "недоступны", "unavailable")}` : "")
+      + (checking.length ? ` · ${escapeHtml(checking.join(", "))}: ${L("проверяется", "checking")}` : "")
+  }
+
+  answerStatsPeriod() {
+    const startedAt = this.state.data.answerStats?.startedAt
+    if (!startedAt || !this.state.answerDayFormatter || this.state.answerDay(startedAt) !== this.state.answerDay()) return ""
+    const time = new Intl.DateTimeFormat(getLanguage() === "ru" ? "ru-RU" : "en-GB", { timeZone: this.state.answerDayFormatter.resolvedOptions().timeZone, hour: "2-digit", minute: "2-digit" }).format(startedAt)
+    return `<footer>${localText("Учёт ответов с", "Answer tracking since", getLanguage())} ${escapeHtml(time)}</footer>`
+  }
+
+  setServerConnection(serverID, status) {
+    if (!this.serverConnections.has(serverID) || this.serverConnections.get(serverID) === status) return
+    this.serverConnections.set(serverID, status)
+    logInfo("control_menu.server_connection", { serverID, status })
+    if (status === "unavailable") this.cachedSessionSnapshot?.failedServers.add(serverID)
+    this.scheduleStatusRefresh()
   }
 
   renderSettings() {
@@ -738,7 +769,20 @@ export class ControlMenu {
     this.rotationTimer.unref?.()
   }
 
-  stop() { clearTimeout(this.rotationTimer); clearTimeout(this.statusRefreshTimer) }
+  scheduleAnswerDayRefresh() {
+    clearTimeout(this.answerDayTimer)
+    const at = this.state.nextAnswerDayAt()
+    if (!at) return
+    this.answerDayTimer = setTimeout(() => {
+      this.runMenuOperation(() => this.currentPage === "home"
+        ? this.editMenuUnlocked("home", this.currentActor, this.cachedSessionSnapshot) : null)
+        .catch((error) => logErrorEvent("control_menu.day_refresh.failed", error))
+        .finally(() => this.scheduleAnswerDayRefresh())
+    }, Math.max(1000, at - Date.now()))
+    this.answerDayTimer.unref?.()
+  }
+
+  stop() { clearTimeout(this.rotationTimer); clearTimeout(this.statusRefreshTimer); clearTimeout(this.answerDayTimer) }
 
   async deleteQuietly(chatId, messageId) {
     if (!chatId || !messageId) return

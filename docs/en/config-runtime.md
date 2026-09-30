@@ -41,6 +41,8 @@ PowerShell, shell sessions, and local scripts can override values from `token.en
 OpenCodez servers come from `paths.serversJson`, not from the main config body. The public example points at
 `servers.example.json`; `npm run init-config` creates a local ignored `servers.json` for your real hosts.
 
+`ui.timeZone` optionally sets an IANA time zone for the daily answer counter, for example `"UTC"`. If omitted, the bot uses `updates.timeZone` when present, otherwise the process's local zone. Delivery timestamps remain absolute, so changing the zone recalculates the retained counts without discarding them. See [Home statistics](control-menu.md#home-statistics).
+
 ## Secrets
 
 `token.env` is read by local scripts and the Compose runtime. It holds values such as the Telegram bot token, allowed

@@ -1,5 +1,4 @@
 export const en = {
-  "controlMenu.hostsUnavailable": ({ servers }) => `No connection: ${servers}. Their running status is unavailable.`,
   "prompt.setupProfileMissing": "The launch profile is no longer configured. Use /reset with an available profile.",
   "reconcile.sessionFailed": "❌ <b>OpenCodez run failed</b>",
   "reconcile.queueCleared": "<b>Cleared queued prompts:</b>",

@@ -8,6 +8,14 @@ The panel moves to a new message every 24 hours. `/menu` moves it immediately. T
 
 Automatic status refresh consumes the existing OpenCodez event stream and skips identical menu content. Opening or explicitly refreshing Home/Recent topics performs the scoped backend lookup with existing backoff. There is no status polling timer or backend scan per tool event.
 
+## Home statistics
+
+Answers today counts completed main-session text answers successfully delivered to the configured Telegram forum. Multiple text blocks and repeated completion events count once. Personal notifications and voice replies do not affect the count. Delivery identifiers and timestamps are saved in bot state, with eight days of retention for deduplication; no answer text is stored. Counts survive restart and remain after a topic is closed or deleted.
+
+The day uses `ui.timeZone` when configured, otherwise the update schedule's time zone or the process's local time zone. A single local-midnight timer refreshes Home from cached data, including across DST changes. Tracking starts when this feature is first installed; on that first day, Home shows its start time instead of implying that earlier replies were counted. Old conversation histories are not scanned for backfill.
+
+The compact Servers line uses the existing event-stream connections for every configured server, including servers without topic bindings. It distinguishes available, unavailable and still-checking connections. Disconnects and reconnects update the panel without a separate health poll. When execution status for a bound server is unknown, Running shows the known count plus `?` rather than treating that server as idle.
+
 ## Recent topics
 
 Recent topics shows up to six open working topics, ordered by activity. Each title is a full, wrapping link; its server and status appear on a separate line. Other topics remain accessible through Telegram's topic list.

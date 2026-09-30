@@ -42,6 +42,10 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
   const servers = readServers(serversJsonPath)
   const telegramBotApi = normalizeTelegramBotApi(config.telegram?.botApi, mergedEnv, projectRoot)
   const attachmentConfig = config.attachments
+  const timeZone = String(config.ui?.timeZone || "").trim() || String(config.updates?.timeZone || "").trim()
+    || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
+  try { new Intl.DateTimeFormat("en", { timeZone }).format() }
+  catch { throw new Error("ui.timeZone must be a valid IANA time zone") }
 
   return {
     sourcePath,
@@ -65,6 +69,7 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
       botApi: telegramBotApi,
     },
     ui: {
+      timeZone,
       defaultLanguage: ["ru", "rus", "russian"].includes(String(config.ui?.defaultLanguage || "").trim().toLowerCase())
         ? "ru"
         : "en",

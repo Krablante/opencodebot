@@ -43,6 +43,7 @@ const botInfo = await telegram.getMe()
 const opencode = new OpenCodeClient(config, { signal: abort.signal })
 const settings = new UserSettings({ config, state, opencode })
 await settings.initialize()
+await state.initializeAnswerStats(config.ui.timeZone)
 const finalNotifier = createFinalNotifier({ config, state, telegram, opencode })
 const notifyFinalAnswerReady = finalNotifier.notifyFinalAnswerReady
 let promptRouter
@@ -57,6 +58,11 @@ const renderer = new MirrorRenderer({
     await promptRouter.clearPromptFeedback(...args)
   },
   onFinalMessage: async (binding, details) => {
+    if (details.messageId && details.assistantMessageID && String(details.finalText || "").trim()) {
+      try {
+        if (await state.recordDeliveredAnswer(binding, details.assistantMessageID)) controlMenu?.scheduleStatusRefresh()
+      } catch (error) { logError(error) }
+    }
     finalVoice?.enqueueAutomatic({
       ...details,
       serverID: binding.serverID,
@@ -238,6 +244,7 @@ for (const server of config.opencode.servers) {
       questionManager.reconcileServer(server.id).catch(logError)
       sessionReconciler.recoverServerBindings(server.id).catch(logError)
     },
+    onConnectionStateChange: (server, status) => controlMenu.setServerConnection(server.id, status),
   })
 }
 
