@@ -3,6 +3,7 @@ import { logErrorEvent, logInfo } from "../logger.mjs"
 import { escapeHtml, topicId } from "../telegram.mjs"
 import { t } from "../i18n/index.mjs"
 import { GroqSpeechClient } from "./groq-client.mjs"
+import { richView } from "../menu-format.mjs"
 import { OpenRouterSpeechClient } from "./openrouter-client.mjs"
 
 export class SpeechModule {
@@ -127,7 +128,7 @@ export class SpeechModule {
     const existingMessageId = messageId || this.state.soundsMenuMessageId()
     if (existingMessageId) {
       try {
-        await this.telegram.editMessageText({ chatId: targetChatId, messageId: existingMessageId, text, replyMarkup })
+        await this.telegram.editRichMessage({ chatId: targetChatId, messageId: existingMessageId, html: richView(text, replyMarkup) })
         await this.state.setSoundsMenuMessageId(existingMessageId)
         return { message_id: existingMessageId }
       } catch (error) {
@@ -138,7 +139,7 @@ export class SpeechModule {
         logErrorEvent("speech.menu.edit.failed", error, { chatId: targetChatId, topicId: targetTopicId, messageId: existingMessageId })
       }
     }
-    const sent = await this.telegram.sendMessage({ chatId: targetChatId, topicId: targetTopicId, text, replyMarkup })
+    const sent = await this.telegram.sendRichMessage({ chatId: targetChatId, topicId: targetTopicId, html: richView(text, replyMarkup) })
     await this.state.setSoundsMenuMessageId(sent?.message_id)
     if (sent?.message_id) await this.telegram.pinChatMessage({ chatId: targetChatId, messageId: sent.message_id, disableNotification: true }).catch((error) => logErrorEvent("speech.menu.pin.failed", error, { chatId: targetChatId, messageId: sent.message_id }))
     return sent

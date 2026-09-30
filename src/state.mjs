@@ -253,12 +253,13 @@ export class StateStore {
     return {
       chatId: menu.chatId ?? this.chatId,
       messageId: Number(menu.messageId),
+      createdAt: menu.createdAt,
     }
   }
 
-  async setControlMenuMessage({ chatId, messageId } = {}) {
+  async setControlMenuMessage({ chatId, messageId, createdAt = Date.now() } = {}) {
     return this.update((data) => {
-      data.telegram.controlMenu = messageId ? { chatId, messageId: Number(messageId) } : null
+      data.telegram.controlMenu = messageId ? { chatId, messageId: Number(messageId), createdAt } : null
       return data.telegram.controlMenu
     })
   }
@@ -707,6 +708,7 @@ export class StateStore {
       data.finalNotifications.enabledUserIds ||= []
       const value = String(userID)
       if (!data.finalNotifications.enabledUserIds.map(String).includes(value)) data.finalNotifications.enabledUserIds.push(value)
+      if (data.preferences) { data.preferences.notificationChoices ||= {}; data.preferences.notificationChoices[value] = true }
     })
   }
 
@@ -714,7 +716,12 @@ export class StateStore {
     return this.update((data) => {
       data.finalNotifications ||= { enabledUserIds: [], sentMessages: [] }
       data.finalNotifications.enabledUserIds = (data.finalNotifications.enabledUserIds || []).filter((item) => String(item) !== String(userID))
+      if (data.preferences) { data.preferences.notificationChoices ||= {}; data.preferences.notificationChoices[String(userID)] = false }
     })
+  }
+
+  setFinalNotificationsEnabledFor(userID, enabled) {
+    return enabled ? this.enableFinalNotificationsFor(userID) : this.disableFinalNotificationsFor(userID)
   }
 
   finalNotificationSent(userID, serverID, sessionID, assistantMessageID) {

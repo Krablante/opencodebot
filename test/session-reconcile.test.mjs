@@ -341,13 +341,14 @@ test("the latest ledger-marked interruption exports user prompt and visible prog
   assert.doesNotMatch(rich[0].html, /private reasoning|private tool output|### Assistant/)
 })
 
-test("context history pagination stops after the requested completed turns", async () => {
+test("context history pagination verifies the oldest selected turn before stopping", async () => {
   const calls = []
   const turns = await loadRecentContextTurns({
     opencode: {
       async messagePage(_serverID, _sessionID, options) {
         calls.push(options)
         if (!options.before) return { messages: [userMessage("active", "Active")], before: "older" }
+        if (options.before === "oldest") return { messages: [userMessage("user-0", "Earlier prompt"), assistantMessage("assistant-0", "Earlier final")], before: null }
         return { messages: [userMessage("user-1", "Prompt"), assistantMessage("assistant-1", "Final")], before: "oldest" }
       },
     },
@@ -356,8 +357,18 @@ test("context history pagination stops after the requested completed turns", asy
   })
 
   assert.deepEqual(turns, [{ prompt: "Prompt", answer: "Final", progress: [], interrupted: false }])
-  assert.equal(calls.length, 2)
-  assert.deepEqual(calls.map((call) => call.before), [undefined, "older"])
+  assert.equal(calls.length, 3)
+  assert.deepEqual(calls.map((call) => call.before), [undefined, "older", "oldest"])
+})
+
+test("context follows compaction replays and reminders to the original external prompt", () => {
+  const original = { info: { role: "user", id: "u1" }, parts: [{ type: "text", text: "Original request" }] }
+  const marker = { info: { role: "user", id: "compact" }, parts: [{ type: "compaction", turn_id: "u1", replay_id: "replay" }] }
+  const replay = { info: { role: "user", id: "replay" }, parts: [{ type: "text", text: "Duplicated request" }] }
+  const reminder = { info: { role: "user", id: "reminder" }, parts: [{ type: "text", text: "REMINDER: original request", metadata: { opencodebot_reminder: { turnID: "u1", compactionID: "compact" } } }] }
+  const summary = { info: { role: "assistant", id: "summary", parentID: "compact", finish: "stop", summary: true }, parts: [{ type: "text", text: "Internal summary" }] }
+  const final = { info: { role: "assistant", id: "final", parentID: "reminder", finish: "stop" }, parts: [{ type: "text", text: "Actual final answer" }] }
+  assert.deepEqual(extractContextTurns([original, marker, summary, replay, reminder, final]), [{ prompt: "Original request", answer: "Actual final answer", progress: [], interrupted: false }])
 })
 
 test("collapsed context chunks remain hidden, escaped, and copyable without truncation", () => {

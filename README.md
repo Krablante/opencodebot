@@ -29,12 +29,12 @@ You need Node.js **22+**, a running OpenCodez server, a Telegram bot token, and 
 ```bash
 git clone https://github.com/Krablante/opencodebot.git
 cd opencodebot
-npm run init-config
+npm run setup
 ```
 
-Copy `token.env.example` to the ignored `token.env` (`cp token.env.example token.env` on Linux/macOS; `Copy-Item token.env.example token.env` in PowerShell). Set `OPENCODEBOT_TOKEN`, `OPENCODEBOT_ALLOWED_USER_IDS`, and your OpenCodez API password there. Edit the generated `servers.json` with an HTTP URL reachable **from the bot runtime**. From a container, `127.0.0.1` points at the container; use the host's reachable address or `host.docker.internal`. Set an absolute `home` for `/new` if you want sessions created in that directory, and configure writable host paths before accepting file uploads.
+The installer asks for the BotFather token, your user ID, the OpenCodez URL and optional password, then prepares private files, writable paths and Compose mounts. From a container, `127.0.0.1` points at the container; use the host's reachable address or `host.docker.internal`. [First run](docs/en/first-run.md) covers setup and migration; `npm run init-config` remains available for manual configuration.
 
-`config.local.json` is generated beside `servers.json`. Review its `telegram`, `defaultPrompt`, and `opencode` settings. The example starts with scheduled updates and optional provider features disabled. A first message from an allowed user can bind the forum chat while `allowChatBootstrap` is on; after setup, set `telegram.chatId` and turn bootstrap off.
+Start the bot, add it as an administrator to a forum-enabled group, and run `/setup`. It checks rights, preserves or creates FILES and AUDIO, opens General and offers connection setup. Open the bot's private chat once to allow notifications. Groq keys are entered in the same topic where setup requested them. Preferences persist in bot state; routine profile and connection changes need no JSON edits.
 
 For Docker Compose, create a writable `state` directory (`mkdir -p state` on Linux/macOS, `New-Item -ItemType Directory -Force state` in PowerShell). The revision-aware `npm run deploy:bot` command requires a **clean Git checkout** and runs the live health check after starting the bot:
 
@@ -47,7 +47,9 @@ For a local Node.js run, use `npm start`. Do not run it alongside a container po
 
 ## 💬 Use it
 
-Open the pinned panel in General with `/menu`. Start a topic with `/new [server] [profile] [dir:<path>] [title]`, then send its first prompt. In a bound topic, `/q` queues another prompt, `/kill` stops the run, `/reset` starts fresh in the same topic while preserving the old session, and `/context` exports recent turns. Reply to an earlier Telegram prompt to rewind that exact OpenCodez turn. `/mode economy` hides ordinary tool traffic; `/mode full` shows compact tool status. `/artifacts_here` selects the single file-delivery topic when the gateway is configured.
+Open the pinned Rich Message menu in General with `/menu`. **New topic** asks for a title and shows the exact model before creation. **Profiles** creates and edits presets using the live OpenCodez model catalog; personal selection screens do not clutter the group. `/new` opens the same flow, while `/new [server] [profile] [dir:<path>] [title]` remains a shortcut. The menu moves to a fresh message daily. Bot API 10.3+ is required for rich buttons and personal ephemeral screens.
+
+In a bound topic, `/q` queues another prompt, `/kill` stops the run, `/reset` starts fresh while preserving the old session, and `/context` exports recent logical turns across compaction. Reply to an earlier Telegram prompt to rewind that exact OpenCodez turn. **How to use** contains the illustrated guide and downloadable English/Russian PDFs. Working topics have no permanent control panel.
 
 See [Telegram workflow](docs/en/telegram-workflow.md) for topic rules and the full command guide. [Final Voice](docs/en/final-voice.md), [speech and runtime config](docs/en/config-runtime.md#speech-transcription), and [artifact delivery](docs/en/artifact-gateway.md) each have their own setup instructions.
 

@@ -2,24 +2,27 @@ import { getLanguage, t } from "./i18n/index.mjs"
 import { logErrorEvent, logInfo, logWarn } from "./logger.mjs"
 import { escapeHtml, telegramMessageLink, topicId } from "./telegram.mjs"
 import { createBackendRequester } from "./backend-backoff.mjs"
+import { richView, menuTable, localText } from "./menu-format.mjs"
+import { guidePage } from "./user-guide.mjs"
+import fs from "node:fs/promises"
 
 const CALLBACK_PREFIX = "panel:"
 const INPUT_TTL_MS = 5 * 60 * 1000
 const LINK_MESSAGE_TTL_MS = 30 * 1000
 const MAX_VISIBLE_SESSIONS = 12
-const PROFILES_PER_PAGE = 7
 const MIN_LENGTH_OPTIONS = [0, 200, 300, 500, 1000, 2000]
 const SESSION_STATUS_TIMEOUT_MS = 3000
 
 export class ControlMenu {
-  constructor({ config, state, telegram, opencode, promptQueue, finalVoice, createSession, refreshCommandMenu, backendRequester = createBackendRequester() }) {
+  constructor({ config, state, telegram, opencode, promptQueue, finalVoice, launchMenu, setup, refreshCommandMenu, backendRequester = createBackendRequester() }) {
     this.config = config
     this.state = state
     this.telegram = telegram
     this.opencode = opencode
     this.promptQueue = promptQueue
     this.finalVoice = finalVoice
-    this.createSession = createSession
+    this.launchMenu = launchMenu
+    this.setup = setup
     this.refreshCommandMenu = refreshCommandMenu
     this.pendingInputs = new Map()
     this.currentPage = "home"
@@ -29,13 +32,16 @@ export class ControlMenu {
     this.backendRequester = backendRequester
     this.statusSnapshotPromise = null
     this.menuOperation = Promise.resolve()
+    this.cachedSessionSnapshot = null
+    this.statusEvents = new Map()
   }
 
   async start() {
     if (!this.chatId()) return null
     const existing = this.state.controlMenuMessage()
-    const message = await this.ensureMenu("home")
+    const message = await this.ensureMenu("home", null, { replace: Boolean(existing && (!existing.createdAt || Date.now() - existing.createdAt >= 24 * 60 * 60_000)) })
     if (existing) await this.pinMenu(message?.message_id)
+    this.scheduleRotation()
     return message
   }
 
@@ -59,6 +65,8 @@ export class ControlMenu {
   }
 
   async handleCallback(query) {
+    if (await this.launchMenu?.handleCallback(query)) return true
+    if (await this.setup?.handleCallback(query)) return true
     const data = String(query?.data || "")
     if (!data.startsWith(CALLBACK_PREFIX)) return false
     return this.runMenuOperation(() => this.handleCurrentCallback(query, data))
@@ -82,6 +90,8 @@ export class ControlMenu {
   }
 
   async handleMessage(message) {
+    if (await this.launchMenu?.handleMessage(message)) return true
+    if (await this.setup?.handleMessage(message)) return true
     const userId = String(message?.from?.id || "")
     const pending = this.pendingInputs.get(userId)
     if (!pending) return false
@@ -119,31 +129,27 @@ export class ControlMenu {
   }
 
   async dispatch(query, action) {
-    if (["home", "sessions", "new", "voice", "voice-advanced", "personal", "system", "help"].includes(action)) {
+    if (action === "guide:pdf") {
       await this.answer(query)
-      await this.editMenuUnlocked(action, query.from)
+      const language = getLanguage()
+      const bytes = await fs.readFile(new URL(`../assets/guide-${language}.pdf`, import.meta.url))
+      await this.telegram.sendDocument({ chatId: query.message.chat.id, topicId: 0, file: { bytes, filename: `OpenCodeBot-guide-${language}.pdf`, contentType: "application/pdf" } })
       return
     }
-    if (/^profiles:\d+$/.test(action)) {
+    if (action === "new" || action === "profiles") {
       await this.answer(query)
-      await this.editMenuUnlocked(action, query.from)
+      await this.launchMenu.open(query, action)
       return
     }
-    if (/^profile:\d+:\d+$/.test(action)) {
-      const index = Number(action.split(":")[1])
-      if (!this.launchProfiles()[index]) return this.answer(query, t("controlMenu.invalidChoice"), true)
+    if (action === "setup") { await this.answer(query); await this.setup.open({ ...query.message, from: query.from }); return }
+    if (/^help:\d+$/.test(action)) { await this.answer(query); await this.editMenuUnlocked(action, query.from); return }
+    if (["home", "sessions", "settings", "voice", "voice-advanced", "personal", "system", "help"].includes(action)) {
       await this.answer(query)
       await this.editMenuUnlocked(action, query.from)
       return
     }
     if (action === "refresh") {
       await this.answer(query, t("controlMenu.refreshed"))
-      await this.editMenuUnlocked("home", query.from)
-      return
-    }
-    if (action === "new:create") {
-      await this.answer(query, t("controlMenu.new.creating"))
-      await this.createSession({ ...query.message, from: query.from }, "")
       await this.editMenuUnlocked("home", query.from)
       return
     }
@@ -237,6 +243,18 @@ export class ControlMenu {
       await this.editMenuUnlocked("system", query.from)
       return
     }
+    if (action.startsWith("reminder:")) {
+      await this.state.setReminderEnabled(action.endsWith(":1"))
+      await this.answer(query, t("controlMenu.saved"))
+      await this.editMenuUnlocked("system", query.from)
+      return
+    }
+    if (action.startsWith("debug:")) {
+      await this.state.setDebugEnabled(action.endsWith(":1"))
+      await this.answer(query, t("controlMenu.saved"))
+      await this.editMenuUnlocked("system", query.from)
+      return
+    }
     if (action.startsWith("lang:")) {
       const language = action.split(":").at(-1)
       if (!["en", "ru"].includes(language)) return this.answer(query, t("controlMenu.invalidChoice"), true)
@@ -271,7 +289,7 @@ export class ControlMenu {
     const prompt = await this.telegram.sendMessage({
       chatId: this.chatId(),
       topicId: 0,
-      text: t(field === "prompt" ? "controlMenu.input.prompt" : "controlMenu.input.intro"),
+      text: `${t(field === "prompt" ? "controlMenu.input.prompt" : "controlMenu.input.intro")}\n<a href="tg://user?id=${query.from.id}">${escapeHtml(t("controlMenu.input.placeholder"))}</a>`,
       replyToMessageId: query.message.message_id,
       replyMarkup: {
         force_reply: true,
@@ -303,12 +321,12 @@ export class ControlMenu {
     if (!replace && existing && String(existing.chatId) === String(this.chatId())) {
       const rendered = await this.render(page, actor)
       try {
-        const edited = await this.telegram.editMessageText({
+        const edited = await this.telegram.editRichMessage({
           chatId: existing.chatId,
           messageId: existing.messageId,
-          text: rendered.text,
-          replyMarkup: rendered.replyMarkup,
+          html: richView(rendered.text, rendered.replyMarkup),
         })
+        this.lastRendered = { messageId: existing.messageId, html: richView(rendered.text, rendered.replyMarkup) }
         return edited || { chat: { id: existing.chatId }, message_id: existing.messageId }
       } catch (error) {
         if (isMessageNotModified(error)) return { chat: { id: existing.chatId }, message_id: existing.messageId }
@@ -318,16 +336,17 @@ export class ControlMenu {
     }
 
     const rendered = await this.render(page, actor)
-    const sent = await this.telegram.sendMessage({
+    const sent = await this.telegram.sendRichMessage({
       chatId: this.chatId(),
       topicId: 0,
-      text: rendered.text,
-      replyMarkup: rendered.replyMarkup,
-      disableWebPagePreview: true,
+      html: richView(rendered.text, rendered.replyMarkup),
+      disableNotification: true,
     })
     await this.state.setControlMenuMessage({ chatId: this.chatId(), messageId: sent.message_id })
+    this.lastRendered = { messageId: sent.message_id, html: richView(rendered.text, rendered.replyMarkup) }
     if (existing) await this.retireMenu(existing)
     await this.pinMenu(sent.message_id)
+    this.scheduleRotation()
     logInfo("control_menu.created", { chatId: this.chatId(), messageId: sent.message_id })
     return sent
   }
@@ -336,19 +355,22 @@ export class ControlMenu {
     return this.runMenuOperation(() => this.editMenuUnlocked(page, actor))
   }
 
-  async editMenuUnlocked(page, actor) {
+  async editMenuUnlocked(page, actor, snapshot) {
     this.rememberPage(page, actor)
     const current = this.state.controlMenuMessage()
     if (!current) return this.ensureMenuUnlocked(page, actor)
-    const rendered = await this.render(page, actor)
+    const rendered = await this.render(page, actor, snapshot)
     if (this.currentPage !== page || this.currentActor !== (actor || null)) return null
+    const html = richView(rendered.text, rendered.replyMarkup)
+    if (this.lastRendered?.messageId === current.messageId && this.lastRendered.html === html) return null
     try {
-      return await this.telegram.editMessageText({
+      const result = await this.telegram.editRichMessage({
         chatId: current.chatId,
         messageId: current.messageId,
-        text: rendered.text,
-        replyMarkup: rendered.replyMarkup,
+        html,
       })
+      this.lastRendered = { messageId: current.messageId, html }
+      return result
     } catch (error) {
       if (isMessageNotModified(error)) return null
       if (isMissingMessage(error)) {
@@ -359,22 +381,17 @@ export class ControlMenu {
     }
   }
 
-  async render(page, actor) {
-    const sessionSnapshot = ["home", "sessions"].includes(page) ? await this.sessionStatusSnapshot() : null
+  async render(page, actor, snapshot) {
+    const sessionSnapshot = ["home", "sessions"].includes(page) ? snapshot || await this.sessionStatusSnapshot() : null
     if (page === "sessions") return this.renderSessions(sessionSnapshot)
-    if (page.startsWith("profiles:")) return this.renderLaunchProfiles(Number(page.split(":")[1]))
-    if (page.startsWith("profile:")) {
-      const [, index, listPage] = page.split(":").map(Number)
-      return this.renderLaunchProfile(index, listPage)
-    }
-    if (page === "new") return this.renderNew()
+    if (page === "settings") return this.renderSettings()
     if (page === "voice") return this.renderVoice()
     if (page === "voice-advanced") return this.renderVoiceAdvanced()
     if (page === "voice-profiles") return this.renderVoiceProfiles()
     if (page === "voice-voices") return this.renderVoiceVoices()
     if (page === "personal") return this.renderPersonal(actor)
     if (page === "system") return this.renderSystem()
-    if (page === "help") return this.renderHelp()
+    if (page === "help" || page.startsWith("help:")) return this.renderHelp(Number(page.split(":")[1] || 0))
     return this.renderHome(sessionSnapshot)
   }
 
@@ -382,28 +399,25 @@ export class ControlMenu {
     const bindings = this.activeBindings()
     const queued = bindings.reduce((total, binding) => total + this.promptQueue.status(binding).length, 0)
     const busy = bindings.filter((binding) => this.sessionIsBusy(binding, sessionSnapshot)).length
-    const settings = this.finalVoice.settings()
-    const voiceEnabled = this.finalVoice.config.enabled && settings.enabled
-    const mirrorEnabled = this.state.mirrorEnabled(this.config)
-    const text = [
-      t("controlMenu.title"),
-      "",
-      sessionSnapshot?.failedServers.size
-        ? t("controlMenu.hostsUnavailable", { servers: escapeHtml([...sessionSnapshot.failedServers].join(", ")) })
-        : t("controlMenu.home.healthy"),
-      t("controlMenu.home.sessions", { busy, queued }),
-      t("controlMenu.home.voice", { value: this.stateLabel(voiceEnabled) }),
-      t("controlMenu.home.mirror", { value: this.stateLabel(mirrorEnabled), mode: this.state.mirrorMode() }),
-      t("controlMenu.home.language", { value: getLanguage().toUpperCase() }),
-      "",
-      t("controlMenu.updated", { time: this.updatedTime() }),
-    ].join("\n")
+    const L = (ru, en) => localText(ru, en, getLanguage())
+    const text = `<h2>✦ OpenCodeBot</h2><p>${L("Рабочее пространство в Telegram", "Your workspace in Telegram")}</p>` + menuTable([
+      [L("В работе", "Running"), String(busy)], [L("В очереди", "Queued"), String(queued)],
+    ]) + (sessionSnapshot?.failedServers.size ? `<blockquote>${t("controlMenu.hostsUnavailable", { servers: escapeHtml([...sessionSnapshot.failedServers].join(", ")) })}</blockquote>` : "")
     return this.view(text, [
-      [this.callback(t("controlMenu.button.new"), "new"), this.callback(t("controlMenu.button.sessions"), "sessions")],
-      [this.callback(t("controlMenu.button.profiles"), "profiles:0")],
-      [this.callback(t("controlMenu.button.voice"), "voice"), this.callback(t("controlMenu.button.personal"), "personal")],
-      [this.callback(t("controlMenu.button.system"), "system"), this.callback(t("controlMenu.button.help"), "help")],
-      [this.callback(t("controlMenu.button.refresh"), "refresh")],
+      [{ ...this.callback(L("＋ Новая тема", "＋ New topic"), "new"), style: "primary" }],
+      [this.callback(L("Недавние темы", "Recent topics"), "sessions"), this.callback(L("Профили", "Profiles"), "profiles")],
+      [this.callback(L("Настройки", "Settings"), "settings"), this.callback(L("Как пользоваться", "How to use"), "help")],
+    ])
+  }
+
+  renderSettings() {
+    const L = (ru, en) => localText(ru, en, getLanguage())
+    return this.view(`<h2>⚙ ${L("Настройки", "Settings")}</h2><p>${L("Подключения и параметры бота", "Connections and bot preferences")}</p>`, [
+      [this.callback(L("FILES · AUDIO · Setup", "FILES · AUDIO · Setup"), "setup")],
+      [this.callback(L("Уведомления и контекст", "Notifications and context"), "personal")],
+      [this.callback(L("Озвучка ответов", "Spoken answers"), "voice")],
+      [this.callback(L("Язык и дополнительные настройки", "Language and advanced settings"), "system")],
+      [this.callback(t("controlMenu.button.back"), "home")],
     ])
   }
 
@@ -428,7 +442,6 @@ export class ControlMenu {
       }))
     }
     if (bindings.length > visible.length) lines.push(t("controlMenu.sessions.more", { count: bindings.length - visible.length }))
-    lines.push("", t("controlMenu.updated", { time: this.updatedTime() }))
 
     const links = visible.map((binding) => ({
       text: `↗ ${truncate(bindingTitle(binding), 28)}`,
@@ -437,70 +450,6 @@ export class ControlMenu {
     return this.view(lines.join("\n"), [
       ...rows(links, 2),
       [this.callback(t("controlMenu.button.back"), "home"), this.callback(t("controlMenu.button.refresh"), "sessions")],
-    ])
-  }
-
-  renderNew() {
-    const server = escapeHtml(this.config.defaultPrompt?.serverID || "default")
-    return this.view([
-      t("controlMenu.new.title"),
-      "",
-      t("controlMenu.new.description", { server }),
-      t("controlMenu.new.hint"),
-    ].join("\n"), [
-      [this.callback(t("controlMenu.new.create"), "new:create")],
-      [this.callback(t("controlMenu.button.back"), "home")],
-    ])
-  }
-
-  launchProfiles() {
-    return Object.entries(this.config.promptProfiles || {}).sort(([left], [right]) => left.localeCompare(right, "en"))
-  }
-
-  renderLaunchProfiles(page) {
-    const profiles = this.launchProfiles()
-    const pages = Math.max(1, Math.ceil(profiles.length / PROFILES_PER_PAGE))
-    const current = Math.min(page, pages - 1)
-    const start = current * PROFILES_PER_PAGE
-    const visible = profiles.slice(start, start + PROFILES_PER_PAGE)
-    const lines = [
-      t("controlMenu.profiles.title"),
-      t("controlMenu.profiles.count", { count: profiles.length, page: current + 1, pages }),
-      "",
-      ...visible.map(([name, profile]) => t("controlMenu.profiles.item", {
-        name: escapeHtml(name),
-        model: escapeHtml(profile.model?.modelID || t("controlMenu.profiles.inherited")),
-        variant: escapeHtml(profile.model?.variant || t("controlMenu.profiles.inherited")),
-      })),
-      ...(visible.length ? [] : [t("controlMenu.profiles.empty")]),
-      "",
-      t("controlMenu.profiles.hint"),
-    ]
-    const buttons = rows(visible.map(([name], offset) =>
-      this.callback(name, `profile:${start + offset}:${current}`)), 2)
-    const pagination = []
-    if (current > 0) pagination.push(this.callback(t("controlMenu.profiles.previous"), `profiles:${current - 1}`))
-    if (current + 1 < pages) pagination.push(this.callback(t("controlMenu.profiles.next"), `profiles:${current + 1}`))
-    if (pagination.length) buttons.push(pagination)
-    buttons.push([this.callback(t("controlMenu.button.back"), "home")])
-    return this.view(lines.join("\n"), buttons)
-  }
-
-  renderLaunchProfile(index, page) {
-    const [name, profile] = this.launchProfiles()[index]
-    const value = (text) => escapeHtml(text || t("controlMenu.profiles.inherited"))
-    return this.view([
-      t("controlMenu.profiles.detailTitle", { name: escapeHtml(name) }),
-      "",
-      t("controlMenu.profiles.model", { value: value(profile.model?.modelID) }),
-      t("controlMenu.profiles.provider", { value: value(profile.model?.providerID) }),
-      t("controlMenu.profiles.variant", { value: value(profile.model?.variant) }),
-      t("controlMenu.profiles.agent", { value: value(profile.agent) }),
-      t("controlMenu.profiles.system", { value: value(profile.opencodezSystem) }),
-      "",
-      t("controlMenu.profiles.usage", { name: escapeHtml(name) }),
-    ].join("\n"), [
-      [this.callback(t("controlMenu.button.back"), `profiles:${page}`)],
     ])
   }
 
@@ -615,12 +564,17 @@ export class ControlMenu {
       [this.callback(`${language === "ru" ? "✓ " : ""}Русский`, "lang:ru"), this.callback(`${language === "en" ? "✓ " : ""}English`, "lang:en")],
       [this.callback(mirrorEnabled ? t("controlMenu.button.disableMirror") : t("controlMenu.button.enableMirror"), `mirror:${mirrorEnabled ? 0 : 1}`)],
       [this.callback(`${mode === "full" ? "✓ " : ""}${t("controlMenu.system.modeFull")}`, "mode:full"), this.callback(`${mode === "economy" ? "✓ " : ""}${t("controlMenu.system.modeEconomy")}`, "mode:economy")],
+      [this.callback(localText(this.state.reminderEnabled() ? "Выключить напоминания после compaction" : "Включить напоминания после compaction", this.state.reminderEnabled() ? "Disable compaction reminders" : "Enable compaction reminders", language), `reminder:${this.state.reminderEnabled() ? 0 : 1}`)],
+      [this.callback(localText(this.state.debugEnabled() ? "Скрывать диагностику в уведомлениях" : "Добавлять диагностику в уведомления", this.state.debugEnabled() ? "Hide notification diagnostics" : "Show notification diagnostics", language), `debug:${this.state.debugEnabled() ? 0 : 1}`)],
       [this.callback(t("controlMenu.button.back"), "home"), this.callback(t("controlMenu.button.refresh"), "system")],
     ])
   }
 
-  renderHelp() {
-    return this.view([t("controlMenu.help.title"), "", t("controlMenu.help.body")].join("\n"), [
+  renderHelp(page = 0) {
+    const guide = guidePage(page, getLanguage())
+    return this.view(guide.html, [
+      [...(page > 0 ? [this.callback("‹", `help:${page - 1}`)] : []), ...(page + 1 < guide.total ? [this.callback("›", `help:${page + 1}`)] : [])],
+      [this.callback(localText("Скачать PDF", "Download PDF", getLanguage()), "guide:pdf")],
       [this.callback(t("controlMenu.button.back"), "home")],
     ])
   }
@@ -640,6 +594,7 @@ export class ControlMenu {
   }
 
   async loadSessionStatusSnapshot() {
+    const startedAt = Date.now()
     const groups = Map.groupBy(this.activeBindings(), (binding) => binding.serverID)
     const statuses = new Map()
     const failedServers = new Set()
@@ -659,7 +614,23 @@ export class ControlMenu {
         logWarn("control_menu.session_status.failed", { serverID, error: error.message })
       }
     }))
-    return { statuses, failedServers }
+    const activeKeys = new Set(this.activeBindings().map((binding) => `${binding.serverID}:${binding.sessionID}`))
+    for (const [key, event] of this.statusEvents) {
+      if (!activeKeys.has(key)) { this.statusEvents.delete(key); continue }
+      if (event.at >= startedAt) statuses.set(key, event.status)
+    }
+    for (const key of statuses.keys()) if (!activeKeys.has(key)) statuses.delete(key)
+    this.cachedSessionSnapshot = { statuses, failedServers }
+    return this.cachedSessionSnapshot
+  }
+
+  observeStatus(binding, status) {
+    const key = `${binding.serverID}:${binding.sessionID}`
+    this.statusEvents.set(key, { at: Date.now(), status })
+    this.cachedSessionSnapshot ||= { statuses: new Map(), failedServers: new Set() }
+    this.cachedSessionSnapshot.statuses.set(key, status)
+    this.cachedSessionSnapshot.failedServers.delete(binding.serverID)
+    this.scheduleStatusRefresh()
   }
 
   sessionIsBusy(binding, snapshot) {
@@ -675,7 +646,7 @@ export class ControlMenu {
       this.statusRefreshPending = true
       this.runMenuOperation(() => {
         if (!["home", "sessions"].includes(this.currentPage)) return null
-        return this.editMenuUnlocked(this.currentPage, this.currentActor)
+        return this.editMenuUnlocked(this.currentPage, this.currentActor, this.cachedSessionSnapshot)
       }).catch((error) => {
         logErrorEvent("control_menu.status_refresh.failed", error, { page: this.currentPage })
       }).finally(() => {
@@ -695,7 +666,7 @@ export class ControlMenu {
   }
 
   currentVoiceProfile() {
-    return this.finalVoice.config.tts.profiles[this.finalVoice.settings().profile] || this.voiceProfiles()[0]
+    return this.finalVoice.config.tts.profiles[this.finalVoice.settings().profile] || this.voiceProfiles()[0] || { id: "—", voices: [], defaultVoice: "" }
   }
 
   notificationConfigured(userId) {
@@ -728,9 +699,7 @@ export class ControlMenu {
       // Telegram may refuse deletion of an old message; keep it inert instead.
     }
     await Promise.all([
-      this.telegram.request("editMessageReplyMarkup", {
-        chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] },
-      }, 0, { suppressFailureLog: true }).catch((error) => {
+      this.telegram.editRichMessage({ chatId, messageId, html: `<p>${localText("Это меню заменено. Открой /menu.", "This menu was replaced. Open /menu.", getLanguage())}</p>` }).catch((error) => {
         if (!isMessageNotModified(error) && !isMissingMessage(error)) logWarn("control_menu.retire.keyboard.failed", { error: error.message })
       }),
       this.telegram.request("unpinChatMessage", { chat_id: chatId, message_id: messageId }, 0, { suppressFailureLog: true })
@@ -741,6 +710,21 @@ export class ControlMenu {
   async answer(query, text, showAlert = false) {
     return this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text, showAlert })
   }
+
+  scheduleRotation() {
+    clearTimeout(this.rotationTimer)
+    const createdAt = this.state.controlMenuMessage()?.createdAt || Date.now()
+    this.rotationTimer = setTimeout(() => {
+      this.ensureMenu("home", null, { replace: true }).catch((error) => {
+        logErrorEvent("control_menu.rotation_failed", error)
+        this.rotationTimer = setTimeout(() => this.scheduleRotation(), 60_000)
+        this.rotationTimer.unref?.()
+      })
+    }, Math.max(1000, createdAt + 24 * 60 * 60_000 - Date.now()))
+    this.rotationTimer.unref?.()
+  }
+
+  stop() { clearTimeout(this.rotationTimer); clearTimeout(this.statusRefreshTimer) }
 
   async deleteQuietly(chatId, messageId) {
     if (!chatId || !messageId) return

@@ -11,9 +11,9 @@ export function loadEnvFile(filePath) {
     if (index === -1) continue
     const key = trimmed.slice(0, index).trim()
     let value = trimmed.slice(index + 1).trim()
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1)
-    }
+    if (value.startsWith('"') && value.endsWith('"')) {
+      try { value = JSON.parse(value) } catch { value = value.slice(1, -1) }
+    } else if (value.startsWith("'") && value.endsWith("'")) value = value.slice(1, -1)
     env[key] = value
   }
   return env

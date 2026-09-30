@@ -47,6 +47,9 @@ import { classifyChangedPaths, scheduledCheckDue, summarizeUpdateCommits, zonedS
 import { nextPeerAddress } from "../src/wireguard-address.mjs"
 import { OpencodebotArtifactsPlugin } from "../plugins/opencodebot-artifacts/src/index.js"
 import { validateUpdateRequest } from "./apply-update.mjs"
+import { UserSettings } from "../src/user-settings.mjs"
+import { LaunchMenu } from "../src/launch-menu.mjs"
+import { Setup } from "../src/setup.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.resolve(__dirname, "..")
@@ -58,6 +61,7 @@ await smokeRuntimeHealth(config, { explicit: Boolean(explicitConfigPath) })
 
 async function smokeLocalInvariants() {
   await smokeI18n()
+  await smokeWorkspacePreferences()
   smokeConfigExample()
   smokeWireguardAddresses()
   smokeUpdateSubsystem()
@@ -117,6 +121,78 @@ async function smokeLocalInvariants() {
   await smokePeriodicReconcileDoesNotPostponeIncompleteWarning()
 }
 
+async function smokeWorkspacePreferences() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-workspace-"))
+  try {
+    const c = loadConfig(path.join(projectRoot, "config.example.json"))
+    c.telegram.allowedUserIds = [42]
+    const state = new StateStore(path.join(root, "state.json"))
+    await state.load()
+    configureI18n({ state, defaultLanguage: "en" })
+    const catalog = { entries: [{ id: "builtin:codex_gpt_6_1_sol", name: "codex_gpt_6_1_sol" }], models: [{ providerID: "openai", id: "gpt-6.1-sol", name: "GPT-6.1 Sol", family: "Sol", variants: ["medium", "high", "xhigh"] }] }
+    const backend = { server: () => ({}), request: async () => catalog, defaultNewSessionDirectory: () => "/workspace" }
+    const settings = new UserSettings({ config: c, state, opencode: backend })
+    await settings.initialize()
+    assert.deepEqual(Object.keys(c.promptProfiles).sort(), ["d4flash", "sol", "solm", "solx"])
+    await state.bindTopic({ serverID: "local", sessionID: "ses_workspace", topicId: 12, chatId: -1001, promptProfileName: "sol", promptProfile: structuredClone(c.promptProfiles.sol) })
+    const snapshot = structuredClone(state.data.bindings)
+    await settings.saveProfile("review", c.promptProfiles.sol)
+    await settings.setDefault("review")
+    await settings.deleteProfile("review")
+    await settings.restoreProfile("review")
+    assert.deepEqual(state.data.bindings, snapshot)
+    const reloaded = new StateStore(state.filePath)
+    await reloaded.load()
+    const second = new UserSettings({ config: c, state: reloaded, opencode: backend })
+    await second.initialize()
+    assert.ok(second.data.profiles.review)
+    await state.disableFinalNotificationsFor(42)
+    assert.equal(state.data.preferences.notificationChoices[42], false)
+    const messages = []
+    let acceptedKey = ""
+    const telegram = {
+      sendRichMessage: async (payload) => { messages.push(payload); return { ephemeral_message_id: 10 } },
+      editRichMessage: async (payload) => { messages.push(payload) },
+      sendMessage: async (payload) => { messages.push(payload); return { message_id: 11 } },
+      answerCallbackQuery: async (payload) => { messages.push(payload) },
+      deleteMessage: async () => {}, request: async () => {},
+    }
+    const launch = new LaunchMenu({ config: c, state, opencode: backend, settings, telegram, createSession: async (_message, value) => { assert.equal(value.promptProfile.model.modelID, "gpt-6.1-sol"); return { message_thread_id: 90 } } })
+    const draft = await launch.open({ from: { id: 42 }, message: { chat: { id: -1001 } } }, "profiles")
+    const count = messages.length
+    await launch.handleCallback({ id: "foreign", from: { id: 43 }, message: { chat: { id: -1001 }, ephemeral_message_id: 10 }, data: `launch:${draft.id}:${draft.rev}:default` })
+    assert.equal(messages.length, count + 1)
+    assert.ok(messages.at(-1).showAlert)
+    draft.page = "new"; draft.name = "Example"; draft.profileName = "sol"
+    await launch.act(draft, "create")
+    assert.equal(draft.page, "created")
+    await launch.close(draft)
+    const setup = new Setup({ config: c, state, settings: { storeGroqKey: async (key) => { acceptedKey = key } }, telegram, speech: {} })
+    await state.update((data) => { data.preferences.audioInputs = { 42: { chatId: -1001, topicId: 9, promptId: 77, expires: Date.now() + 10000 } } })
+    const safe = await setup.prepareUpdate({ update_id: 1, message: { chat: { id: -1001 }, from: { id: 42 }, message_thread_id: 9, message_id: 80, text: "gsk_disposable_key" } })
+    assert.equal(acceptedKey, "gsk_disposable_key")
+    assert.equal(safe.message.setupKeyResult, "connected")
+    assert.doesNotMatch(JSON.stringify(safe), /gsk_disposable_key/)
+    const foreign = await setup.prepareUpdate({ update_id: 2, message: { chat: { id: -1001 }, from: { id: 43 }, message_thread_id: 9, message_id: 81, text: "gsk_other_key" } })
+    assert.equal(foreign.message.setupKeyResult, "unexpected")
+    assert.equal(acceptedKey, "gsk_disposable_key")
+    assert.doesNotMatch(JSON.stringify(foreign), /gsk_other_key/)
+    // An existing installation imports its former built-ins once; no legacy catalog remains active.
+    const old = new StateStore(path.join(root, "old.json"))
+    await old.load()
+    await old.bindTopic({ serverID: "local", sessionID: "ses_old", chatId: -1001, topicId: 20, promptProfileName: "luna" })
+    const oldConfig = loadConfig(path.join(projectRoot, "config.example.json"))
+    const migrated = new UserSettings({ config: oldConfig, state: old, opencode: backend })
+    await migrated.initialize()
+    assert.ok(migrated.data.profiles.luna)
+    assert.equal(old.data.bindings[0].promptProfile.model.modelID, "gpt-6-luna")
+    await migrated.deleteProfile("luna")
+    await migrated.initialize()
+    assert.equal(migrated.data.profiles.luna, undefined)
+    console.log("workspace: profile migration, snapshot isolation, stale/foreign UI and pre-journal key handling verified")
+  } finally { await rm(root, { recursive: true, force: true }) }
+}
+
 async function smokeI18n() {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-i18n-smoke-"))
   try {
@@ -124,7 +200,7 @@ async function smokeI18n() {
     await state.load()
     configureI18n({ state, defaultLanguage: "en" })
     assert.equal(getLanguage(), "en")
-    assert.equal(telegramBotCommands().length, 11)
+    assert.equal(telegramBotCommands().length, 12)
     assert.ok(telegramBotCommands().some((item) => item.command === "reminder"))
     assert.match(telegramBotCommands().find((item) => item.command === "menu").description, /control center/)
     assert.equal(telegramBotCommands().some((item) => item.command === "lang"), false)
@@ -1821,8 +1897,8 @@ async function smokeSpeechModelMenu() {
         ],
       }, { OPENROUTER_API_KEY: "test-key", GROQ_API_KEY: "groq-key" }),
       telegram: {
-        async sendMessage(message) { sent.push(message); return { message_id: sent.length + 10 } },
-        async editMessageText(message) {
+        async sendRichMessage(message) { sent.push(message); return { message_id: sent.length + 10 } },
+        async editRichMessage(message) {
           if (rejectNextEditAsUnchanged) {
             rejectNextEditAsUnchanged = false
             throw new Error("Bad Request: message is not modified")
@@ -1840,14 +1916,14 @@ async function smokeSpeechModelMenu() {
     await speech.createOrRefreshMenu()
     assert.equal(sent.length, 1)
     assert.equal(sent[0].topicId, 7)
-    assert.match(sent[0].text, /Whisper V3 Turbo/)
-    assert.equal(sent[0].replyMarkup.inline_keyboard.length, 4)
+    assert.match(sent[0].html, /Whisper V3 Turbo/)
+    assert.equal((sent[0].html.match(/<tg-button-row>/g) || []).length, 4)
     assert.deepEqual(pinned, [{ chatId: 100, messageId: 11, disableNotification: true }])
     assert.equal(state.soundsMenuMessageId(), 11)
     await speech.handleCallbackQuery({ id: "cb1", data: "sounds:model:groq%2Fwhisper-large-v3", message: { chat: { id: 100 }, message_thread_id: 7, message_id: 11 } })
     assert.equal(state.speechModelId(), "groq/whisper-large-v3")
-    assert.match(edited.at(-1).text, /Whisper V3<\/code> · Groq/)
-    assert.equal(edited.at(-1).replyMarkup.inline_keyboard[1][0].text.startsWith("✓ "), true)
+    assert.match(edited.at(-1).html, /Whisper V3<\/code> · Groq/)
+    assert.match(edited.at(-1).html, />✓ Whisper V3 · Groq<\/tg-button>/)
     assert.match(answered.at(-1).text, /Whisper V3/)
     rejectNextEditAsUnchanged = true
     await speech.handleCallbackQuery({ id: "cb2", data: "sounds:refresh", message: { chat: { id: 100 }, message_thread_id: 7, message_id: 11 } })
@@ -2416,6 +2492,7 @@ async function smokeResetCommand() {
       state,
       telegram: {
         async sendMessage(message) { sent.push(message) },
+        async sendRichMessage(message) { sent.push({ ...message, text: message.html }) },
         async editForumTopic(message) { renamed.push(message) },
       },
       opencode: {
@@ -2453,6 +2530,7 @@ async function smokeResetCommand() {
     assert.match(sent.at(-1).text, /Unknown reset profile or server: unknown/)
 
     state.findBinding("nuc", "ses_reset_old").promptProfileName = "missing"
+    delete state.findBinding("nuc", "ses_reset_old").promptProfile
     await handlers.handle(
       { chat: { id: 123 }, message_thread_id: 456, message_id: 788 },
       { name: "reset", args: "" },
@@ -2463,6 +2541,7 @@ async function smokeResetCommand() {
     assert.match(sent.at(-1).text, /Reset needs a profile/)
     assert.match(sent.at(-1).text, /Current profile is no longer configured: missing/)
     state.findBinding("nuc", "ses_reset_old").promptProfileName = "gpt"
+    state.findBinding("nuc", "ses_reset_old").promptProfile = binding.promptProfile
 
     const handled = await handlers.handle(
       { chat: { id: 123 }, message_thread_id: 456, message_id: 789 },

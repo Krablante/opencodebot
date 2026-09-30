@@ -5,7 +5,7 @@
 The repo contains source, defaults, and docs. Runtime config and state live outside git so the bot can be repaired,
 restarted, and shared without committing private values.
 
-Create config once with:
+For guided installation use `npm run setup`; see [first run and upgrades](first-run.md). Manual config creation remains available:
 
 ```bash
 npm run init-config
@@ -289,45 +289,28 @@ silently or turns an unknown transfer type into `local`.
 `defaultPrompt` is the fallback profile for Telegram-created sessions. It chooses the default OpenCodez server and the
 prompt metadata the bot can know before the first prompt: agent and model.
 
-`promptProfiles` are named launch profiles for `/new` and `/reset [profile] [server]`. The built-in defaults are `d4flash`,
-`d4pro`, `luna`, `lunah`, `lunamax`, `terra`, `gpt6`, `gpt6m`, `sol`, `solm`, `solx`, `solh`, and `solmax`. The Astra profiles share the bundled
-`codex_gpt_6_astra` System and select `high` and `medium` variants respectively. Sol uses GPT-6.1 Sol with
-`codex_gpt_6_1_sol`; Luna keeps GPT-6 Luna with `codex_gpt_6_luna`. Runtime config is
-merged with those defaults, so you can add a profile or override an existing profile without copying every default. `/reset` without
-arguments inherits profile/server/directory; one argument may select a profile or server; two arguments are profile then
+`promptProfiles` seed named launch profiles for `/new` and `/reset [profile] [server]`. New installations start with `d4flash`, `sol`, `solm` and `solx`. The first start imports them and explicit configuration into `state.json` preferences. Existing installations also import their former built-ins once. After import, General's profile editor owns the effective collection; deleting a profile does not re-add it from configuration on restart. See [General menu](control-menu.md).
+
+`/reset` without arguments inherits profile/server/directory and can use the retained topic snapshot if a profile was deleted. One argument may select a profile or server; two arguments are profile then
 server. Same-server reset preserves the current directory, while cross-server reset preflights the target and uses its
 `newSessionDefaultDirectory` policy. On lazy session creation the bot applies the profile twice by design: it switches
 the OpenCodez session's next model so the web composer stays in sync, and it keeps sending the same model in prompt
 payloads so Telegram-origin prompts do not depend on browser-local state.
 
-`d4flash` selects DeepSeek V4.1 Flash through the `deepseek-flash` model ID. An explicit `d4flash` entry in local
-`promptProfiles` overrides this built-in choice; update that entry too when migrating from `deepseek-v4-flash`.
+`d4flash` selects DeepSeek V4.1 Flash through `deepseek-flash`. Change an imported profile's model, variant and System in Telegram. Configuration overrides apply to the initial import, not as a second live profile catalog.
 
-General's `Launch profiles` view reads this effective merged map directly. It includes runtime-added and overridden
-profiles, shows seven at a time, and offers a detailed card for each. Browsing is read-only; choose a profile by typing
-`/new [server] profile [title]` for a new topic or `/reset profile [server]` inside an existing session topic.
-Without a profile, `/new` uses `defaultPrompt`, while `/reset` keeps the topic's current profile.
+General's Profiles view supports creation, copy, edit, default selection, deletion and restore. Models, families and reasoning choices come from the selected OpenCodez server. New profiles can inherit System and reasoning defaults. Without a profile argument, `/new` uses the saved default; `/reset` keeps the topic's current launch selection.
 
 | Profile | Model | Reasoning |
 | --- | --- | --- |
 | `sol` | GPT-6.1 Sol | high |
 | `solm` | GPT-6.1 Sol | medium |
 | `solx` | GPT-6.1 Sol | xhigh |
-| `solh` | GPT-6.1 Sol | high (same settings as `sol`) |
-| `solmax` | GPT-6.1 Sol | max |
-| `luna` | GPT-6 Luna | xhigh |
-| `lunah` | GPT-6 Luna | high |
-| `lunamax` | GPT-6 Luna | max |
+| `d4flash` | DeepSeek V4.1 Flash | max |
 
 The GPT-6.1 Sol System requires OpenCodez `1.18.33+opencodez.1` or newer on
 each server where a Sol profile can run.
-Upgrading the bot refreshes built-in defaults, but explicit entries in local
-`promptProfiles` remain overrides. If an older `config.example.json` was copied
-wholesale, remove its old Sol/Luna entries to inherit the new defaults, or update
-their model, variant, and System together. Keep the `sol` variant at `high` and
-use `solx` for `xhigh`. The loader never rewrites user configuration, changes a
-private prompt name, or migrates existing session history. No OpenCodez restart
-or upgrade is performed by the bot updater.
+Saved profiles survive upgrades. Use the Telegram editor to update their model, variant and System together. Keep `sol` at `high` and use `solx` for `xhigh`. The import does not rewrite private prompt sources or OpenCodez session history. The bot updater never upgrades or restarts OpenCodez.
 
 When two or more servers are configured, Telegram topic names are rendered as `<base title> (<serverID>)`; single-server
 installations retain plain names. The base title is stored separately from the managed suffix so `/reset solh workstation` can
@@ -391,9 +374,7 @@ Bot API mode.
 
 ## Final Notifications
 
-`finalNotifications` controls optional private DM notifications for final mirrored answers. `finalNotifications.userIds`
-is the configured recipient allowlist. `/notify_on` enables notifications for those configured ids after verifying that
-the bot can DM them; `/notify_off` disables those configured recipients again.
+`finalNotifications` controls private DM notifications for final mirrored answers. When `userIds` is empty, allowed operator IDs become recipients. Opening the private bot chat with Start or completing setup enables delivery after checking that the bot can DM the user. An explicit off choice is retained in `preferences.notificationChoices`. Personal settings offers the normal toggle; typed `/notify_on` and `/notify_off` remain shortcuts.
 
 Debug diagnostics require final-answer DMs and use one global persistent toggle for the bot. `/debug_on` adds the block
 to every future final DM regardless of source topic, `/debug_off` removes it globally, and `/debug_status` reports the
@@ -517,6 +498,8 @@ Per-server roots belong in `servers.json` when one host needs a different dropbo
 Telegram bot, OpenCodez API mirroring, long polling, and LAN web UI do not depend on WireGuard.
 
 ## Paths And State
+
+`state.json` preferences own the imported profile collection, deleted profiles, default launch choice, recent profile order and connection preferences. Provider keys entered through setup live in owner-only `provider-secrets.json` beside state, not in the profile collection or inbox. Include that file in private stopped-bot backups. `/setup` accepts Groq keys in the same topic, filters the key before durable inbox receipt, validates it and enables direct Whisper Large V3 Turbo without changing read-only config.
 
 `paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, pending topics waiting for
 their first prompt, the singleton General control-menu chat/message reference, the current artifacts topic, the current

@@ -1,6 +1,7 @@
 import { visibleTextFromParts } from "./opencode.mjs"
 import { escapeHtml } from "./telegram.mjs"
 import { t } from "./i18n/index.mjs"
+import { isInternalUserMessage, logicalTurnUserReferences } from "./logical-turn.mjs"
 
 export const DEFAULT_CONTEXT_TURNS = 3
 export const MAX_CONTEXT_TURNS = 10
@@ -25,8 +26,9 @@ export async function loadRecentContextTurns({ opencode, binding, count, interru
     const items = Array.isArray(page?.messages) ? page.messages : []
     messages = [...items.map(contextRelevantMessage).filter(Boolean), ...messages]
     const turns = extractContextTurns(messages, { interruptedUserMessageIDs })
-    if (turns.length >= count) return turns.slice(-count)
-    if (!page?.before || cursors.has(page.before)) return turns
+    // An extra external turn proves the oldest selected prompt is not an unseen compaction replay.
+    if (turns.length > count) return turns.slice(-count)
+    if (!page?.before || cursors.has(page.before)) return turns.slice(-count)
     cursors.add(page.before)
     before = page.before
   }
@@ -35,10 +37,17 @@ export async function loadRecentContextTurns({ opencode, binding, count, interru
 export function extractContextTurns(messages, { interruptedUserMessageIDs = new Set() } = {}) {
   const candidates = []
   const turnsByUserMessageID = new Map()
+  const roots = logicalTurnUserReferences(messages)
   let current
   for (const message of messages || []) {
     const info = message?.info || message
     if (info?.role === "user") {
+      const rootID = roots.get(info.id)
+      if (isInternalUserMessage(message) || (rootID && rootID !== info.id)) {
+        const root = rootID ? turnsByUserMessageID.get(rootID) : current
+        if (root && info.id) turnsByUserMessageID.set(info.id, root)
+        continue
+      }
       const prompt = userPromptText(message)
       current = prompt && !info.synthetic ? { userMessageID: info.id, prompt, answer: "", progress: [] } : undefined
       if (current) {
@@ -47,8 +56,8 @@ export function extractContextTurns(messages, { interruptedUserMessageIDs = new 
       }
       continue
     }
-    if (info?.role !== "assistant") continue
-    const target = turnsByUserMessageID.get(info.parentID) || current
+    if (info?.role !== "assistant" || info.summary === true) continue
+    const target = info.parentID ? turnsByUserMessageID.get(info.parentID) : current
     if (!target) continue
     const text = visibleTextFromParts(message?.parts || []).trim()
     if (!text) continue
@@ -111,7 +120,7 @@ function contextRelevantMessage(message) {
   if (info?.role === "user") return message
   if (info?.role !== "assistant") return undefined
   const text = visibleTextFromParts(message?.parts || []).trim()
-  return text ? { info, parts: [{ type: "text", text }] } : undefined
+    return text && info.summary !== true ? { info, parts: [{ type: "text", text }] } : undefined
 }
 
 function formatContextTurns(turns) {

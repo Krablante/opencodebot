@@ -38,6 +38,7 @@ export function normalizeArtifacts(value = {}, token, botApi = { local: false })
     listenHost: value.listenHost ? String(value.listenHost) : defaultArtifacts.listenHost,
     port: numberAtLeast(value.port, defaultArtifacts.port, 1),
     token,
+    gatewayUrl: value.gatewayUrl ? String(value.gatewayUrl).replace(/\/$/, "") : "",
     tokenEnvNames: normalizeStringList(value.tokenEnvNames, defaultArtifacts.tokenEnvNames),
     maxPayloadBytes: defaultArtifacts.maxPayloadBytes,
     maxFileBytes,

@@ -280,13 +280,24 @@ export class TelegramClient {
     return data.result
   }
 
-  async sendRichMessage({ chatId, topicId, markdown, html, skipEntityDetection = false }) {
+  async sendRichMessage({ chatId, topicId, markdown, html, blocks, skipEntityDetection = false, ephemeral, replyMarkup, disableNotification = false }) {
     const payload = {
       chat_id: chatId,
-      rich_message: richMessagePayload({ markdown, html, skipEntityDetection }),
+      rich_message: blocks ? { blocks, skip_entity_detection: skipEntityDetection } : richMessagePayload({ markdown, html, skipEntityDetection }),
     }
     if (topicId) payload.message_thread_id = topicId
+    if (ephemeral) payload.ephemeral_message_parameters = ephemeral
+    if (replyMarkup) payload.reply_markup = replyMarkup
+    if (disableNotification) payload.disable_notification = true
     return this.request("sendRichMessage", payload)
+  }
+
+  async editRichMessage({ chatId, messageId, markdown, html, blocks, skipEntityDetection = false, receiverUserId, ephemeralMessageId }) {
+    const rich_message = blocks ? { blocks } : richMessagePayload({ markdown, html, skipEntityDetection })
+    if (ephemeralMessageId) return this.request("editEphemeralMessageText", {
+      chat_id: chatId, receiver_user_id: receiverUserId, ephemeral_message_id: ephemeralMessageId, rich_message,
+    })
+    return this.request("editMessageText", { chat_id: chatId, message_id: messageId, rich_message, reply_markup: { inline_keyboard: [] } })
   }
 
   async editMessageText({ chatId, messageId, text, format = "html", replyMarkup }) {
@@ -305,14 +316,6 @@ export class TelegramClient {
       callback_query_id: callbackQueryId,
       text,
       show_alert: showAlert,
-    })
-  }
-
-  async editRichMessage({ chatId, messageId, markdown, html, skipEntityDetection = false }) {
-    return this.request("editMessageText", {
-      chat_id: chatId,
-      message_id: messageId,
-      rich_message: richMessagePayload({ markdown, html, skipEntityDetection }),
     })
   }
 
@@ -339,7 +342,11 @@ export class TelegramClient {
   }
 
   async getForumTopicIconStickers() {
-    return this.request("getForumTopicIconStickers")
+    if (!this.iconStickers || Date.now() - this.iconStickers.at > 6 * 60 * 60_000) {
+      const promise = this.request("getForumTopicIconStickers").catch((error) => { this.iconStickers = null; throw error })
+      this.iconStickers = { at: Date.now(), promise }
+    }
+    return this.iconStickers.promise
   }
 }
 

@@ -74,6 +74,21 @@ export function reminderReference(message) {
   return null
 }
 
+export function logicalTurnUserReferences(messages) {
+  const references = compactionReferences(messages)
+  const aliases = new Map([...references.markerRoots, ...references.replayRoots])
+  for (const [id, root] of aliases) {
+    let current = root
+    const visited = new Set([id])
+    while (aliases.has(current) && !visited.has(current)) {
+      visited.add(current)
+      current = aliases.get(current)
+    }
+    aliases.set(id, current)
+  }
+  return aliases
+}
+
 function compactionReferences(messages) {
   const markerRoots = new Map()
   const replayRoots = new Map()

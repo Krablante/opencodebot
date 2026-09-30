@@ -27,6 +27,8 @@ export async function bindPendingTopicSession({ state, opencode, pending, messag
     title: pending.title || titleFromText(text || files[0]?.filename || "Attachments"),
     titleSource: pending.titleSource || "auto",
     promptProfileName: pending.promptProfileName,
+    launchRequestKey: pending.launchRequestKey,
+    promptProfile: pending.promptProfile,
     agent: pending.promptProfile?.agent,
     model: pending.promptProfile?.model,
     setupProfile: pending.promptProfile,
@@ -211,7 +213,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       const current = state.findBinding(binding.serverID, binding.sessionID)
       if (!current || current.disabled) throw new Error(t("prompt.noBinding"))
       if (current.setupProfile) {
-        const setupProfile = current.promptProfileName ? config.promptProfiles[current.promptProfileName] : current.setupProfile
+        const setupProfile = (current.promptProfileName && config.promptProfiles[current.promptProfileName]) || current.promptProfile || current.setupProfile
         if (!setupProfile) throw new Error(t("prompt.setupProfileMissing"))
         await applyPromptProfile(opencode, current.serverID, current.sessionID, setupProfile, { directory: current.directory })
         Object.assign(current, { agent: setupProfile.agent, model: setupProfile.model })

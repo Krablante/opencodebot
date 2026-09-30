@@ -8,6 +8,8 @@ You need Node.js 22 or newer for helper scripts such as `npm run init-config`, p
 
 ## Files
 
+`npm run setup` prepares private files and ordinary local mounts interactively. For native Node installation use `npm run setup -- --node`; Windows defaults to native paths. Use the manual steps below for custom layouts. Rich menus require Bot API 10.3+; when updating the local sidecar, preserve its state volume and recreate it with `docker compose --profile telegram-local up -d telegram-bot-api`.
+
 Create local files once:
 
 ```bash

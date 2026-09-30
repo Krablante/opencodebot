@@ -6,6 +6,8 @@ Start with the [project README](../../README.md) if you have not installed the b
 
 ## Use
 
+- [First run and upgrades](first-run.md): guided installation, `/setup`, AUDIO/FILES and preference migration.
+
 - [Telegram workflow](telegram-workflow.md): topics, prompts, `/q`, `/reset`, rewind, `/context`, questions, and notifications.
 - [General control menu](control-menu.md): the pinned panel and global versus topic commands.
 - [Interface language](interface-language.md): English/Russian UI, `/lang`, and catalog maintenance.

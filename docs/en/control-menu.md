@@ -1,145 +1,43 @@
-# General Control Menu
+# General menu
 
 [English](control-menu.md) · [Русский](../ru/control-menu.md)
 
-OpenCodeBot keeps one persistent control-panel message in the Telegram forum's General topic. It is the primary interface
-for session discovery and settings that are not tied to one OpenCodez topic. Commands remain available as accelerators
-and for actions whose target is the current topic or replied message.
+General contains one pinned Rich Message with embedded buttons. It offers New topic, Recent topics, Profiles, Settings and How to use. Working topics keep their ordinary conversation interface and topic commands. Bot API **10.3 or newer** is required; the Compose local API image is pinned to a supported version.
 
-## User Contract
+The panel moves to a new message every 24 hours. `/menu` moves it immediately. The new location is saved before the old panel is deleted. If Telegram refuses deletion, the old message is replaced with an inert notice and unpinned. Only the current panel can process its callbacks. Navigation and automatic status refresh edit that panel in place.
 
-The panel is created or recovered at startup, edited in place, and pinned without a notification. Its home page shows:
+Automatic status refresh consumes the existing OpenCodez event stream and skips identical menu content. Opening or explicitly refreshing Home/Recent topics performs the scoped backend lookup with existing backoff. There is no status polling timer or backend scan per tool event.
 
-- currently running session and queued-prompt counts;
-- global automatic Final Voice state;
-- global mirror state and detail mode;
-- global interface language;
-- entry points for a new session, recent sessions, launch profiles, voice, personal settings, system settings, and help.
+## Create a topic
 
-`/menu` creates a new panel at the bottom of General and makes it the only active panel, even when the command is issued
-from another topic. The old panel is deleted; if Telegram refuses deletion (for example, because of its age), the bot
-removes its keyboard and unpins that specific message instead. The new panel is pinned silently. `/start`, `/help`, the
-Refresh button, and automatic updates continue to edit the existing panel in place.
+New topic opens a personal ephemeral screen, asks for the title, and shows the exact model ID and reasoning. The current default profile is selected. Profile selection places recently used profiles first. Server and directory choices are optional; a single-server installation does not ask the user to choose a server.
 
-In General, the command message is removed after the panel is ready. In another topic, the bot returns a temporary
-`Open panel` link to the active General panel instead of creating a topic-local menu. The link disappears after 30 seconds.
+`/new` without arguments opens this flow. `/new [server] [profile] [dir:<path>] [title]` remains a shortcut. Both use the same pending-topic creation path. The OpenCodez session is created on the first prompt, bound before model/System changes, and retains a launch snapshot for retry and reset.
 
-The panel deliberately uses an inline keyboard rather than a persistent reply keyboard. It does not occupy the message
-composer and cannot leak topic-specific actions into unrelated topics.
+## Profiles and model catalog
 
-## Scope
+Profiles can be created, copied, renamed, edited, set as default, deleted and restored from Telegram. A new installation starts with `sol`, `solm`, `solx` and `d4flash`. Existing installations import their former built-ins and explicit configuration once into the same editable collection. Deleted profiles do not reappear after restart or update.
 
-The panel labels shared and personal state explicitly:
+The catalog comes from the selected server's `/opencodez/library`. It includes provider/family grouping, names, IDs and supported reasoning variants. Rich tables contain selection buttons. Large catalogs load collapsed families with Search and Expand all controls; bounded pages respect Telegram's text and block limits. Search accepts a name, ID, provider or family. The bot caches catalog metadata for one minute and coalesces concurrent reads. It never scans the workspace, runs a browser renderer, or polls model providers continuously.
 
-- `Voice` controls global Final Voice settings for every topic.
-- `My settings` controls the callback user's final-answer DMs and personal `/context` depth.
-- `System` controls the global interface language, mirroring switch, and mirror detail mode; Sounds and debug state are
-  shown read-only.
-- `Sessions` lists the twelve most recently active bindings and links to their Telegram topics. Destructive session
-  actions are intentionally not offered from General.
-- `Launch profiles` lists every configured session profile, including local additions and overrides. Seven appear per page
-  with model and reasoning variant; tapping a name shows provider, agent, OpenCodez System, and the commands to use it.
-  This is a reference view: opening a profile does not alter a session or the default. It is separate from Final Voice's
-  synthesis profiles.
+New profiles inherit OpenCodez System assignments and reasoning defaults unless the user chooses explicit settings. The profile editor also supports agent and System selection. Saving checks the selected model and variant against the chosen server. Catalog presence cannot guarantee account quota or paid access.
 
-Running/idle state comes from `/session/status` in the active bindings' working directories, not from an unscoped
-host-level request. Calls are coalesced while a snapshot is in flight and use the same backend backoff as recovery.
-Unavailable hosts are displayed as having no connection rather than idle; repeated automatic refreshes do not bypass
-backoff. The local queue remains only a fallback for aggregate counts. `session.status` and
-`session.idle` events trigger one debounced refresh of the visible Home or Sessions page, while the Refresh button always
-performs a fresh on-demand lookup.
+Edits affect future launches. Existing sessions retain their model and launch snapshot. `/reset` without arguments can use that snapshot when the named profile was deleted; it preserves the server and directory and leaves the previous OpenCodez session intact.
 
-The following actions remain topic commands because their target comes from the current forum topic:
+## Personal dialogs
 
-```text
-/session
-/q
-/compact
-/context
-/reset
-/kill
-```
+Ephemeral screens are visible only to the operator who opened them. The bot checks the actor, chat, ephemeral message ID, draft lifetime and screen revision before applying a callback. Drafts expire after 15 minutes and disappear on restart. Saved settings persist. A stale or foreign callback cannot apply a choice.
 
-`/speak` also remains a command because its source is the replied Telegram message. Setup and operator commands such as
-`/artifacts_here`, `/sounds_here`, `/debug_on`, and `/update` remain accepted when typed but are hidden from Telegram's
-normal slash suggestions.
+Text fields use a temporary Force Reply in the same topic. The response belongs to that actor and prompt. `/cancel` and Close cancel input; accepted input and its temporary prompt are removed. Provider keys follow the separate pre-journal path described in [first run](first-run.md).
 
-The visible slash menu is intentionally limited to:
+## Settings and guide
 
-```text
-/menu
-/new
-/session
-/q
-/compact
-/context
-/speak
-/reset
-/kill
-/help
-```
+Settings separates inbound AUDIO transcription from spoken final answers. Personal settings control final-answer notifications and `/context` depth. Language, mirror visibility and tool detail remain global. Economy is the initial mirror mode; the detailed mode is an advanced choice.
 
-Hiding an operator command from `setMyCommands` does not remove its handler or break existing operational procedures.
-Telegram Bot API command scopes do not support different lists per forum topic, so one small group-wide list is the
-least surprising behavior.
+The built-in guide has six illustrated Rich Message pages and a downloadable PDF in English and Russian. Its text lives in `src/user-guide.mjs`; `scripts/preview-ui.mjs` produces HTML previews from the same menu renderers. Published PDFs live in `assets/` and are included in the image. Review regenerated PDFs visually before replacing them.
 
-## Interaction Details
+## Ownership and checks
 
-Buttons always encode an explicit desired value such as on, off, `full`, or `economy`. They do not perform blind toggles.
-This prevents stale buttons or status checks from unexpectedly reversing a setting. For the same reason, bare `/tts`
-is status-only; use `/tts on` or `/tts off` to mutate automatic Final Voice.
+`control-menu.mjs` owns the General panel, daily rotation and shared settings views. `launch-menu.mjs` owns personal topic/profile drafts. `user-settings.mjs` owns durable preferences, one-time import and catalog reads. `setup.mjs` owns connection setup. They reuse the existing Telegram client, state store and session creation path.
 
-Final Voice prompt and intro edits use a temporary Force Reply in General. The pending input is held in memory for five
-minutes, belongs to the Telegram user who opened it, and is accepted only as a reply to that exact prompt. On success or
-`/cancel`, the temporary prompt and response are removed and the one persistent panel is refreshed. The pending input is
-not durable across restart because it is UI interaction state, not bot configuration.
-
-Callbacks are handled only after the normal allowed-chat and allowed-user checks. A callback from an old panel message
-receives a stale-panel alert and cannot change state, even if Telegram could not remove its keyboard. Panel creation,
-edits, and callbacks share one in-memory operation lane, so concurrent commands and automatic refreshes cannot recreate
-or reactivate a retired panel. A callback checks the active message when its turn begins, not before waiting in that lane.
-
-## State And Recovery
-
-Only the panel location is durable:
-
-```json
-{
-  "telegram": {
-    "controlMenu": {
-      "chatId": -100123,
-      "messageId": 456
-    }
-  }
-}
-```
-
-At startup the bot edits this message with fresh state and pins it. If Telegram reports that the message was deleted or
-can no longer be edited, the stale reference is cleared and one replacement panel is created. Pin failure is logged but
-does not remove or duplicate the working panel.
-
-Explicit replacement sends and saves the new message before retiring the old one. A send failure therefore leaves the
-previous panel active. Cleanup failures are logged and do not invalidate the new panel; only its saved message reference
-can authorize callbacks. This adds no state schema, background worker, or periodic Telegram request.
-
-The implementation lives in `src/control-menu.mjs`. It uses the existing Telegram transport, state store, prompt queue,
-Final Voice module, and session-creation function. It does not maintain a second command implementation or introduce a
-UI framework.
-
-## Operations
-
-After deployment:
-
-1. Open General and verify one pinned `OpenCodeBot · Control center` message.
-2. Run `/menu` twice: each invocation creates a new pinned message in General, and only the newest panel works. Repeat
-   from another topic and verify the temporary link points to the new General panel. `/start` and Refresh must keep its id.
-3. Open `Sessions` and follow one topic link.
-4. Open `Launch profiles`, turn to the last page, and inspect a profile card. Verify its model, variant, agent, and
-   System match the effective `promptProfiles` configuration and that Back returns to the same page. No new topic should
-   be created by browsing.
-5. Change one reversible setting, verify its displayed state, and restore the preferred value.
-6. Open `Voice → Advanced settings`, start a prompt or intro edit, then send `/cancel` as a reply.
-7. Verify Telegram's slash suggestions contain ten commands and hidden operator commands still work when typed.
-
-If the panel was manually deleted, run `/menu` or restart the service. If it exists but cannot be pinned, grant the bot
-`Pin messages` permission; the menu remains usable through `/menu` while unpinned.
+After deployment, check the pinned menu, one topic-creation flow, profile save/delete/restore, model-family expansion, stale callbacks, `/reset` and `/session`. Validate Rich HTML through Telegram's prepared-message API and inspect phone-sized previews. Prepared-message acceptance verifies the API parser, not the exact layout of every Telegram client.

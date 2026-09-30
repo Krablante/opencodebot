@@ -6,6 +6,7 @@ import { formatArtifactUploadHelp } from "./artifact-uploads.mjs"
 import { logErrorEvent, logInfo, logWarn } from "./logger.mjs"
 import { getLanguage, normalizeLanguage, setLanguage, t } from "./i18n/index.mjs"
 import { resolveSessionProfile } from "./opencode.mjs"
+import { buttonRows, menuTable, localText } from "./menu-format.mjs"
 import {
   buildCollapsedContextMessages,
   DEFAULT_CONTEXT_TURNS,
@@ -14,12 +15,12 @@ import {
   parseContextTurnCount,
 } from "./context-export.mjs"
 
-const commandDefinitions = ["menu", "new", "session", "q", "compact", "reminder", "context", "speak", "reset", "kill", "help"]
+const commandDefinitions = ["menu", "new", "session", "q", "compact", "reminder", "context", "speak", "reset", "kill", "help", "setup"]
 
 export function telegramBotCommands() {
   return commandDefinitions.map((command) => ({
     command,
-    description: t(`command.description.${command}`),
+    description: command === "setup" ? (getLanguage() === "ru" ? "Подключения и первый запуск" : "Connections and first setup") : t(`command.description.${command}`),
   }))
 }
 
@@ -39,6 +40,9 @@ export function createTelegramCommandHandlers({
   questionManager,
   updateManager,
   controlMenu,
+  setup,
+  launchMenu,
+  settings,
   refreshCommandMenu = async () => {},
 }) {
   const compactOperations = new Map()
@@ -56,7 +60,8 @@ export function createTelegramCommandHandlers({
     sounds_off: handleSoundsOff,
     sounds_status: handleSoundsStatus,
     session: handleSessionInfo,
-    new: createPendingTopic,
+    new: (message, args) => args?.trim() ? createPendingTopic(message, args) : launchMenu.open({ message, from: message.from }),
+    setup: (message) => setup.open(message),
     reset: handleResetCommand,
     menu: (message) => controlMenu.open(message, "home", { replace: true }),
     help: (message) => controlMenu.open(message, "help"),
@@ -80,6 +85,14 @@ export function createTelegramCommandHandlers({
   }
 
   return {
+    prepareUpdate: (update) => setup?.prepareUpdate(update) || update,
+    async handlePrivate(message) {
+      if (!/^\/start(?:\s|$)/.test(message.text || "")) return
+      const enabled = await setup.ensureNotifications(message.from.id)
+      await telegram.sendMessage({ chatId: message.chat.id, text: getLanguage() === "ru"
+        ? (enabled ? "✓ Уведомления готовы. Управление ботом — в General твоей группы." : "Уведомления отключены в твоих настройках. Управление ботом — в General.")
+        : (enabled ? "✓ Notifications are ready. Manage your bot in the group's General topic." : "Notifications are disabled in your settings. Manage your bot in General.") })
+    },
     async handle(message, command, promptKey) {
       const handler = handlers[command.name]
       if (!handler) return false
@@ -641,6 +654,17 @@ export function createTelegramCommandHandlers({
     let profile
     try {
       profile = resolveResetProfile(requested, binding, config.promptProfiles)
+      if (!profile.promptProfile) {
+        profile.promptProfile = await resolveSessionProfile({ opencode, binding, defaultProfile: config.defaultPrompt })
+        if (typeof opencode.request === "function") {
+          const system = await opencode.request(opencode.server(binding.serverID), "/opencodez/prompts/state", {
+            method: "POST", directory: binding.directory, timeoutMs: 15_000,
+            body: { sessionID: binding.sessionID, ...(profile.promptProfile.model ? { model: { providerID: profile.promptProfile.model.providerID, id: profile.promptProfile.model.modelID } } : {}) },
+          })
+          if (system.state?.manual) profile.promptProfile.opencodezSystem = system.state.system
+          else delete profile.promptProfile.opencodezSystem
+        }
+      }
     } catch (error) {
       await telegram.sendMessage({
         chatId: message.chat.id,
@@ -689,6 +713,7 @@ export function createTelegramCommandHandlers({
       return
     }
     detachBinding(binding)
+    await settings?.used(reset.pending.promptProfileName)
 
     let topicRenameWarning = null
     if (titleFields.topicTitle !== topic.topicTitle) {
@@ -970,11 +995,25 @@ export function createTelegramCommandHandlers({
       t("commands.session.currentTopic", { valueHtml: soundsTopic ? `<code>${escapeHtml(String(soundsTopic.topicId || 0))}</code>` : null }),
       soundsTopic?.title ? t("commands.session.currentTitle", { valueHtml: escapeHtml(soundsTopic.title) }) : null,
     )
-    await telegram.sendMessage({
+    const L = (ru, en) => localText(ru, en, getLanguage())
+    let status = pending ? L("Ожидает первого запроса", "Waiting for the first prompt") : L("Нет активной сессии", "No active session")
+    if (activeBinding) {
+      try { const live = await opencode.sessionStatus(activeBinding.serverID, activeBinding.sessionID, { directory: activeBinding.directory, timeoutMs: 5000 }); status = live.type === "idle" ? L("Готова", "Ready") : L("В работе", "Running") }
+      catch { status = L("Нет связи с сервером", "Server unavailable") }
+    }
+    const launch = pending?.promptProfile || storedBinding?.promptProfile || {}
+    const model = session?.model || storedBinding?.model || launch.model || {}
+    const summary = `<h2>💬 ${L("Сессия", "Session")}</h2>` + menuTable([
+      [L("Состояние", "Status"), escapeHtml(thisIsArtifactsTopic ? "FILES" : thisIsSoundsTopic ? "AUDIO" : status)],
+      [L("Профиль", "Profile"), escapeHtml(pending?.promptProfileName || storedBinding?.promptProfileName || L("Автовыбор", "Automatic"))],
+      [L("Модель", "Model"), `<b>${escapeHtml(model.modelID || model.id || L("Автовыбор OpenCodez", "OpenCodez automatic"))}</b>`],
+      ["Reasoning", escapeHtml(model.variant || "default")],
+      [L("Очередь", "Queue"), String(activeBinding ? promptQueue.status(activeBinding).length : 0)],
+    ])
+    await telegram.sendRichMessage({
       chatId: message.chat.id,
       topicId: currentTopicId,
-      text: lines.filter(Boolean).join("\n"),
-      replyMarkup: sessionUrl ? { inline_keyboard: [[{ text: t("commands.session.openButton"), url: sessionUrl }]] } : undefined,
+      html: summary + (sessionUrl ? buttonRows([[{ text: t("commands.session.openButton"), url: sessionUrl, style: "primary" }]]) : "") + `<details><summary>${L("Технические сведения", "Technical details")}</summary><p>${lines.filter(Boolean).join("<br>")}</p></details>`,
     })
   }
 
@@ -993,9 +1032,9 @@ function resolveResetProfile(requested, binding, promptProfiles = {}) {
   if (requested.promptProfileName) return requested
 
   const promptProfileName = binding.promptProfileName || null
-  if (!promptProfileName) return { promptProfileName: null, promptProfile: null }
+  if (!promptProfileName) return { promptProfileName: null, promptProfile: binding.promptProfile || binding.setupProfile || null }
 
-  const promptProfile = promptProfiles[promptProfileName]
+  const promptProfile = promptProfiles[promptProfileName] || binding.promptProfile || binding.setupProfile
   if (!promptProfile) {
     const available = Object.keys(promptProfiles).join(", ") || "none configured"
     throw new Error(

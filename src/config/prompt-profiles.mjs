@@ -4,34 +4,9 @@ const defaultPromptProfiles = {
     model: { providerID: "deepseek", modelID: "deepseek-flash", variant: "max" },
     opencodezSystem: "default",
   },
-  d4pro: {
-    agent: "build",
-    model: { providerID: "deepseek", modelID: "deepseek-v4-pro", variant: "max" },
-    opencodezSystem: "default",
-  },
-  luna: lunaProfile("xhigh"),
-  lunah: lunaProfile("high"),
-  lunamax: lunaProfile("max"),
-  terra: {
-    agent: "build",
-    model: { providerID: "openai", modelID: "gpt-5.6-terra", variant: "xhigh" },
-    opencodezSystem: "codex_gpt_5_6_luna_terra",
-  },
-  gpt6: astraProfile("high"),
-  gpt6m: astraProfile("medium"),
   solm: solProfile("medium"),
-  solh: solProfile("high"),
   sol: solProfile("high"),
   solx: solProfile("xhigh"),
-  solmax: solProfile("max"),
-}
-
-function astraProfile(variant) {
-  return {
-    agent: "build",
-    model: { providerID: "openai", modelID: "gpt-6-astra", variant },
-    opencodezSystem: "codex_gpt_6_astra",
-  }
 }
 
 function solProfile(variant) {
@@ -39,14 +14,6 @@ function solProfile(variant) {
     agent: "build",
     model: { providerID: "openai", modelID: "gpt-6.1-sol", variant },
     opencodezSystem: "codex_gpt_6_1_sol",
-  }
-}
-
-function lunaProfile(variant) {
-  return {
-    agent: "build",
-    model: { providerID: "openai", modelID: "gpt-6-luna", variant },
-    opencodezSystem: "codex_gpt_6_luna",
   }
 }
 
@@ -60,6 +27,7 @@ export function normalizePromptProfiles(value = {}) {
 }
 
 function normalizePromptProfile(profile = {}) {
+  if (!profile || typeof profile !== "object") return null
   const model = normalizeModel(profile.model)
   if (!profile.agent && !model && !profile.opencodezSystem) return null
   return {
@@ -71,7 +39,10 @@ function normalizePromptProfile(profile = {}) {
 
 function normalizeModel(model) {
   if (!model) return undefined
-  if (typeof model === "string") return { modelID: model }
+  if (typeof model === "string") {
+    const slash = model.indexOf("/")
+    return slash > 0 ? { providerID: model.slice(0, slash), modelID: model.slice(slash + 1) } : { modelID: model }
+  }
   const providerID = model.providerID !== undefined ? String(model.providerID) : undefined
   const modelID = model.modelID !== undefined ? String(model.modelID) : undefined
   if (!modelID) return undefined

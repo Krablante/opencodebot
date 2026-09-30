@@ -47,8 +47,8 @@ title synchronization after `/reset`.
 
 ## Commands
 
-One pinned inline control panel in General owns session discovery and global/personal settings. `/menu`, `/start`, and
-`/help` open that same message. See [General Control Menu](control-menu.md) for its UI, state, callback, and recovery
+One pinned Rich Message menu in General owns session discovery and global/personal settings. `/menu`, `/start`, and
+`/help` open that panel. `/new` without arguments opens a personal creation flow; `/setup` checks connections. See [General Control Menu](control-menu.md) for its UI, state, callback, and recovery
 contract.
 
 Telegram's visible slash suggestions are deliberately limited to the common panel and topic actions:
@@ -171,8 +171,7 @@ context as plain text.
 
 `/reset [profile] [server]` is a topic-scoped context reset. With no arguments, it preserves the current binding's
 profile, server, and directory. The inherited profile is resolved from the current configuration so its complete agent,
-model, variant, and System settings are applied; if that named profile was removed, the bot asks for an explicit
-configured profile before changing the session. One argument may be either a configured profile or server; two arguments
+model, variant, and System settings are applied. If the profile was deleted, the retained launch snapshot keeps reset usable; only a topic with neither a resolvable profile nor a snapshot needs an explicit selection. One argument may be either a configured profile or server; two arguments
 are interpreted strictly as profile then server, so `/reset solh workstation` changes both while `/reset workstation` changes only the
 server. Unknown, extra, or ambiguous arguments are rejected before any abort or state change. A same-server
 reset preserves the exact current directory. A cross-server reset first checks the target backend and then uses that
@@ -221,12 +220,7 @@ Examples:
 /reset solh workstation
 ```
 
-The default profiles are `d4flash`, `d4pro`, `luna`, `lunah`, `lunamax`, `terra`, `gpt6`, `gpt6m`, `sol`, `solm`, `solx`, `solh`, and `solmax`. They
-are host-independent Telegram-created-session profiles. `gpt6` and `gpt6m` use GPT-6 Astra and its bundled OpenCodez
-System prompt with `high` and `medium` variants respectively. GPT-6.1 Sol uses `sol=high`, `solm=medium`, `solx=xhigh`,
-`solh=high`, and `solmax=max`; GPT-6 Luna uses `luna=xhigh`, `lunah=high`, and `lunamax=max`. Both use their own
-bundled OpenCodez System prompt. See [Prompt Profiles](config-runtime.md#prompt-profiles) for upgrade/override behavior. Each profile keeps its
-agent, model, variant, and OpenCodez System prompt in config. After creating the session and before sending the first
+New installations start with `d4flash`, `sol`, `solm` and `solx`. Existing installations import their former profile collection once. GPT-6.1 Sol uses `sol=high`, `solm=medium`, `solx=xhigh`. See [Prompt Profiles](config-runtime.md#prompt-profiles) for ownership and migration. Each profile keeps its agent, model, variant, and optional System selection in durable preferences. After creating the session and before sending the first
 prompt, the bot switches the session's next model and selects that System.
 
 ## Prompts

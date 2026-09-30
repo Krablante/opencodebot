@@ -82,7 +82,7 @@ export function createTelegramPolling({
       },
     })
     logInfo("telegram.inbox.opened", { pending: inbox.pending.size, bytes: inbox.pendingBytes })
-    for (const { update } of inbox.pending.values()) dispatcher.enqueue(update)
+    for (const { update } of inbox.pending.values()) dispatcher.enqueue(commandHandlers.prepareUpdate ? await commandHandlers.prepareUpdate(update) : update)
     let failed = false
     try {
       while (!shouldStop() && !pollSignal.aborted) {
@@ -102,6 +102,7 @@ export function createTelegramPolling({
         }
         reportProgress()
         if (!updates.length) continue
+        if (commandHandlers.prepareUpdate) updates = await Promise.all(updates.map((update) => commandHandlers.prepareUpdate(update)))
         // Only a synced receipt authorizes the next Telegram acknowledgement.
         // Handler completion is independent of fetching subsequent batches.
         const fresh = await inbox.receive(updates, updates.at(-1).update_id + 1)
@@ -149,6 +150,10 @@ export function createTelegramPolling({
   }
 
   async function handleTelegramMessage(message) {
+    if (message.chat?.type === "private") {
+      if (isAllowedMessage(message, config)) await commandHandlers.handlePrivate?.(message)
+      return
+    }
     await cleanupOwnPinServiceMessage(message)
     const configuredChatId = state.chatId || config.telegram.chatId
     if (configuredChatId && String(configuredChatId) !== String(message.chat.id)) return
@@ -176,8 +181,9 @@ export function createTelegramPolling({
     // Artifact topics keep file-upload semantics; elsewhere voice notes are transcript-only drafts.
     if (!artifactsTopic && message.voice && (await handleVoiceMessage?.(message))) return
 
-    if (await commandHandlers.handleMessage?.(message)) return
-    if (await questionManager?.handleReplyMessage?.(message)) return
+    const inputMessage = message.rich_message && !message.text ? { ...message, text } : message
+    if (await commandHandlers.handleMessage?.(inputMessage)) return
+    if (await questionManager?.handleReplyMessage?.(inputMessage)) return
 
     const promptKey = multipartPromptKey(message)
     if (artifactsTopic) {
@@ -438,11 +444,11 @@ export function parseCommand(text) {
 }
 
 function artifactTopicCommandAllowed(commandName) {
-  return ["artifacts_here", "session", "update", "lang", "help", "start", "menu", "notify_on", "notify_off", "notify_status"].includes(commandName)
+  return ["setup", "artifacts_here", "session", "update", "lang", "help", "start", "menu", "notify_on", "notify_off", "notify_status"].includes(commandName)
 }
 
 function soundsTopicCommandAllowed(commandName) {
-  return ["sounds_here", "sounds_off", "sounds_status", "session", "update", "lang", "help", "start", "menu", "notify_on", "notify_off", "notify_status"].includes(commandName)
+  return ["setup", "sounds_here", "sounds_off", "sounds_status", "session", "update", "lang", "help", "start", "menu", "notify_on", "notify_off", "notify_status"].includes(commandName)
 }
 
 async function delay(ms, signal) {

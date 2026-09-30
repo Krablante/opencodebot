@@ -46,6 +46,7 @@ export function startArtifactGateway({ config, state, telegram, signal }) {
       let result
       try {
         result = await sendArtifact({ config, telegram, target, payload })
+        await recordArtifactClient(state, payload.source?.host, true)
       } finally {
         await cleanupPayloadSpool(payload)
       }
@@ -70,6 +71,19 @@ export function startArtifactGateway({ config, state, telegram, signal }) {
   })
   if (signal) signal.addEventListener("abort", () => server.close(), { once: true })
   return server
+}
+
+async function recordArtifactClient(state, host, delivered) {
+  if (!state.data?.preferences || !host) return
+  const name = String(host).replace(/[^\p{L}\p{N}_.-]/gu, "").slice(0, 80)
+  if (!name) return
+  await state.update((data) => {
+    const clients = data.preferences.artifactClients ||= {}
+    const current = clients[name]
+    if (current && (!delivered || current.delivered)) return false
+    if (!current && Object.keys(clients).length >= 32) delete clients[Object.keys(clients)[0]]
+    clients[name] = { connectedAt: Date.now(), delivered: delivered || current?.delivered || false }
+  })
 }
 
 async function sendArtifact({ config, telegram, target, payload }) {

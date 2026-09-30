@@ -2,11 +2,48 @@ import { logInfo } from "./logger.mjs"
 import { isIgnoredSession, isInternalSession } from "./internal-sessions.mjs"
 import { titleFromText } from "./opencode.mjs"
 import { runSingleFlight } from "./single-flight.mjs"
-import { topicId } from "./telegram.mjs"
+import { escapeHtml, topicId } from "./telegram.mjs"
+import { parseNewTopicArgs } from "./prompt-profiles.mjs"
+import { t } from "./i18n/index.mjs"
 import { baseTitleFromTelegramTitle, managedTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
 
-export function createTopicLifecycle({ config, state, telegram, opencode, activateBindingForPrompt, clearPromptFeedback }) {
+export function createTopicLifecycle({ config, state, telegram, opencode, settings, activateBindingForPrompt, clearPromptFeedback }) {
   const topicCreations = new Map()
+
+  async function createPendingTopic(message, args) {
+    let parsed
+    try {
+      parsed = typeof args === "object" ? args : parseNewTopicArgs(args, {
+        servers: opencode.servers, defaultServerID: config.defaultPrompt.serverID, promptProfiles: config.promptProfiles,
+      })
+      if (!parsed.promptProfileName && config.defaultPrompt.profileName) {
+        parsed.promptProfileName = config.defaultPrompt.profileName
+        parsed.promptProfile = structuredClone(config.promptProfiles[parsed.promptProfileName])
+      }
+    } catch (error) {
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: message.message_thread_id, text: escapeHtml(error.message) })
+      return
+    }
+    const { serverID, title, titleSource, promptProfileName, promptProfile, directory: requestedDirectory } = parsed
+    const launchRequestKey = parsed.requestKey || (message.message_id ? `command:${message.chat.id}:${message.message_id}` : null)
+    if (launchRequestKey) {
+      const prior = [...Object.values(state.data.pendingTopics || {}), ...(state.data.bindings || [])].find((topic) => topic.launchRequestKey === launchRequestKey)
+      if (prior?.topicId) return { message_thread_id: prior.topicId }
+    }
+    const directory = requestedDirectory || opencode.defaultNewSessionDirectory(serverID)
+    const chatId = state.chatId || message.chat.id
+    const topicIcon = await randomTopicIcon()
+    const titleFields = managedTopicTitle(title, serverID, opencode.servers)
+    const topic = await telegram.createForumTopic({ chatId, name: titleFields.topicTitle, iconCustomEmojiId: topicIcon?.customEmojiId })
+    await state.addPendingTopic(topic.message_thread_id, { chatId, topicId: topic.message_thread_id, serverID, launchRequestKey, ...titleFields, topicIconCustomEmojiId: topic.icon_custom_emoji_id || topicIcon?.customEmojiId, topicIconEmoji: topicIcon?.emoji, title: titleFields.topicBaseTitle, titleSource, promptProfileName, promptProfile, directory })
+    await settings?.used(promptProfileName)
+    const suffix = promptProfileName ? t("topic.profileSuffix", { profileHtml: escapeHtml(promptProfileName) }) : ""
+    const directoryLine = directory ? t("topic.directoryLine", { directoryHtml: escapeHtml(directory) }) : ""
+    await telegram.sendMessage({ chatId, topicId: topic.message_thread_id,
+      text: `${t("topic.created", { serverHtml: escapeHtml(serverID), suffix, directoryLine })}${promptProfile?.model?.modelID ? `\n🤖 <code>${escapeHtml(promptProfile.model.modelID)}</code> · ${escapeHtml(promptProfile.model.variant || "default")}` : ""}`,
+    })
+    return topic
+  }
 
   async function handleTopicLifecycleMessage(message) {
     if (message.forum_topic_edited) {
@@ -149,6 +186,7 @@ export function createTopicLifecycle({ config, state, telegram, opencode, activa
   }
 
   return {
+    createPendingTopic,
     createTopicForSession,
     createTopicForWebSession,
     handleTopicLifecycleMessage,

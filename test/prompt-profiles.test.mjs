@@ -10,31 +10,18 @@ import { baseTitleFromTelegramTitle, managedTopicTitle } from "../src/topic-titl
 test("built-in prompt profiles use current models, variants, and System prompts", () => {
   const profiles = normalizePromptProfiles()
 
-  assert.deepEqual(Object.keys(profiles).sort(), ["d4flash", "d4pro", "gpt6", "gpt6m", "luna", "lunah", "lunamax", "sol", "solh", "solm", "solmax", "solx", "terra"])
-  assert.deepEqual(profiles.gpt6, {
-    agent: "build",
-    model: { providerID: "openai", modelID: "gpt-6-astra", variant: "high" },
-    opencodezSystem: "codex_gpt_6_astra",
-  })
-  assert.deepEqual(profiles.gpt6m, {
-    agent: "build",
-    model: { providerID: "openai", modelID: "gpt-6-astra", variant: "medium" },
-    opencodezSystem: "codex_gpt_6_astra",
-  })
+  assert.deepEqual(Object.keys(profiles).sort(), ["d4flash", "sol", "solm", "solx"])
   assert.deepEqual(profiles.sol, {
     agent: "build",
     model: { providerID: "openai", modelID: "gpt-6.1-sol", variant: "high" },
     opencodezSystem: "codex_gpt_6_1_sol",
   })
-  assert.equal(profiles.luna.opencodezSystem, "codex_gpt_6_luna")
-  assert.equal(profiles.terra.opencodezSystem, "codex_gpt_5_6_luna_terra")
   assert.deepEqual(profiles.d4flash, {
     agent: "build",
     model: { providerID: "deepseek", modelID: "deepseek-flash", variant: "max" },
     opencodezSystem: "default",
   })
-  assert.equal(profiles.d4pro.opencodezSystem, "default")
-  for (const [name, variant] of [["solm", "medium"], ["solh", "high"], ["sol", "high"], ["solx", "xhigh"], ["solmax", "max"]]) {
+  for (const [name, variant] of [["solm", "medium"], ["sol", "high"], ["solx", "xhigh"]]) {
     assert.deepEqual(profiles[name], {
       agent: "build",
       model: { providerID: "openai", modelID: "gpt-6.1-sol", variant },
@@ -55,10 +42,8 @@ test("/new resolves a profile and preserves an unknown token as title text", asy
   assert.equal(parsed.promptProfileName, "sol")
   assert.equal(parsed.title, "opencodebot-first")
   assert.equal(parseNewTopicArgs("solm medium-work", options).promptProfile.model.variant, "medium")
-  assert.equal(parseNewTopicArgs("solh high-work", options).promptProfile.model.variant, "high")
-  assert.equal(parseNewTopicArgs("solmax max-work", options).promptProfile.model.variant, "max")
-  assert.equal(parseNewTopicArgs("gpt6 astra-work", options).promptProfile.model.variant, "high")
-  assert.equal(parseNewTopicArgs("gpt6m astra-medium-work", options).promptProfile.model.variant, "medium")
+  assert.equal(parseNewTopicArgs("sol high-work", options).promptProfile.model.variant, "high")
+  assert.equal(parseNewTopicArgs("solx xhigh-work", options).promptProfile.model.variant, "xhigh")
 
   const calls = []
   await applyPromptProfile({
@@ -80,8 +65,8 @@ test("/reset accepts exactly one configured profile", () => {
     promptProfile: profiles.sol,
   })
   assert.equal(parseResetProfileArg("solm", { promptProfiles: profiles }).promptProfile.model.variant, "medium")
-  assert.equal(parseResetProfileArg("solh", { promptProfiles: profiles }).promptProfile.model.variant, "high")
-  assert.equal(parseResetProfileArg("solmax", { promptProfiles: profiles }).promptProfile.model.variant, "max")
+  assert.equal(parseResetProfileArg("sol", { promptProfiles: profiles }).promptProfile.model.variant, "high")
+  assert.equal(parseResetProfileArg("solx", { promptProfiles: profiles }).promptProfile.model.variant, "xhigh")
   assert.throws(() => parseResetProfileArg("unknown", { promptProfiles: profiles }), /Unknown profile unknown/)
   assert.throws(() => parseResetProfileArg("sol extra", { promptProfiles: profiles }), /Usage: \/reset \[profile\]/)
 })
@@ -92,12 +77,12 @@ test("/reset resolves optional profile and server overrides", () => {
   const options = { promptProfiles: profiles, servers }
   assert.deepEqual(parseResetArgs("", options), { promptProfileName: null, promptProfile: null, serverID: null })
   assert.deepEqual(parseResetArgs("dima", options), { promptProfileName: null, promptProfile: null, serverID: "dima" })
-  assert.equal(parseResetArgs("solh", options).promptProfile.model.variant, "high")
-  assert.deepEqual(parseResetArgs("solh dima", options), { promptProfileName: "solh", promptProfile: profiles.solh, serverID: "dima" })
-  assert.throws(() => parseResetArgs("solh unknown", options), /Unknown OpenCodez server: unknown/)
+  assert.equal(parseResetArgs("sol", options).promptProfile.model.variant, "high")
+  assert.deepEqual(parseResetArgs("sol dima", options), { promptProfileName: "sol", promptProfile: profiles.sol, serverID: "dima" })
+  assert.throws(() => parseResetArgs("sol unknown", options), /Unknown OpenCodez server: unknown/)
   assert.throws(() => parseResetArgs("unknown", options), /Unknown reset profile or server: unknown/)
-  assert.throws(() => parseResetArgs("solh dima extra", options), /Usage: \/reset \[profile\] \[server\]/)
-  assert.throws(() => parseResetArgs("solh", { promptProfiles: profiles, servers: new Map([["solh", { id: "solh" }]]) }), /ambiguous/)
+  assert.throws(() => parseResetArgs("sol dima extra", options), /Usage: \/reset \[profile\] \[server\]/)
+  assert.throws(() => parseResetArgs("sol", { promptProfiles: profiles, servers: new Map([["sol", { id: "sol" }]]) }), /ambiguous/)
 })
 
 test("managed topic titles add server suffix only for multi-server deployments", () => {

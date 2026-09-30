@@ -62,6 +62,10 @@ lives only on the in-memory text block; there is no new config, journal, worker,
 
 ## Checks
 
+The Telegram workspace UI has three owners beside the existing General panel: `launch-menu.mjs` handles personal topic/profile drafts, `user-settings.mjs` handles preferences and one-time profile import, and `setup.mjs` handles connection setup. Provider-key updates are filtered before inbox receipt, including recovery of old pending updates. Topic creation lives in `topic-lifecycle.mjs` and shares request identity between the wizard and shortcuts. Automatic menu status updates reuse SSE; manual opening/refresh performs the scoped lookup.
+
+Use `node scripts/preview-ui.mjs /tmp/opencodebot-ui` to generate portable HTML previews and printable guide pages. The guide PDFs in `assets/` must be regenerated from those pages and visually inspected when their text or illustrated menu changes. The preview accepts `OPENCODEBOT_PREVIEW_FONT` and `OPENCODEBOT_PREVIEW_BOLD_FONT` for a local Cyrillic-capable font. Telegram's prepared-message API checks the actual Rich HTML/button parser without publishing the preview; ephemeral send/edit/delete must also be exercised against Bot API 10.3+.
+
 The default maintenance path is syntax checking, manual behavior verification, and inspection of the actual runtime and
 logs. Do not add test files for ordinary fixes. Existing test/smoke commands below are optional focused tools, not part
 of deployment. `deploy:bot` and the approved updater run dependency installation, syntax checks, image deployment, and
