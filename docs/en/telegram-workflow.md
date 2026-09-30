@@ -28,7 +28,10 @@ reconcile/accounting entries. Startup removes legacy bot state for previously di
 not delete or close existing Telegram topics; topic deletion remains an explicit operator action.
 
 Deleting or closing a Telegram topic is treated as an explicit stop for that topic's mirror binding. The bot disables
-the binding and must not continue mirroring that session into `#General` or any other fallback topic.
+the binding, clears its queued prompts and scheduled recovery, and removes its pending launch. It must not continue
+mirroring that session into `#General` or any other fallback topic. Closure has a service update; deletion is detected
+when Recent topics checks the topic or a delivery returns a missing-topic error. Bot API supplies no deletion update.
+The OpenCodez session remains intact; use `/kill` before removing the topic if its backend run also needs to stop.
 
 If `telegram.chatId` is missing and `telegram.allowChatBootstrap` is enabled, the first message from an allowed user
 initializes the chat in local state. For a shared bot, set `telegram.chatId` and `telegram.allowedUserIds` deliberately

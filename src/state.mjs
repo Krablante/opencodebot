@@ -877,6 +877,22 @@ export class StateStore {
     })
   }
 
+  async disableTopic(chatId, topicId, reason) {
+    return this.update((data) => {
+      const bindings = data.bindings.filter((binding) => !binding.disabled
+        && String(binding.chatId) === String(chatId) && Number(binding.topicId) === Number(topicId))
+      const now = new Date().toISOString()
+      for (const binding of bindings) {
+        binding.disabled = true
+        binding.disabledReason = reason
+        binding.disabledAt = now
+      }
+      const pending = data.pendingTopics[String(topicId)]
+      if (pending && String(pending.chatId || data.telegram.chatId) === String(chatId)) delete data.pendingTopics[String(topicId)]
+      return bindings
+    })
+  }
+
   async removeMissingBinding(serverID, sessionID, { promptProfile } = {}) {
     const cleanup = this.markerQueue.then(async () => {
       const removed = await this.update((data) => {

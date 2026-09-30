@@ -8,6 +8,14 @@ The panel moves to a new message every 24 hours. `/menu` moves it immediately. T
 
 Automatic status refresh consumes the existing OpenCodez event stream and skips identical menu content. Opening or explicitly refreshing Home/Recent topics performs the scoped backend lookup with existing backoff. There is no status polling timer or backend scan per tool event.
 
+## Recent topics
+
+Recent topics shows up to six open working topics, ordered by activity. Each title is a full, wrapping link; its server and status appear on a separate line. Other topics remain accessible through Telegram's topic list.
+
+Opening this screen verifies the listed topics against Telegram before filling the six slots. Successful checks can be reused for one minute; Refresh always checks again. Bot API does not emit a topic-deletion update or provide a topic-list method. The bot therefore reapplies each topic's tracked title with `editForumTopic`: `TOPIC_NOT_MODIFIED` means it exists, while `TOPIC_ID_INVALID` confirms deletion. Status updates from OpenCodez do not repeat these checks. Rate limits, timeouts and permission failures preserve the binding; rate limits pause further checks until Telegram's retry time.
+
+Confirmed deletion disables the topic's mirror, clears its queued prompts and scheduled recovery, and removes any pending launch. The previous OpenCodez session and disabled binding history remain available. Delivery failures indicating a missing or closed topic use the same lifecycle cleanup. See [Telegram workflow](telegram-workflow.md#topics).
+
 ## Create a topic
 
 New topic opens a personal ephemeral screen, asks for the title, and shows the exact model ID and reasoning. The current default profile is selected. Profile selection places recently used profiles first. Server and directory choices are optional; a single-server installation does not ask the user to choose a server.

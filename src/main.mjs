@@ -98,7 +98,13 @@ const {
   queueTelegramPrompt,
   showPromptFeedback,
 } = promptRouter
-const topicLifecycle = createTopicLifecycle({ config, state, telegram, opencode, settings, activateBindingForPrompt, clearPromptFeedback })
+const topicLifecycle = createTopicLifecycle({ config, state, telegram, opencode, settings, activateBindingForPrompt, clearPromptFeedback,
+  onBindingDisabled: (binding) => {
+    promptQueue.clear(binding)
+    sessionReconciler?.detachBinding(binding)
+    controlMenu?.scheduleStatusRefresh()
+  },
+})
 const { createPendingTopic, createTopicForSession, createTopicForWebSession, handleTopicLifecycleMessage, isInternalSession, randomTopicIcon } = topicLifecycle
 let shutdownRequested = false
 const backendRequester = createBackendRequester()
@@ -150,6 +156,7 @@ sessionReconciler = createSessionReconciler({
   shouldStop: () => shutdownRequested,
   onProgress: () => health.beat("reconcile"),
   onSessionStatusChange: (binding, status) => controlMenu?.observeStatus(binding, status),
+  disableTopicMirror: topicLifecycle.disableTopicMirror,
 })
 let refreshCommandMenu = async () => {}
 controlMenu = new ControlMenu({
@@ -162,6 +169,7 @@ controlMenu = new ControlMenu({
   backendRequester,
   launchMenu,
   setup,
+  topicExists: topicLifecycle.topicExists,
   refreshCommandMenu: async (language) => {
     if (language) await setLanguage(language)
     await refreshCommandMenu()

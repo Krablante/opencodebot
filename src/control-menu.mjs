@@ -9,12 +9,12 @@ import fs from "node:fs/promises"
 const CALLBACK_PREFIX = "panel:"
 const INPUT_TTL_MS = 5 * 60 * 1000
 const LINK_MESSAGE_TTL_MS = 30 * 1000
-const MAX_VISIBLE_SESSIONS = 12
+const MAX_VISIBLE_SESSIONS = 6
 const MIN_LENGTH_OPTIONS = [0, 200, 300, 500, 1000, 2000]
 const SESSION_STATUS_TIMEOUT_MS = 3000
 
 export class ControlMenu {
-  constructor({ config, state, telegram, opencode, promptQueue, finalVoice, launchMenu, setup, refreshCommandMenu, backendRequester = createBackendRequester() }) {
+  constructor({ config, state, telegram, opencode, promptQueue, finalVoice, launchMenu, setup, topicExists, refreshCommandMenu, backendRequester = createBackendRequester() }) {
     this.config = config
     this.state = state
     this.telegram = telegram
@@ -23,6 +23,7 @@ export class ControlMenu {
     this.finalVoice = finalVoice
     this.launchMenu = launchMenu
     this.setup = setup
+    this.topicExists = topicExists
     this.refreshCommandMenu = refreshCommandMenu
     this.pendingInputs = new Map()
     this.currentPage = "home"
@@ -143,6 +144,11 @@ export class ControlMenu {
     }
     if (action === "setup") { await this.answer(query); await this.setup.open({ ...query.message, from: query.from }); return }
     if (/^help:\d+$/.test(action)) { await this.answer(query); await this.editMenuUnlocked(action, query.from); return }
+    if (action === "sessions:refresh") {
+      await this.answer(query)
+      await this.editMenuUnlocked("sessions", query.from, undefined, { forceTopicCheck: true })
+      return
+    }
     if (["home", "sessions", "settings", "voice", "voice-advanced", "personal", "system", "help"].includes(action)) {
       await this.answer(query)
       await this.editMenuUnlocked(action, query.from)
@@ -355,11 +361,11 @@ export class ControlMenu {
     return this.runMenuOperation(() => this.editMenuUnlocked(page, actor))
   }
 
-  async editMenuUnlocked(page, actor, snapshot) {
+  async editMenuUnlocked(page, actor, snapshot, options) {
     this.rememberPage(page, actor)
     const current = this.state.controlMenuMessage()
     if (!current) return this.ensureMenuUnlocked(page, actor)
-    const rendered = await this.render(page, actor, snapshot)
+    const rendered = await this.render(page, actor, snapshot, options)
     if (this.currentPage !== page || this.currentActor !== (actor || null)) return null
     const html = richView(rendered.text, rendered.replyMarkup)
     if (this.lastRendered?.messageId === current.messageId && this.lastRendered.html === html) return null
@@ -381,7 +387,21 @@ export class ControlMenu {
     }
   }
 
-  async render(page, actor, snapshot) {
+  async render(page, actor, snapshot, { forceTopicCheck = false } = {}) {
+    // Only explicit navigation checks Telegram. SSE refreshes use their snapshot.
+    if (page === "sessions" && !snapshot && this.topicExists) {
+      let visible = 0
+      for (const binding of this.activeBindings()) {
+        try {
+          if (!await this.topicExists(binding, { force: forceTopicCheck })) continue
+        } catch (error) {
+          // Transport and permission errors do not prove deletion. Keep the topic.
+          logWarn("control_menu.topic_check.failed", { error: error.message })
+          break
+        }
+        if (++visible >= MAX_VISIBLE_SESSIONS) break
+      }
+    }
     const sessionSnapshot = ["home", "sessions"].includes(page) ? snapshot || await this.sessionStatusSnapshot() : null
     if (page === "sessions") return this.renderSessions(sessionSnapshot)
     if (page === "settings") return this.renderSettings()
@@ -424,32 +444,26 @@ export class ControlMenu {
   renderSessions(sessionSnapshot) {
     const bindings = this.activeBindings()
     const visible = bindings.slice(0, MAX_VISIBLE_SESSIONS)
-    const lines = [t("controlMenu.sessions.title"), ""]
-    if (!visible.length) lines.push(t("controlMenu.sessions.empty"))
+    const L = (ru, en) => localText(ru, en, getLanguage())
+    const lines = [`<h2>📂 ${L("Недавние темы", "Recent topics")}</h2>`,
+      `<p>${L("Нажми на название, чтобы открыть тему.", "Tap a title to open its topic.")}</p>`]
+    if (!visible.length) lines.push(`<p>${t("controlMenu.sessions.empty")}</p>`)
     for (const binding of visible) {
       const queued = this.promptQueue.status(binding).length
       const status = sessionSnapshot?.failedServers.has(binding.serverID)
-        ? t("controlMenu.sessions.offline")
+        ? L("◌ Нет связи", "◌ Unavailable")
         : this.sessionIsBusy(binding, sessionSnapshot)
-          ? t("controlMenu.sessions.busy")
+          ? L("● В работе", "● Running")
           : queued
-            ? t("controlMenu.sessions.queued", { count: queued })
-            : t("controlMenu.sessions.idle")
-      lines.push(t("controlMenu.sessions.item", {
-        title: escapeHtml(bindingTitle(binding)),
-        server: escapeHtml(binding.serverID || "?"),
-        status,
-      }))
+            ? L(`◷ В очереди: ${queued}`, `◷ Queued: ${queued}`)
+            : L("○ Свободна", "○ Ready")
+      const title = String(binding.topicBaseTitle || binding.title || bindingTitle(binding))
+      const url = telegramMessageLink(binding.chatId, binding.topicId)
+      lines.push(`<p><a href="${escapeHtml(url)}"><b>${escapeHtml(title)}</b></a><br><code>${escapeHtml(binding.serverID || "?")}</code> · ${status}</p>`)
     }
-    if (bindings.length > visible.length) lines.push(t("controlMenu.sessions.more", { count: bindings.length - visible.length }))
-
-    const links = visible.map((binding) => ({
-      text: `↗ ${truncate(bindingTitle(binding), 28)}`,
-      url: telegramMessageLink(binding.chatId, binding.topicId),
-    }))
-    return this.view(lines.join("\n"), [
-      ...rows(links, 2),
-      [this.callback(t("controlMenu.button.back"), "home"), this.callback(t("controlMenu.button.refresh"), "sessions")],
+    if (bindings.length > visible.length) lines.push(`<footer>${L("Остальные темы — в списке топиков Telegram.", "Find other topics in Telegram’s topic list.")}</footer>`)
+    return this.view(lines.join(""), [
+      [this.callback(t("controlMenu.button.back"), "home"), this.callback(t("controlMenu.button.refresh"), "sessions:refresh")],
     ])
   }
 

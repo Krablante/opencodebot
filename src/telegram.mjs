@@ -44,13 +44,14 @@ export class TelegramClient {
     }
     const elapsedMs = durationMs(startedAt)
     const retryAfter = data?.parameters?.retry_after
-    if (response.status === 429 && Number.isFinite(retryAfter) && attempt < 3) {
+    if (response.status === 429 && Number.isFinite(retryAfter) && attempt < 3 && options.retryRateLimit !== false) {
       logWarn("telegram.request.retry", { method, attempt, status: response.status, retryAfterSec: retryAfter, durationMs: elapsedMs, ...telegramPayloadSummary(payload) })
       await delay((retryAfter + 1) * 1000, options.signal)
       return this.requestAttempt(method, payload, attempt + 1, options)
     }
     if (!response.ok || data.ok !== true) {
       const error = new Error(`Telegram ${method} failed: ${data.description || response.status}`)
+      error.retryAfter = retryAfter
       if (!options.suppressFailureLog) logErrorEvent("telegram.request.failed", error, { method, attempt, status: response.status, durationMs: elapsedMs, ...telegramPayloadSummary(payload) })
       throw error
     }
@@ -66,6 +67,23 @@ export class TelegramClient {
     const me = await this.request("getMe", {}, 0, options)
     if (me?.is_bot !== true) throw new Error("Telegram getMe did not return a bot identity")
     return me
+  }
+
+  async forumTopicExists({ chatId, topicId, name }) {
+    if (!name || !topicId) throw new Error("Topic availability requires its tracked title and thread id")
+    if (Date.now() < (this.topicCheckRetryAt || 0)) throw new Error("Telegram topic checks are temporarily rate limited")
+    // An empty edit skips Telegram's topic lookup, including for deleted topics.
+    // Reapplying our tracked title performs that lookup without posting a message.
+    try {
+      await this.request("editForumTopic", { chat_id: chatId, message_thread_id: topicId, name: safeTopicName(name) }, 0,
+        { suppressFailureLog: true, timeoutMs: 10_000, retryRateLimit: false })
+      return true
+    } catch (error) {
+      if (/TOPIC_NOT_MODIFIED/i.test(error.message)) return true
+      if (isDeletedTopicError(error)) return false
+      if (Number.isFinite(error.retryAfter)) this.topicCheckRetryAt = Date.now() + (error.retryAfter + 1) * 1000
+      throw error
+    }
   }
 
   async setMyCommands(commands, options = {}) {
@@ -410,6 +428,14 @@ function richMessagePayload({ markdown, html, skipEntityDetection }) {
   const richMessage = html !== undefined ? { html: String(html ?? "") } : { markdown: String(markdown ?? "") }
   if (skipEntityDetection) richMessage.skip_entity_detection = true
   return richMessage
+}
+
+export function isDeletedTopicError(error) {
+  return /TOPIC_ID_INVALID|MESSAGE_THREAD_INVALID|message thread not found|forum topic .*not found|topic .*not found|topic .*deleted/i.test(String(error?.message || ""))
+}
+
+export function isUnavailableTopicError(error) {
+  return isDeletedTopicError(error) || /TOPIC_CLOSED|topic .*closed|message thread .*closed/i.test(String(error?.message || ""))
 }
 
 function safeTopicName(name) {

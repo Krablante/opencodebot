@@ -33,11 +33,17 @@ for (const language of ["ru", "en"]) {
   state.data.ui = { language }
   configureI18n({ state, defaultLanguage: language })
   const home = menu.renderHome({ failedServers: new Set(), statuses: new Map() })
+  state.data.telegram.chatId = -1001000000000
+  state.data.bindings = (language === "ru"
+    ? ["Обновление проекта", "Проверка сохранения контекста после автоматической компакции", "Фотографии и карта мест", "Исправление интерфейса", "Подготовка следующего релиза", "Планирование задач", "Старая тема"]
+    : ["Project update", "Verify context retention after automatic compaction", "Photos and location map", "Interface fixes", "Prepare the next release", "Task planning", "Older topic"])
+    .map((title, index) => ({ chatId: state.chatId, topicId: 100 + index, title, topicBaseTitle: title, serverID: "local", sessionID: `preview-${index}`, createdAt: new Date(Date.now() - index * 60_000).toISOString() }))
+  const recent = menu.renderSessions({ failedServers: new Set(), statuses: new Map([["local:preview-0", { type: "busy" }]]) })
   const draft = { id: "preview", rev: 0, page: "new", name: language === "ru" ? "Работа над проектом" : "Project work", serverID: "local", directory: "/home/operator/project", profileName: "sol" }
   const topic = await launch.render(draft)
   const modelDraft = { ...draft, page: "models", editing: true, catalog, query: "", profile: config.promptProfiles.sol }
   const models = await launch.render(modelDraft)
-  for (const [name, html] of [["home", richView(home.text, home.replyMarkup)], ["new", topic], ["models", models]]) await fs.writeFile(path.join(output, `${name}-${language}.html`), shell(`<main>${html}</main>`))
+  for (const [name, html] of [["home", richView(home.text, home.replyMarkup)], ["recent", richView(recent.text, recent.replyMarkup)], ["new", topic], ["models", models]]) await fs.writeFile(path.join(output, `${name}-${language}.html`), shell(`<main>${html}</main>`))
   const guide = guideDocument(language).replace(/<h1>[^\p{L}]+/gu, "<h1>").replace("</section>", `<div class="illustration"><main>${topic}</main><div class="annotation">${language === "ru" ? "Пример создания темы: модель видна целиком, основные действия расположены рядом. Рабочий топик после создания остаётся чистым чатом." : "Topic creation example: the full model ID is visible and actions stay close together. The working topic remains a clean conversation."}</div></div></section>`)
   await fs.writeFile(path.join(output, `guide-${language}.html`), shell(guide))
 }

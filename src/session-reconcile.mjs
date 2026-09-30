@@ -6,7 +6,7 @@ import { isIgnoredSession } from "./internal-sessions.mjs"
 import { isOpenCodeSessionNotFound, textFromPrompt, visibleTextFromParts } from "./opencode.mjs"
 import { formatToolLine } from "./render.mjs"
 import { runAfterFlight, runSingleFlight } from "./single-flight.mjs"
-import { escapeHtml } from "./telegram.mjs"
+import { escapeHtml, isUnavailableTopicError } from "./telegram.mjs"
 import { managedTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
 import { t } from "./i18n/index.mjs"
 
@@ -26,6 +26,7 @@ export function createSessionReconciler({
   backendRetryDelay = () => 0,
   createTopicForSession,
   createTopicForWebSession,
+  disableTopicMirror,
   isInternalSession,
   activateBindingForPrompt,
   maybeExtendBindingActivity,
@@ -1364,7 +1365,13 @@ export function createSessionReconciler({
       return
     }
     if (isUnavailableTopicError(error)) {
-      await state.disableBinding(binding.serverID, binding.sessionID, error.message || "Telegram topic unavailable")
+      const reason = error.message || "Telegram topic unavailable"
+      if (disableTopicMirror) await disableTopicMirror(binding.chatId, binding.topicId, reason)
+      else {
+        await state.disableBinding(binding.serverID, binding.sessionID, reason)
+        promptQueue.clear(binding)
+        detachBinding(binding)
+      }
       console.warn(`[opencodebot] disabled unavailable Telegram topic binding ${binding.serverID}/${binding.sessionID}: ${error.message}`)
       return
     }
@@ -1517,12 +1524,6 @@ export function createSessionReconciler({
     seedExistingSessions,
     detachBinding,
   }
-}
-
-function isUnavailableTopicError(error) {
-  return /message thread not found|forum topic .*not found|topic .*not found|topic .*deleted|topic .*closed|message thread .*closed/i.test(
-    error.message || "",
-  )
 }
 
 export function normalizeSessionError(value) {

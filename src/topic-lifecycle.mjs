@@ -7,8 +7,9 @@ import { parseNewTopicArgs } from "./prompt-profiles.mjs"
 import { t } from "./i18n/index.mjs"
 import { baseTitleFromTelegramTitle, managedTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
 
-export function createTopicLifecycle({ config, state, telegram, opencode, settings, activateBindingForPrompt, clearPromptFeedback }) {
+export function createTopicLifecycle({ config, state, telegram, opencode, settings, activateBindingForPrompt, clearPromptFeedback, onBindingDisabled }) {
   const topicCreations = new Map()
+  const topicChecks = new Map()
 
   async function createPendingTopic(message, args) {
     let parsed
@@ -79,10 +80,6 @@ export function createTopicLifecycle({ config, state, telegram, opencode, settin
       if (binding || pending) await state.updateTopicMetadata(message.chat.id, topicId(message), metadata)
       return true
     }
-    if (message.forum_topic_deleted) {
-      await disableTopicMirror(message.chat.id, topicId(message), "Telegram topic deleted")
-      return true
-    }
     if (message.forum_topic_closed) {
       await disableTopicMirror(message.chat.id, topicId(message), "Telegram topic closed")
       return true
@@ -91,17 +88,31 @@ export function createTopicLifecycle({ config, state, telegram, opencode, settin
   }
 
   async function disableTopicMirror(chatId, targetTopicId, reason) {
-    const binding = state.findBindingByTopic(chatId, targetTopicId)
-    if (binding) {
-      await state.disableBinding(binding.serverID, binding.sessionID, reason)
-      await clearPromptFeedback(binding, { force: true })
+    topicChecks.delete(`${chatId}:${targetTopicId}`)
+    const bindings = await state.disableTopic(chatId, targetTopicId, reason)
+    for (const binding of bindings) {
+      onBindingDisabled?.(binding)
+      await clearPromptFeedback(binding, { force: true }).catch(() => {})
       logInfo("telegram.topic.disabled_binding", { chatId, topicId: targetTopicId, serverID: binding.serverID, sessionID: binding.sessionID, reason })
     }
-    if (state.pendingTopic(targetTopicId)) {
-      await state.removePendingTopic(targetTopicId)
-      logInfo("telegram.topic.removed_pending", { chatId, topicId: targetTopicId, reason })
+    return Boolean(bindings.length)
+  }
+
+  async function topicExists(record, { force = false } = {}) {
+    const topic = state.topicRecord(record.chatId, record.topicId) || record
+    const name = topic.topicTitle || managedTopicTitle(topicBaseTitle(topic), topic.serverID, opencode.servers).topicTitle
+    const key = `${record.chatId}:${record.topicId}`
+    const cached = topicChecks.get(key)
+    if (!force && cached?.name === name && Date.now() - cached.at < 60_000) return true
+    const exists = await telegram.forumTopicExists({ chatId: record.chatId, topicId: record.topicId,
+      name })
+    if (!exists) await disableTopicMirror(record.chatId, record.topicId, "Telegram topic deleted")
+    else {
+      topicChecks.delete(key)
+      topicChecks.set(key, { name, at: Date.now() })
+      if (topicChecks.size > 256) topicChecks.delete(topicChecks.keys().next().value)
     }
-    return Boolean(binding)
+    return exists
   }
 
   function createTopicForWebSession(serverID, sessionID, promptText) {
@@ -190,6 +201,8 @@ export function createTopicLifecycle({ config, state, telegram, opencode, settin
     createTopicForSession,
     createTopicForWebSession,
     handleTopicLifecycleMessage,
+    disableTopicMirror,
+    topicExists,
     isInternalSession,
     randomTopicIcon,
   }
