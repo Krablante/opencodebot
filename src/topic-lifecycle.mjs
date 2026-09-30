@@ -5,7 +5,7 @@ import { runSingleFlight } from "./single-flight.mjs"
 import { escapeHtml, topicId } from "./telegram.mjs"
 import { parseNewTopicArgs } from "./prompt-profiles.mjs"
 import { t } from "./i18n/index.mjs"
-import { baseTitleFromTelegramTitle, managedTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
+import { baseTitleFromTelegramTitle, managedTopicTitle, randomTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
 
 export function createTopicLifecycle({ config, state, telegram, opencode, settings, activateBindingForPrompt, clearPromptFeedback, onBindingDisabled }) {
   const topicCreations = new Map()
@@ -25,7 +25,10 @@ export function createTopicLifecycle({ config, state, telegram, opencode, settin
       await telegram.sendMessage({ chatId: message.chat.id, topicId: message.message_thread_id, text: escapeHtml(error.message) })
       return
     }
-    const { serverID, title, titleSource, promptProfileName, promptProfile, directory: requestedDirectory } = parsed
+    const { serverID, promptProfileName, promptProfile, directory: requestedDirectory } = parsed
+    const randomName = state.randomTopicNamesEnabled() && parsed.titleSource !== "user"
+    const title = randomName ? randomTopicTitle() : parsed.title
+    const titleSource = randomName ? "user" : parsed.titleSource
     const launchRequestKey = parsed.requestKey || (message.message_id ? `command:${message.chat.id}:${message.message_id}` : null)
     if (launchRequestKey) {
       const prior = [...Object.values(state.data.pendingTopics || {}), ...(state.data.bindings || [])].find((topic) => topic.launchRequestKey === launchRequestKey)
@@ -140,7 +143,8 @@ export function createTopicLifecycle({ config, state, telegram, opencode, settin
     }
     const chatId = state.chatId || config.telegram.chatId
     if (!chatId) return null
-    const title = session.title || titleFromText(fallbackText, `${serverID} ${session.id}`)
+    const randomName = state.randomTopicNamesEnabled()
+    const title = randomName ? randomTopicTitle() : session.title || titleFromText(fallbackText, `${serverID} ${session.id}`)
     const titleFields = managedTopicTitle(title, serverID, opencode.servers)
     const topicIcon = await randomTopicIcon()
     const topic = await telegram.createForumTopic({ chatId, name: titleFields.topicTitle, iconCustomEmojiId: topicIcon?.customEmojiId })
@@ -154,7 +158,7 @@ export function createTopicLifecycle({ config, state, telegram, opencode, settin
       sessionID: session.id,
       directory: session.directory,
       title: titleFields.topicBaseTitle,
-      titleSource: session.title ? "opencode" : "auto",
+      titleSource: randomName ? "user" : session.title ? "opencode" : "auto",
     }
     await state.bindTopic(binding)
     await state.markSeenSession(serverID, session.id)

@@ -257,6 +257,12 @@ export class ControlMenu {
       await this.editMenuUnlocked("system", query.from)
       return
     }
+    if (action.startsWith("topicnames:")) {
+      await this.state.setRandomTopicNamesEnabled(action.endsWith(":1"))
+      await this.answer(query, t("controlMenu.saved"))
+      await this.editMenuUnlocked("settings", query.from)
+      return
+    }
     if (action.startsWith("debug:")) {
       await this.state.setDebugEnabled(action.endsWith(":1"))
       await this.answer(query, t("controlMenu.saved"))
@@ -463,7 +469,9 @@ export class ControlMenu {
 
   renderSettings() {
     const L = (ru, en) => localText(ru, en, getLanguage())
-    return this.view(`<h2>⚙ ${L("Настройки", "Settings")}</h2><p>${L("Подключения и параметры бота", "Connections and bot preferences")}</p>`, [
+    const randomNames = this.state.randomTopicNamesEnabled()
+    return this.view(`<h2>⚙ ${L("Настройки", "Settings")}</h2><p>${L("Подключения и параметры бота", "Connections and bot preferences")}</p><p>${L("Случайные названия — древнерусские слова для новых тем. Своё название можно вписать при создании.", "Random names use Old Russian words for new topics. You can enter your own title when creating a topic.")}</p>`, [
+      [this.callback(`${L("Случайные названия", "Random topic names")}: ${randomNames ? L("вкл", "on") : L("выкл", "off")}`, `topicnames:${randomNames ? "0" : "1"}`)],
       [this.callback(L("FILES · AUDIO · Setup", "FILES · AUDIO · Setup"), "setup")],
       [this.callback(L("Уведомления и контекст", "Notifications and context"), "personal")],
       [this.callback(L("Озвучка ответов", "Spoken answers"), "voice")],

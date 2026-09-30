@@ -403,6 +403,14 @@ export class StateStore {
     return normalizeMirrorMode(this.data.telegram?.mirrorMode)
   }
 
+  randomTopicNamesEnabled() {
+    return this.data.telegram.randomTopicNames !== false
+  }
+
+  async setRandomTopicNamesEnabled(enabled) {
+    return this.update((data) => { data.telegram.randomTopicNames = Boolean(enabled) })
+  }
+
   async setMirrorMode(mode) {
     const normalized = normalizeMirrorMode(mode)
     await this.update((data) => {

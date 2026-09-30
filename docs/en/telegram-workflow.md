@@ -37,9 +37,12 @@ If `telegram.chatId` is missing and `telegram.allowChatBootstrap` is enabled, th
 initializes the chat in local state. For a shared bot, set `telegram.chatId` and `telegram.allowedUserIds` deliberately
 instead of relying on accidental bootstrap messages.
 
-When OpenCodez later updates a session title, the linked Telegram topic is renamed too unless the topic title came
-directly from the user. This lets placeholder titles such as a profile name become real session titles, while
-`/new local sol Refactor auth` keeps `Refactor auth`. `/reset` always promotes the reused topic's current visible title
+New topics default to a random Old Russian word; General → Settings → Random topic names disables this mode. The name
+is preserved as a topic-owned title, and an explicit `/new ... Title` overrides the random choice. See [topic creation](control-menu.md#create-a-topic).
+When random names are disabled and OpenCodez later updates a session title, the linked Telegram topic is renamed too
+unless its title was chosen explicitly or preserved from an earlier random choice. This lets placeholder titles such
+as a profile name become real session titles, while `/new local sol Refactor auth` keeps `Refactor auth`.
+`/reset` always promotes the reused topic's current visible title
 to user-owned, even when the old binding was previously session-owned, so the new session cannot rename an established
 thread. New topics use a random forum icon when Telegram exposes available topic icon stickers to the bot.
 

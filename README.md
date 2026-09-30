@@ -47,7 +47,7 @@ For a local Node.js run, use `npm start`. Do not run it alongside a container po
 
 ## 💬 Use it
 
-Open the pinned Rich Message menu in General with `/menu`. **New topic** asks for a title and shows the exact model before creation. **Profiles** creates and edits presets using the live OpenCodez model catalog; personal selection screens do not clutter the group. `/new` opens the same flow, while `/new [server] [profile] [dir:<path>] [title]` remains a shortcut. The menu moves to a fresh message daily. Bot API 10.3+ is required for rich buttons and personal ephemeral screens.
+Open the pinned Rich Message menu in General with `/menu`. **New topic** suggests a random Old Russian word and shows the exact model before creation. Choose **Another word** or enter your own title; **Settings → Random topic names** disables the default naming mode. **Profiles** creates and edits presets using the live OpenCodez model catalog; personal selection screens do not clutter the group. `/new` opens the same flow, while `/new [server] [profile] [dir:<path>] [title]` remains a shortcut. The menu moves to a fresh message daily. Bot API 10.3+ is required for rich buttons and personal ephemeral screens.
 
 In a bound topic, `/q` queues another prompt, `/kill` stops the run, `/reset` starts fresh while preserving the old session, and `/context` exports recent logical turns across compaction. Reply to an earlier Telegram prompt to rewind that exact OpenCodez turn. **How to use** contains the illustrated guide and downloadable English/Russian PDFs. Working topics have no permanent control panel.
 
@@ -59,4 +59,4 @@ See [Telegram workflow](docs/en/telegram-workflow.md) for topic rules and the fu
 
 **Documentation:** 🇬🇧 [English index](docs/en/README.md) · 🇷🇺 [Русский справочник](docs/ru/README.md). Each topic has a matching path under `docs/en/` and `docs/ru/`; add another language as another directory and link it from the indexes.
 
-MIT licensed. OpenCodeBot is an independent companion to [OpenCodez](https://github.com/Krablante/opencodez).
+The application is MIT licensed; the bundled [Old Russian word list](assets/old-russian-words.LICENSE.md) is CC BY-SA 4.0. OpenCodeBot is an independent companion to [OpenCodez](https://github.com/Krablante/opencodez).

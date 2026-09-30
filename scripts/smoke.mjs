@@ -169,6 +169,7 @@ async function smokeWorkspacePreferences() {
     await launch.act(draft, "create")
     assert.equal(draft.page, "created")
     await launch.close(draft)
+    await state.setRandomTopicNamesEnabled(false) // Exercise the manual-title Force Reply flow.
     const beforeInput = messages.length
     const personal = await launch.open({ from: { id: 42 }, message: { chat: { id: -1001 } } })
     assert.equal(messages.length, beforeInput + 1, "Creation opens one personal card, without a public question")
@@ -2981,6 +2982,7 @@ async function smokeTopicCreationSingleFlight() {
     config: { telegram: { chatId: -1001, randomTopicIcon: false } },
     state: {
       chatId: -1001,
+      randomTopicNamesEnabled: () => false,
       findBinding: (serverID, sessionID) => bindings.get(`${serverID}:${sessionID}`) || null,
       bindTopic: async (binding) => {
         operations.push("bind")

@@ -3,6 +3,7 @@ import { getLanguage } from "./i18n/index.mjs"
 import { escapeHtml, telegramMessageLink, topicId } from "./telegram.mjs"
 import { buttonRows, menuTable, richButton, localText } from "./menu-format.mjs"
 import { logErrorEvent } from "./logger.mjs"
+import { randomTopicTitle } from "./topic-titles.mjs"
 
 const INPUT_TTL = 15 * 60_000
 const MODELS_PER_PAGE = 100
@@ -33,11 +34,12 @@ export class LaunchMenu {
     const serverID = this.config.defaultPrompt.serverID || this.config.opencode.servers[0].id
     const d = { id: randomBytes(4).toString("hex"), userId, chatId: query.message.chat.id, topicId: topicId(query.message),
       rev: 0, page, expires: Date.now() + INPUT_TTL, serverID,
-      name: "", directory: this.opencode.defaultNewSessionDirectory(serverID), profileName: this.settings.launchProfileName(),
+      name: page === "new" && this.state.randomTopicNamesEnabled() ? randomTopicTitle() : "",
+      directory: this.opencode.defaultNewSessionDirectory(serverID), profileName: this.settings.launchProfileName(),
     }
     this.drafts.set(d.id, d)
     try {
-      if (page === "new") await this.ask(d, "title", this.text("Как назвать новую тему?", "What should the new topic be called?"))
+      if (page === "new" && !d.name) await this.ask(d, "title", this.text("Как назвать новую тему?", "What should the new topic be called?"))
       await this.sendCard(d, query.id)
     } catch (error) {
       await this.close(d)
@@ -82,8 +84,18 @@ export class LaunchMenu {
   async act(d, action) {
     const [verb, arg] = action.split(":")
     if (verb === "close") return this.close(d)
-    if (verb === "new") { d.page = "new"; d.editing = false; return }
+    if (verb === "new") {
+      d.page = "new"; d.editing = false
+      if (!d.name && this.state.randomTopicNamesEnabled()) d.name = randomTopicTitle()
+      return
+    }
     if (verb === "title") return this.ask(d, "title", this.text("Название темы", "Topic title"))
+    if (verb === "randomtitle") {
+      const hadInput = this.inputs.get(d.userId)?.draftId === d.id
+      d.name = randomTopicTitle(); this.inputs.delete(d.userId); delete d.inputRequest
+      if (hadInput) return this.sendCard(d)
+      return
+    }
     if (verb === "profiles") { d.page = "profiles"; d.choosing = arg === "choose"; d.profilePage = 0; return }
     if (verb === "profilespage") { d.profilePage = Number(arg); return }
     if (verb === "profile") {
@@ -326,6 +338,7 @@ export class LaunchMenu {
       if (d.launchError) body += `<blockquote>${escapeHtml(d.launchError)}</blockquote>`
       rows = [[d.launchReady ? b(this.text("Создать тему", "Create topic"), "create", "success") : { text: this.text("Создать тему", "Create topic"), disabled: true }],
         [b(this.text("Название", "Title"), "title"), b(this.text("Профиль", "Profile"), "profiles:choose")],
+        ...(this.state.randomTopicNamesEnabled() ? [[b(this.text("🎲 Другое слово", "🎲 Another word"), "randomtitle")]] : []),
         ...(this.config.opencode.servers.length > 1 ? [[b(`${this.text("Сервер", "Server")}: ${d.serverID} ▾`, "servers")]] : []),
         ...(d.launchNeedsVariant ? [[b(this.text("Выбрать reasoning", "Choose reasoning"), "variants")]] : []),
         [b(this.text("Рабочая папка", "Working directory"), "directory"), close]]

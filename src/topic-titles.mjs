@@ -1,4 +1,13 @@
+import { randomInt } from "node:crypto"
+import { readFileSync } from "node:fs"
+
 const TELEGRAM_TOPIC_TITLE_MAX = 128
+const OLD_RUSSIAN_WORDS = readFileSync(new URL("../assets/old-russian-words.txt", import.meta.url), "utf8").trim().split("\n")
+
+export function randomTopicTitle() {
+  const word = OLD_RUSSIAN_WORDS[randomInt(OLD_RUSSIAN_WORDS.length)]
+  return word[0].toUpperCase() + word.slice(1)
+}
 
 export function managedTopicTitle(baseTitle, serverID, servers) {
   const base = cleanTopicTitle(baseTitle)
