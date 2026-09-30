@@ -106,6 +106,14 @@ export class UserSettings {
     })
   }
 
+  launchProfileName() {
+    const savedModel = this.data.defaultLaunch?.model
+    const matching = savedModel?.modelID && Object.entries(this.data.profiles)
+      .find(([, profile]) => JSON.stringify(profile.model) === JSON.stringify(savedModel))?.[0]
+    const candidates = [this.data.defaultProfile, matching, ...this.data.recentProfiles, "sol", ...Object.keys(this.data.profiles)]
+    return candidates.find((name) => this.data.profiles[name]?.model?.providerID && this.data.profiles[name]?.model?.modelID) || null
+  }
+
   async catalog(serverID, directory = "", refresh = false) {
     const key = `${serverID}:${directory}`
     const existing = this.catalogs.get(key)

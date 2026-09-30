@@ -164,6 +164,7 @@ async function smokeWorkspacePreferences() {
     assert.equal(messages.length, count + 1)
     assert.ok(messages.at(-1).showAlert)
     draft.page = "new"; draft.name = "Example"; draft.profileName = "sol"
+    await launch.render(draft)
     await launch.act(draft, "create")
     assert.equal(draft.page, "created")
     await launch.close(draft)

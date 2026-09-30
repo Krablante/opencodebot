@@ -18,7 +18,11 @@ Confirmed deletion disables the topic's mirror, clears its queued prompts and sc
 
 ## Create a topic
 
-New topic opens a personal ephemeral screen, asks for the title, and shows the exact model ID and reasoning. The current default profile is selected. Profile selection places recently used profiles first. Server and directory choices are optional; a single-server installation does not ask the user to choose a server.
+New topic opens a personal ephemeral screen and asks for the title. Its card shows the saved profile name, exact provider/model ID, reasoning level and server. The configured default profile is selected first; an installation with no concrete default uses a matching saved launch profile, then its most recently used profile, `sol` if available, or another saved profile with an explicit model. This selects the wizard's draft without changing saved defaults or existing sessions.
+
+With multiple connections, a Server button appears directly on the creation card. The picker lists every configured server and marks the current one. Switching server resets the directory to that server's new-session directory and checks its model catalog. The Working directory button opens path input directly; a single-server installation shows the fixed server without a picker.
+
+Creation requires a specific available model and reasoning level. If a saved profile inherits reasoning, or its level is unsupported on the selected server, choose a supported level for this topic. Models without reasoning variants show Not applicable. The wizard saves the exact displayed model/variant in the pending launch snapshot; this one-topic choice leaves the saved profile unchanged. Unavailable models, System prompts or catalogs disable creation and explain which choice to change. Catalog reads reuse the existing one-minute cache.
 
 `/new` without arguments opens this flow. `/new [server] [profile] [dir:<path>] [title]` remains a shortcut. Both use the same pending-topic creation path. The OpenCodez session is created on the first prompt, bound before model/System changes, and retains a launch snapshot for retry and reset.
 

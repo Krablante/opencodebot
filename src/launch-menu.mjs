@@ -33,7 +33,7 @@ export class LaunchMenu {
     const serverID = this.config.defaultPrompt.serverID || this.config.opencode.servers[0].id
     const d = { id: randomBytes(4).toString("hex"), userId, chatId: query.message.chat.id, topicId: topicId(query.message),
       rev: 0, page, expires: Date.now() + INPUT_TTL, serverID,
-      name: "", directory: this.opencode.defaultNewSessionDirectory(serverID), profileName: this.settings.data.defaultProfile,
+      name: "", directory: this.opencode.defaultNewSessionDirectory(serverID), profileName: this.settings.launchProfileName(),
     }
     this.drafts.set(d.id, d)
     const sent = await this.telegram.sendRichMessage({ chatId: d.chatId, topicId: d.topicId, html: await this.render(d),
@@ -90,7 +90,7 @@ export class LaunchMenu {
     if (verb === "profile") {
       const name = d.profileNames?.[Number(arg)]
       if (!name || !this.settings.data.profiles[name]) throw new Error("Profile is unavailable")
-      if (d.choosing) { d.profileName = name; d.page = "new"; d.choosing = false; return }
+      if (d.choosing) { d.profileName = name; delete d.launchVariant; d.page = "new"; d.choosing = false; return }
       d.selectedProfile = name; d.page = "profile"; return
     }
     if (verb === "default") { await this.settings.setDefault(d.selectedProfile); d.notice = this.text("Профиль по умолчанию обновлён.", "Default profile updated."); return }
@@ -116,13 +116,13 @@ export class LaunchMenu {
       d.selectedProfile = d.profileDraftName; d.page = "profile"; d.editing = false
       return
     }
-    if (verb === "advanced") { d.page = "advanced"; return }
     if (verb === "directory") return this.ask(d, "directory", this.text("Абсолютный путь к рабочей папке на выбранном сервере. /default — домашняя папка.", "Absolute working directory on the selected server. /default uses the server home."))
     if (verb === "servers") { d.page = "servers"; return }
     if (verb === "server") {
       const server = this.config.opencode.servers[Number(arg)]
       if (!server) throw new Error("Server is unavailable")
       d.serverID = server.id; d.directory = this.opencode.defaultNewSessionDirectory(server.id); d.catalog = null
+      delete d.launchVariant
       d.page = d.editing ? "edit" : "new"; return
     }
     if (verb === "models" || verb === "refresh") {
@@ -140,11 +140,13 @@ export class LaunchMenu {
     }
     if (verb === "variants") {
       d.catalog ||= await this.settings.catalog(d.serverID, d.directory)
-      d.chosenModel = d.catalog.models.find((m) => m.id === d.profile.model?.modelID && m.providerID === d.profile.model?.providerID)
+      const profile = d.editing ? d.profile : d.launchProfile
+      d.chosenModel = d.catalog.models.find((m) => m.id === profile?.model?.modelID && m.providerID === profile?.model?.providerID)
       d.page = "variants"; return
     }
     if (verb === "variant") {
       const value = d.variants?.[Number(arg)]
+      if (!d.editing) { d.launchVariant = value; d.page = "new"; return }
       if (value) d.profile.model.variant = value
       else delete d.profile.model.variant
       d.page = "edit"; return
@@ -165,11 +167,14 @@ export class LaunchMenu {
     if (verb === "create") {
       if (!d.name) return this.ask(d, "title", this.text("Как назвать тему?", "What should the topic be called?"))
       if (d.profileName && !this.settings.data.profiles[d.profileName]) throw new Error(this.text("Профиль удалён или переименован. Выбери другой профиль.", "This profile was deleted or renamed. Choose another profile."))
-      const profile = this.settings.data.profiles[d.profileName] || this.config.defaultPrompt
-      if (d.confirmedProfile && d.confirmedProfile !== JSON.stringify(profile)) {
+      const saved = this.settings.data.profiles[d.profileName]
+      if (!saved?.model?.providerID || !saved?.model?.modelID) throw new Error(this.text("Выбери профиль с конкретной моделью.", "Choose a profile with a specific model."))
+      if (d.confirmedProfile !== JSON.stringify(saved)) {
         d.notice = this.text("Настройки профиля изменились. Проверь модель и подтверди создание ещё раз.", "The profile settings changed. Check the model and confirm creation again.")
         return
       }
+      if (!d.launchReady || !d.launchProfile) throw new Error(this.text("Проверь настройки запуска на карточке.", "Check the launch settings shown on the card."))
+      const profile = structuredClone(d.launchProfile)
       await this.validate(d, profile)
       const topic = await this.createSession({ chat: { id: d.chatId }, from: { id: d.userId } }, {
         serverID: d.serverID, title: d.name, titleSource: "user", directory: d.directory,
@@ -189,7 +194,40 @@ export class LaunchMenu {
     if (!model) throw new Error(this.text("Модель отсутствует на выбранном сервере. Подключи провайдера в OpenCodez или выбери другой профиль.", "The model is unavailable on this server. Connect its provider in OpenCodez or choose another profile."))
     if (profile.model.variant && !model.variants.includes(profile.model.variant)) throw new Error(this.text("Этот уровень reasoning недоступен для модели.", "This reasoning variant is unavailable for the model."))
     if (profile.opencodezSystem && profile.opencodezSystem !== "default" && profile.opencodezSystem !== "none"
-      && !catalog.entries.some((e) => e.id === profile.opencodezSystem || e.name === profile.opencodezSystem)) throw new Error("The profile's System prompt is unavailable on this server.")
+      && !catalog.entries.some((e) => e.id === profile.opencodezSystem || e.name === profile.opencodezSystem)) throw new Error(this.text("System prompt профиля отсутствует на этом сервере. Выбери другой профиль или сервер.", "The profile's System prompt is unavailable on this server. Choose another profile or server."))
+  }
+
+  async prepareLaunch(d) {
+    const saved = this.settings.data.profiles[d.profileName]
+    d.confirmedProfile = JSON.stringify(saved)
+    d.launchProfile = saved && structuredClone(saved)
+    d.launchReady = false
+    d.launchError = ""
+    d.launchNeedsVariant = false
+    d.launchReasoning = saved?.model?.variant || this.text("Выбери уровень", "Choose a level")
+    if (!saved?.model?.providerID || !saved?.model?.modelID) {
+      d.launchError = this.text("Выбери или создай профиль с конкретной моделью.", "Choose or create a profile with a specific model.")
+      return
+    }
+    if (d.launchVariant) d.launchProfile.model.variant = d.launchVariant
+    try {
+      const catalog = await this.settings.catalog(d.serverID, d.directory)
+      const model = catalog.models.find((m) => m.id === saved.model.modelID && m.providerID === saved.model.providerID)
+      if (!model) throw new Error(this.text("Этой модели нет на выбранном сервере. Выбери другой профиль или сервер.", "This model is unavailable on the selected server. Choose another profile or server."))
+      if (!model.variants?.length) d.launchReasoning = this.text("Не применяется", "Not applicable")
+      else {
+        d.launchReasoning = d.launchProfile.model.variant || this.text("Выбери уровень", "Choose a level")
+        if (!d.launchProfile.model.variant || !model.variants.includes(d.launchProfile.model.variant)) {
+          d.launchNeedsVariant = true
+          if (d.launchProfile.model.variant) d.launchError = this.text("Этот уровень reasoning недоступен на выбранном сервере. Выбери доступный уровень для темы.", "This reasoning level is unavailable on the selected server. Choose a supported level for the topic.")
+          return
+        }
+      }
+      await this.validate(d, d.launchProfile)
+      d.launchReady = true
+    } catch (error) {
+      d.launchError = this.text("Запуск недоступен: ", "Launch unavailable: ") + String(error.message).slice(0, 250)
+    }
   }
 
   async ask(d, field, text) {
@@ -216,6 +254,8 @@ export class LaunchMenu {
         if (input.field === "directory") {
           if (value !== "/default" && !/^\/|^[a-zA-Z]:[\\/]|^\\\\/.test(value)) throw new Error(this.text("Нужен абсолютный путь.", "An absolute path is required."))
           d.directory = value === "/default" ? this.opencode.defaultNewSessionDirectory(d.serverID) : value
+          d.catalog = null
+          delete d.launchVariant
         }
       }
       await this.telegram.deleteMessage({ chatId: d.chatId, messageId: message.message_id }).catch(() => {})
@@ -243,12 +283,18 @@ export class LaunchMenu {
     const footer = `<footer>${this.text("Личный экран · другие участники не видят этот выбор", "Personal screen · other members cannot see these choices")}</footer>`
     let body = "", rows = []
     if (d.page === "new") {
-      const profile = this.settings.data.profiles[d.profileName] || this.config.defaultPrompt
-      d.confirmedProfile = JSON.stringify(profile)
-      body = `<h2>✦ ${this.text("Новая тема", "New topic")}</h2><p>${escapeHtml(d.name || this.text("Выбери название и начни работу", "Choose a name and start working"))}</p>` + this.profileTable(d.profileName, profile, true)
-      if (this.config.opencode.servers.length > 1) body += `<p>${this.text("Сервер", "Server")}: <b>${escapeHtml(d.serverID)}</b></p>`
+      await this.prepareLaunch(d)
+      const server = this.config.opencode.servers.find((s) => s.id === d.serverID)
+      const serverLabel = server?.label && server.label !== d.serverID ? `${server.label} · ${d.serverID}` : d.serverID
+      body = `<h2>✦ ${this.text("Новая тема", "New topic")}</h2><p>${escapeHtml(d.name || this.text("Выбери название и начни работу", "Choose a name and start working"))}</p>` + this.profileTable(d.profileName, d.launchProfile, true, d.launchReasoning)
+      body += `<p>${this.text("Сервер", "Server")}: <b>${escapeHtml(serverLabel)}</b></p>`
       body += `<details><summary>${this.text("Рабочая папка", "Working directory")}</summary><code>${escapeHtml(d.directory || this.text("По умолчанию", "Server default"))}</code></details>`
-      rows = [[b(this.text("Создать тему", "Create topic"), "create", "success")], [b(this.text("Название", "Title"), "title"), b(this.text("Профиль", "Profile"), "profiles:choose")], [b(this.text("Другие параметры", "Other options"), "advanced"), close]]
+      if (d.launchError) body += `<blockquote>${escapeHtml(d.launchError)}</blockquote>`
+      rows = [[d.launchReady ? b(this.text("Создать тему", "Create topic"), "create", "success") : { text: this.text("Создать тему", "Create topic"), disabled: true }],
+        [b(this.text("Название", "Title"), "title"), b(this.text("Профиль", "Profile"), "profiles:choose")],
+        ...(this.config.opencode.servers.length > 1 ? [[b(`${this.text("Сервер", "Server")}: ${d.serverID} ▾`, "servers")]] : []),
+        ...(d.launchNeedsVariant ? [[b(this.text("Выбрать reasoning", "Choose reasoning"), "variants")]] : []),
+        [b(this.text("Рабочая папка", "Working directory"), "directory"), close]]
     }
     if (d.page === "profiles") {
       const profiles = this.settings.profiles()
@@ -299,8 +345,8 @@ export class LaunchMenu {
       rows = [...(models.length > 12 ? [[b(d.expandAll ? this.text("Свернуть семейства", "Collapse families") : this.text("Развернуть всё", "Expand all"), `modelsview:${d.expandAll ? "closed" : "open"}`)]] : []), [...(d.modelPage ? [b("‹", `modelpage:${d.modelPage - 1}`)] : []), ...(d.modelPage + 1 < pages ? [b("›", `modelpage:${d.modelPage + 1}`)] : []), back]]
     }
     if (d.page === "variants") {
-      d.variants = ["", ...(d.chosenModel?.variants || [])]
-      body = `<h2>Reasoning</h2><p><b>${escapeHtml(d.chosenModel?.name || d.profile.model?.modelID || "")}</b></p><p>${this.text("Автовыбор наследует значение OpenCodez. Явный выбор сохраняется в профиле.", "Automatic inherits OpenCodez defaults. An explicit choice is saved in the profile.")}</p>`
+      d.variants = [...(d.editing ? [""] : []), ...(d.chosenModel?.variants || [])]
+      body = `<h2>Reasoning</h2><p><b>${escapeHtml(d.chosenModel?.name || (d.editing ? d.profile : d.launchProfile)?.model?.modelID || "")}</b></p><p>${d.editing ? this.text("Автовыбор наследует значение OpenCodez. Явный выбор сохраняется в профиле.", "Automatic inherits OpenCodez defaults. An explicit choice is saved in the profile.") : this.text("Выбери точный уровень для этой темы. Сохранённый профиль останется прежним.", "Choose the exact level for this topic. The saved profile stays unchanged.")}</p>`
       rows = d.variants.map((v, i) => [b(v || this.text("Автовыбор", "Automatic"), `variant:${i}`)])
       rows.push([back])
     }
@@ -314,13 +360,9 @@ export class LaunchMenu {
       body += `<details><summary>${this.text("Доступные System prompts", "Available System prompts")}</summary>${menuTable(d.systems.map((e, i) => [richButton(b(e?.name || this.text("Автовыбор", "Automatic"), `systempick:${i}`, "link"))]))}</details>`
       rows = [[...(d.systemPage ? [b("‹", `systempage:${d.systemPage - 1}`)] : []), ...(d.systemPage + 1 < pages ? [b("›", `systempage:${d.systemPage + 1}`)] : []), back]]
     }
-    if (d.page === "advanced") {
-      body = `<h2>${this.text("Параметры темы", "Topic options")}</h2><p>${escapeHtml(d.serverID)}</p><code>${escapeHtml(d.directory || "default")}</code>`
-      rows = [[b(this.text("Рабочая папка", "Working directory"), "directory")], ...(this.config.opencode.servers.length > 1 ? [[b(this.text("Сервер", "Server"), "servers")]] : []), [back]]
-    }
     if (d.page === "servers") {
       body = `<h2>${this.text("Сервер", "Server")}</h2><p>${this.text("Каталог и пути принадлежат выбранному серверу.", "The catalog and paths belong to the selected server.")}</p>`
-      rows = this.config.opencode.servers.map((s, i) => [b(s.label || s.id, `server:${i}`)])
+      rows = this.config.opencode.servers.map((s, i) => [b(`${s.id === d.serverID ? "✓ " : ""}${s.label && s.label !== s.id ? `${s.label} · ${s.id}` : s.id}`, `server:${i}`)])
       rows.push([back])
     }
     if (d.page === "created") {
@@ -332,11 +374,11 @@ export class LaunchMenu {
     return body + (notice ? `<blockquote>${escapeHtml(notice)}</blockquote>` : "") + buttonRows(rows) + footer
   }
 
-  profileTable(name, p = {}, compact = false) {
+  profileTable(name, p = {}, compact = false, reasoning) {
     return menuTable([
-      [this.text("Профиль", "Profile"), `<b>${escapeHtml(name || this.text("По умолчанию", "Default"))}</b>`],
-      [this.text("Модель", "Model"), `<b>${escapeHtml(p.model?.modelID || this.text("Автовыбор OpenCodez", "OpenCodez automatic"))}</b>`],
-      ["Reasoning", escapeHtml(p.model?.variant || this.text("Автовыбор", "Automatic"))],
+      [this.text("Профиль", "Profile"), `<b>${escapeHtml(name || this.text("Не выбран", "Not selected"))}</b>`],
+      [this.text("Модель", "Model"), `<code>${escapeHtml(p.model?.modelID ? `${p.model.providerID}/${p.model.modelID}` : this.text("Не выбрана", "Not selected"))}</code>`],
+      ["Reasoning", escapeHtml(reasoning || p.model?.variant || this.text("Не задан в профиле", "Not set in profile"))],
       ...(!compact ? [["System", escapeHtml(p.opencodezSystem || this.text("Автовыбор", "Automatic"))], [this.text("Агент", "Agent"), escapeHtml(p.agent || "build")]] : []),
     ])
   }
