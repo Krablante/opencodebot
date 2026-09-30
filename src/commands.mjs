@@ -14,7 +14,7 @@ import {
   parseContextTurnCount,
 } from "./context-export.mjs"
 
-const commandDefinitions = ["menu", "new", "session", "q", "compact", "context", "speak", "reset", "kill", "help"]
+const commandDefinitions = ["menu", "new", "session", "q", "compact", "reminder", "context", "speak", "reset", "kill", "help"]
 
 export function telegramBotCommands() {
   return commandDefinitions.map((command) => ({
@@ -75,6 +75,7 @@ export function createTelegramCommandHandlers({
     debug_status: handleDebugStatus,
     lang: handleLanguage,
     mode: handleMirrorMode,
+    reminder: handleReminder,
     ...(finalVoice?.commandHandlers?.() || {}),
   }
 
@@ -147,6 +148,20 @@ export function createTelegramCommandHandlers({
       chatId: message.chat.id,
       topicId: topicId(message),
       text: t("commands.mode.status", { mode: escapeHtml(mode.toUpperCase()) }),
+    })
+  }
+
+  async function handleReminder(message, args) {
+    const requested = String(args || "").trim().toLowerCase()
+    if (requested && !["status", "on", "off"].includes(requested)) {
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("commands.reminder.usage") })
+      return
+    }
+    if (requested === "on" || requested === "off") await state.setReminderEnabled(requested === "on")
+    await telegram.sendMessage({
+      chatId: message.chat.id,
+      topicId: topicId(message),
+      text: t(state.reminderEnabled() ? "commands.reminder.enabled" : "commands.reminder.disabled"),
     })
   }
 

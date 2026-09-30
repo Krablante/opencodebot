@@ -1,4 +1,5 @@
 import { durationMs, logErrorEvent, logInfo, shouldLogSlow } from "./logger.mjs"
+import { createCompactionReminders } from "./compaction-reminders.mjs"
 import { formatDuration } from "./backend-backoff.mjs"
 import { isInternalUserMessage, logicalTurnRootID, logicalTurnSliceReady, logicalTurnStartIndex } from "./logical-turn.mjs"
 import { isIgnoredSession } from "./internal-sessions.mjs"
@@ -64,6 +65,10 @@ export function createSessionReconciler({
   const pendingSeeds = new Set()
   const seedFailures = new Set()
   const startedAt = Date.now()
+  const reminders = createCompactionReminders({
+    state, opencode, telegram, backendRequest, skippedBackendRequest, scheduleReconcile, startedAt,
+    activeBinding: (binding) => state.mirrorEnabled(config) && !promptQueue.hasExpectedStop(binding) && activeBinding(binding),
+  })
 
   function activeBinding(binding) {
     const current = state.findBinding(binding.serverID, binding.sessionID)
@@ -143,6 +148,7 @@ export function createSessionReconciler({
     if (!binding || binding.disabled) return
     const key = bindingKey(binding)
     rememberCompactionPart(binding, properties.part)
+    await reminders.observePart(binding, properties.part)
     if (event.type === "message.part.updated" || event.type === "message.part.added") {
       rememberTargetedPartType(binding, properties)
     }
@@ -410,6 +416,7 @@ export function createSessionReconciler({
       return
     }
     rememberCompactionMessages(binding, [message])
+    await reminders.observe(binding, [message])
     const info = message?.info || message
     if (!info?.id || !info?.role) {
       scheduleReconcile(binding, 500)
@@ -560,6 +567,11 @@ export function createSessionReconciler({
   }
 
   function rememberCompactionPart(binding, part) {
+    const reminder = part?.type === "text" && part.metadata?.opencodebot_reminder
+    if (reminder?.turnID && part.messageID) {
+      rememberCompactionReplay(binding, part.messageID, reminder.turnID)
+      return
+    }
     if (part?.type !== "compaction" || !part.turn_id) return
     const key = bindingKey(binding)
     const directTurn = String(part.turn_id)
@@ -811,8 +823,9 @@ export function createSessionReconciler({
     if (!part) return false
     if (!activeBinding(binding)) return false
     await telegram.sendMessage({ chatId: binding.chatId, topicId: binding.topicId, text: "🗜️ session compacted", format: "plain" })
-    await state.markCompactionNotified(binding.serverID, binding.sessionID, info.parentID)
+    const newlyNotified = await state.markCompactionNotified(binding.serverID, binding.sessionID, info.parentID)
     logInfo("compact.notified", { serverID: binding.serverID, sessionID: binding.sessionID, topicId: binding.topicId })
+    await reminders.completed(binding, info, user, messages, { newlyNotified })
     return true
   }
 
@@ -1194,6 +1207,7 @@ export function createSessionReconciler({
     const current = activeBinding(binding)
     if (!current) return
     binding = current
+    await reminders.recover(binding)
     const window = reconcileWindow(binding) || (force ? reconnectReconcileWindow(binding, config.reconcile.activeWindowMs) : null)
     if (!window) return
     await ensureObservedSessionUpdate(binding)
@@ -1215,6 +1229,7 @@ export function createSessionReconciler({
     const { messages, pages } = pageResult
     if (!activeBinding(binding)) return
     rememberCompactionMessages(binding, messages)
+    await reminders.observe(binding, messages)
     for (const [messageIndex, message] of messages.entries()) {
       if (!activeBinding(binding)) return
       const info = message.info || message

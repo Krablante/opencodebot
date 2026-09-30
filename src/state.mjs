@@ -36,6 +36,7 @@ export class StateStore {
       this.data.mirroredAssistantBySession ||= {}
       this.data.mirroredUserBySession ||= {}
       this.data.compactionNotices = Array.isArray(this.data.compactionNotices) ? this.data.compactionNotices : []
+      this.data.compactionReminders = Array.isArray(this.data.compactionReminders) ? this.data.compactionReminders : []
       this.data.finalNotifications ||= { enabledUserIds: [], sentMessages: [] }
       this.data.finalNotifications.enabledUserIds ||= []
       this.data.finalNotifications.sentMessages ||= []
@@ -789,6 +790,29 @@ export class StateStore {
     return this.data.compactionNotices.includes(`${serverID}:${sessionID}:${messageID}`)
   }
 
+  reminderEnabled() {
+    return this.data.telegram.reminderEnabled !== false
+  }
+
+  async setReminderEnabled(enabled) {
+    return this.update((data) => { data.telegram.reminderEnabled = enabled === true })
+  }
+
+  compactionReminder(serverID, sessionID, compactionID) {
+    return this.data.compactionReminders.find((item) => item.serverID === serverID && item.sessionID === sessionID && item.compactionID === compactionID)
+  }
+
+  async updateCompactionReminder(record) {
+    return this.update((data) => {
+      const index = data.compactionReminders.findIndex((item) => item.serverID === record.serverID && item.sessionID === record.sessionID && item.compactionID === record.compactionID)
+      const next = { ...(index >= 0 ? data.compactionReminders[index] : {}), ...record }
+      if (index >= 0) data.compactionReminders[index] = next
+      else data.compactionReminders.push(next)
+      if (data.compactionReminders.length > 1000) data.compactionReminders = data.compactionReminders.slice(-1000)
+      return next
+    })
+  }
+
   async markCompactionNotified(serverID, sessionID, messageID) {
     const key = `${serverID}:${sessionID}:${messageID}`
     if (this.data.compactionNotices.includes(key)) return false
@@ -896,6 +920,7 @@ function defaultState() {
     mirroredAssistantBySession: {},
     mirroredUserBySession: {},
     compactionNotices: [],
+    compactionReminders: [],
     debugEnabled: false,
     finalNotifications: { enabledUserIds: [], sentMessages: [] },
     runAlerts: [],
@@ -987,6 +1012,11 @@ function pruneState(data) {
   const incompleteRunHistory = data.incompleteRunHistory.filter((item) => item && typeof item.key === "string")
   if (incompleteRunHistory.length !== data.incompleteRunHistory.length || incompleteRunHistory.length > 1000) {
     data.incompleteRunHistory = incompleteRunHistory.slice(-1000)
+    changed = true
+  }
+  const compactionReminders = data.compactionReminders.filter((item) => item && typeof item.serverID === "string" && typeof item.sessionID === "string" && typeof item.compactionID === "string")
+  if (compactionReminders.length !== data.compactionReminders.length || compactionReminders.length > 1000) {
+    data.compactionReminders = compactionReminders.slice(-1000)
     changed = true
   }
   return changed
@@ -1085,6 +1115,7 @@ function removeBindingState(data, binding, { createPending = false, promptProfil
   delete data.mirroredAssistantBySession[mirrorKey]
   delete data.mirroredUserBySession[mirrorKey]
   data.compactionNotices = data.compactionNotices.filter((key) => !key.startsWith(`${serverID}:${sessionID}:`))
+  data.compactionReminders = data.compactionReminders.filter((item) => !(item.serverID === serverID && item.sessionID === sessionID))
   return { binding: { ...binding }, pendingCreated }
 }
 

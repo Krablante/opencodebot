@@ -18,6 +18,7 @@ export const ru = {
   "command.description.reset": "Начать новую сессию в топике",
   "command.description.kill": "Остановить запуск и очистить очередь запросов",
   "command.description.compact": "Сжать контекст текущей сессии",
+  "command.description.reminder": "Настроить напоминания промпта после компакта",
   "command.description.context": "Экспортировать контекст текущей сессии",
   "command.description.speak": "Озвучить краткий пересказ сообщения",
   "command.description.menu": "Пересоздать центр управления в General",
@@ -129,7 +130,7 @@ export const ru = {
   "controlMenu.system.sounds": ({ value }) => `Sounds/STT: <b>${value}</b>`,
   "controlMenu.system.debug": ({ value }) => `Диагностика: <b>${value}</b>`,
   "controlMenu.help.title": "❓ <b>Как пользоваться OpenCodeBot</b>",
-  "controlMenu.help.body": "В General находятся создание сессий и общие настройки.\n\nВ рабочем топике используйте:\n<code>/session</code> — состояние сессии\n<code>/q</code> — поставить запрос в очередь\n<code>/compact</code> — сжать контекст\n<code>/context</code> — экспортировать контекст\n<code>/speak</code> — озвучить сообщение по reply\n<code>/reset</code> — новая сессия в топике\n<code>/kill</code> — остановить запуск и очистить очередь\n\nРедкие операторские команды скрыты из списка, но продолжают работать.",
+  "controlMenu.help.body": "В General находятся создание сессий и общие настройки.\n\nВ рабочем топике используйте:\n<code>/session</code> — состояние сессии\n<code>/q</code> — поставить запрос в очередь\n<code>/compact</code> — сжать контекст\n<code>/reminder [on|off]</code> — напоминания промпта (общая настройка)\n<code>/context</code> — экспортировать контекст\n<code>/speak</code> — озвучить сообщение по reply\n<code>/reset</code> — новая сессия в топике\n<code>/kill</code> — остановить запуск и очистить очередь\n\nРедкие операторские команды скрыты из списка, но продолжают работать.",
 
   "common.yes": "да",
   "common.no": "нет",
@@ -147,6 +148,11 @@ export const ru = {
   "final.moreItem": ({ index, hidden }) => `✅ ${index}. и ещё ${hidden}`,
 
   "commands.mode.usage": "Использование: <code>/mode full</code> или <code>/mode economy</code>",
+  "commands.reminder.usage": "Использование: <code>/reminder</code>, <code>/reminder on</code> или <code>/reminder off</code>",
+  "commands.reminder.enabled": "🔁 Напоминания промпта: <b>включены</b>\nПосле автоматического компакта во время работы во всех зеркалируемых топиках.\nВыключить: <code>/reminder off</code>.",
+  "commands.reminder.disabled": "🔁 Напоминания промпта: <b>выключены</b>\nНастройка общая для всех зеркалируемых топиков.\nВключить: <code>/reminder on</code>.",
+  "reminder.sent": "🔁 Промпт продублирован в виде напоминания.",
+  "reminder.failed": "⚠️ Не удалось подтвердить доставку напоминания промпта. Сессия остаётся доступной.",
   "commands.mode.status": ({ mode }) => `Режим зеркала: <code>${mode}</code>. Используйте <code>/mode full</code> или <code>/mode economy</code>.`,
   "commands.context.setUsage": ({ max }) => `Использование: <code>/set_context &lt;1-${max}&gt;</code>`,
   "commands.context.current": ({ turns, max }) => `Глубина контекста по умолчанию: <code>${turns}</code> завершённых пользовательских ходов.\nИзменить: <code>/set_context &lt;1-${max}&gt;</code>.`,

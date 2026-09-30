@@ -59,10 +59,19 @@ export function logicalTurnRootID(messages, userMessageID) {
 
 export function isInternalUserMessage(message) {
   if (messageRole(message) !== "user") return false
+  if (reminderReference(message)) return true
   const parts = Array.isArray(message?.parts) ? message.parts : []
   if (parts.some((part) => part?.type === "compaction")) return true
   const inputs = parts.filter((part) => part?.type === "text" || part?.type === "file")
   return inputs.length > 0 && inputs.every((part) => part.synthetic === true)
+}
+
+export function reminderReference(message) {
+  for (const part of message?.parts || []) {
+    const reference = part?.type === "text" && part.metadata?.opencodebot_reminder
+    if (reference && typeof reference.turnID === "string" && typeof reference.compactionID === "string") return reference
+  }
+  return null
 }
 
 function compactionReferences(messages) {
@@ -70,6 +79,8 @@ function compactionReferences(messages) {
   const replayRoots = new Map()
   for (const message of messages) {
     const markerID = messageID(message)
+    const reminder = reminderReference(message)
+    if (reminder && markerID) replayRoots.set(markerID, reminder.turnID)
     for (const part of message?.parts || []) {
       if (part?.type !== "compaction" || !part.turn_id) continue
       if (markerID) markerRoots.set(markerID, String(part.turn_id))

@@ -124,7 +124,8 @@ async function smokeI18n() {
     await state.load()
     configureI18n({ state, defaultLanguage: "en" })
     assert.equal(getLanguage(), "en")
-    assert.equal(telegramBotCommands().length, 10)
+    assert.equal(telegramBotCommands().length, 11)
+    assert.ok(telegramBotCommands().some((item) => item.command === "reminder"))
     assert.match(telegramBotCommands().find((item) => item.command === "menu").description, /control center/)
     assert.equal(telegramBotCommands().some((item) => item.command === "lang"), false)
     assert.ok(catalogKeys().length > 150)
@@ -3273,6 +3274,7 @@ async function smokeCompactionMarker() {
     const statePath = path.join(root, "state.json")
     const state = new StateStore(statePath)
     await state.load()
+    await state.setReminderEnabled(false) // This probe exercises notices without sending prompts.
     const binding = { chatId: 123, topicId: 456, serverID: "nuc", sessionID: "ses_auto_compact", directory: "/tmp/work" }
     await state.bindTopic(binding)
     const sent = []

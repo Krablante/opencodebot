@@ -594,6 +594,12 @@ skipped during catch-up are appended in one binding-level batch instead of rewri
 `state.json` also keeps a bounded set of delivered compaction notices, keyed by the OpenCodez compaction
 message ID. Keep it when backing up or restarting the bot; losing it can repeat a previously sent topic marker.
 
+Automatic prompt reminders default to enabled and are controlled by `/reminder on|off`, not configuration JSON.
+`telegram.reminderEnabled` stores the global choice. The bounded `compactionReminders` records contain only server,
+session, compaction, original-turn and admitted-message identifiers, delivery timestamps, and status/notification flags.
+An uncertain send checks saved reminder metadata before retrying; confirmation and retries use existing reconciliation.
+The full original prompt and attachment data remain in OpenCodez. See [Telegram workflow](telegram-workflow.md).
+
 Reconcile avoids repeated full-history reads by paging backward to its durable high-water cursor or window boundary. The
 common path requests five messages first; only a burst that does not reach the cursor continues with 20-message fallback
 pages. Cursor checkpoints and high-frequency activity leases mutate the live state immediately but share one deferred

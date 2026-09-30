@@ -18,6 +18,7 @@ export const en = {
   "command.description.reset": "Start a fresh session for the topic",
   "command.description.kill": "Stop the current run and clear queued prompts",
   "command.description.compact": "Compact the current session context",
+  "command.description.reminder": "Manage automatic prompt reminders after compaction",
   "command.description.context": "Export current session context",
   "command.description.speak": "Voice a replied message summary",
   "command.description.menu": "Recreate the control center in General",
@@ -129,7 +130,7 @@ export const en = {
   "controlMenu.system.sounds": ({ value }) => `Sounds/STT: <b>${value}</b>`,
   "controlMenu.system.debug": ({ value }) => `Diagnostics: <b>${value}</b>`,
   "controlMenu.help.title": "❓ <b>Using OpenCodeBot</b>",
-  "controlMenu.help.body": "General contains session creation and shared settings.\n\nInside a working topic use:\n<code>/session</code> — session status\n<code>/q</code> — queue a prompt\n<code>/compact</code> — compact context\n<code>/context</code> — export context\n<code>/speak</code> — voice a replied message\n<code>/reset</code> — replace the topic session\n<code>/kill</code> — stop the run and clear the queue\n\nRare operator commands are hidden from the list but still work.",
+  "controlMenu.help.body": "General contains session creation and shared settings.\n\nInside a working topic use:\n<code>/session</code> — session status\n<code>/q</code> — queue a prompt\n<code>/compact</code> — compact context\n<code>/reminder [on|off]</code> — automatic prompt reminders (global)\n<code>/context</code> — export context\n<code>/speak</code> — voice a replied message\n<code>/reset</code> — replace the topic session\n<code>/kill</code> — stop the run and clear the queue\n\nRare operator commands are hidden from the list but still work.",
 
   "common.yes": "yes",
   "common.no": "no",
@@ -147,6 +148,11 @@ export const en = {
   "final.moreItem": ({ index, hidden }) => `✅ ${index}. and ${hidden} more`,
 
   "commands.mode.usage": "Usage: <code>/mode</code>, <code>/mode full</code>, or <code>/mode economy</code>",
+  "commands.reminder.usage": "Usage: <code>/reminder</code>, <code>/reminder on</code>, or <code>/reminder off</code>",
+  "commands.reminder.enabled": "🔁 Prompt reminders: <b>on</b>\nApplies to automatic compaction during work in all mirrored topics.\nUse <code>/reminder off</code> to disable.",
+  "commands.reminder.disabled": "🔁 Prompt reminders: <b>off</b>\nApplies to all mirrored topics.\nUse <code>/reminder on</code> to enable.",
+  "reminder.sent": "🔁 Original prompt added as a reminder.",
+  "reminder.failed": "⚠️ Could not confirm the prompt reminder. The session remains available.",
   "commands.mode.status": ({ mode }) => `🎛️ Mode: <b>${mode}</b>\nScope: all mirrored topics`,
   "commands.context.setUsage": ({ max }) => `Usage: <code>/set_context &lt;1-${max}&gt;</code>`,
   "commands.context.current": ({ turns, max }) => `Default context depth: <code>${turns}</code> completed user turn(s).\nSet it with <code>/set_context &lt;1-${max}&gt;</code>.`,

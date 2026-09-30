@@ -24,6 +24,10 @@ adds no extra backend request.
 and final metadata therefore agree on which original user prompt owns a continued run. The idle outcome check reuses its
 already-fetched logical-turn history to deliver an unmirrored `finish=stop` message directly, so a post-compaction final
 does not depend on receiving every live text/step event or on a second general reconcile pass.
+`compaction-reminders.mjs` owns automatic prompt reminders, backend admission confirmation, and recovery through the
+existing reconcile lane. Reminder text parts carry their original turn and compaction identifiers; `logical-turn.mjs`
+uses those links even when attachments make the reminder more than a synthetic text-only user. State retains only
+bounded delivery records and the global `/reminder` setting. Prompt and media payloads are rebuilt from OpenCodez.
 `internal-sessions.mjs` owns session visibility. Parent/subagent sessions remain hidden through the established internal
 path, while an exact normalized `opencode-see delegate` title is ignored more strongly: no topic, seen marker, observed
 update, or reconcile entry is created on any server. State loading removes legacy bindings and pending-topic records for

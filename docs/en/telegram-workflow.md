@@ -63,6 +63,7 @@ Telegram's visible slash suggestions are deliberately limited to the common pane
 /q delete <number>                remove a queued prompt by status number
 /kill                             stop the current run and clear queued prompts
 /compact                          compact the current session context
+/reminder [on|off]                 show or change automatic prompt reminders
 /context [N]                      export recent completed or interrupted turns as collapsed context
 /speak                           reply to text to voice a one-off summary
 /help                            open the panel's concise usage guide
@@ -136,6 +137,20 @@ OpenCodez continues working. It appears in both mirror modes and contains no sum
 reset, and unbound topics receive no marker. The bot tracks delivered compactions across restarts and checks recent
 session history if a live event was missed. If a `/compact` notification cannot be delivered, its status message
 still changes to the success result.
+
+Automatic prompt reminders are on by default. After automatic compaction during an active run, the bot sends the
+original request back to the same OpenCodez session with an English `REMINDER:` introduction and its attachments.
+The introduction asks the agent to continue from its progress and preserve later user corrections. Once OpenCodez
+has saved the reminder, the topic receives `🔁 Original prompt added as a reminder.`; the full repeat is not mirrored
+or pinned as a new human prompt. Delivery uses the existing backend API and needs no plugin. OpenCodez may take another
+step before consuming the reminder.
+
+Use `/reminder` (or `/reminder status`) to check the setting, `/reminder off` to disable it, and `/reminder on` to enable
+it. This setting applies to all mirrored topics and survives restarts. Manual compaction, pre-turn compaction, closed
+topics, and stopped or finished runs receive no reminder. Previously completed compactions are not replayed on upgrade.
+Repeated compactions resolve to the original request rather than nesting reminders. Images and other inline media reuse
+their saved payloads; text attachments reuse their captured text, and large uploaded files keep their server-local paths.
+These paths must remain available. Repeated content still has to fit the model's context.
 
 `/context` exports the latest three main-session user turns from the topic; `/context N` overrides the count once and
 `/set_context N` stores a personal default for that Telegram user. `N` is limited to 1–10 and counts both completed and
