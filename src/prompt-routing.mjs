@@ -1,5 +1,5 @@
 import { formatDuration } from "./backend-backoff.mjs"
-import { AttachmentBuffer, cleanupFiles, downloadTelegramFiles } from "./attachments.mjs"
+import { AttachmentBuffer, cleanupFiles, downloadTelegramFiles, prepareInlineFiles } from "./attachments.mjs"
 import { applyPromptProfile } from "./prompt-profiles.mjs"
 import { logErrorEvent, logInfo } from "./logger.mjs"
 import { MultipartPromptBuffer } from "./multipart-prompts.mjs"
@@ -9,8 +9,22 @@ import { promptHash } from "./state.mjs"
 import { escapeHtml, topicId } from "./telegram.mjs"
 import { prepareSavedFilesForServer } from "./upload-transfer.mjs"
 import { t } from "./i18n/index.mjs"
+import { runSingleFlight } from "./single-flight.mjs"
+
+const pendingTopicCreations = new WeakMap()
 
 export async function bindPendingTopicSession({ state, opencode, pending, message, text = "", files = [] }) {
+  let creations = pendingTopicCreations.get(state)
+  if (!creations) { creations = new Map(); pendingTopicCreations.set(state, creations) }
+  return runSingleFlight(creations, `${message.chat.id}:${topicId(message)}`, async () => {
+    const existing = state.findBindingByTopic?.(message.chat.id, topicId(message))
+    if (existing) return existing
+    if (state.pendingTopic && state.pendingTopic(topicId(message)) !== pending) throw new Error(t("prompt.noBinding"))
+    return createPendingTopicSession({ state, opencode, pending, message, text, files })
+  })
+}
+
+async function createPendingTopicSession({ state, opencode, pending, message, text, files }) {
   const directory = pending.directory || opencode.defaultNewSessionDirectory(pending.serverID)
   const session = await opencode.createSession(pending.serverID, { directory })
   const binding = {
@@ -81,7 +95,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       if (promptQueue.isCompacting(context.binding)) {
         const result = await promptQueue.enqueue(context.binding, text, files, { sourceMessageId })
         await telegram.sendMessage({ chatId: context.binding.chatId, topicId: context.binding.topicId,
-          text: t("commands.queue.queued", { position: result.position, summaryHtml: escapeHtml(text.slice(0, 100)) }) })
+          text: result.status === "full" ? t("prompt.queueFull") : t("commands.queue.queued", { position: result.position, summaryHtml: escapeHtml(text.slice(0, 100)) }) })
         return
       }
       await sendTelegramPrompt(context.binding, text, files, { sourceMessageId })
@@ -124,7 +138,9 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       return
     }
     try {
-      const downloads = await downloadTelegramFiles(telegram, files, config.paths.uploadsDir, config.attachments)
+      const remaining = attachmentBuffer.remainingLimits(promptKey)
+      if (remaining.maxFiles <= 0 || remaining.maxTotalBytes <= 0) throw new Error(t("prompt.batchFull"))
+      const downloads = await downloadTelegramFiles(telegram, files, config.paths.uploadsDir, { ...config.attachments, ...remaining }, { deferInline: true })
       if (queued) {
         await attachmentBuffer.addFiles(promptKey, context, downloads, { text: queued.text, mediaGroupID: message.media_group_id || "", flushPrompt: queueAttachmentPrompt })
         return
@@ -159,6 +175,14 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       topicId: topicId(context.message),
       text: t("prompt.batchExpired", { duration: formatDuration(config.attachments.promptIdleMs), count: files.length }),
     })
+  }
+
+  async function discardTopicBuffers(chatId, targetTopicId) {
+    const prefix = `${chatId}:${targetTopicId}:`
+    let multipart = false, attachments = 0
+    for (const key of multipartPrompts.pending.keys()) if (key.startsWith(prefix)) multipart = multipartPrompts.discardKey(key) || multipart
+    for (const key of [...attachmentBuffer.pending.keys()]) if (key.startsWith(prefix)) attachments += await attachmentBuffer.discard(key)
+    return { multipart, attachments }
   }
 
   async function queueAttachmentPrompt(context, text, files = []) {
@@ -213,7 +237,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       const current = state.findBinding(binding.serverID, binding.sessionID)
       if (!current || current.disabled) throw new Error(t("prompt.noBinding"))
       if (current.setupProfile) {
-        const setupProfile = (current.promptProfileName && config.promptProfiles[current.promptProfileName]) || current.promptProfile || current.setupProfile
+        const setupProfile = current.setupProfile || current.promptProfile || config.promptProfiles[current.promptProfileName]
         if (!setupProfile) throw new Error(t("prompt.setupProfileMissing"))
         await applyPromptProfile(opencode, current.serverID, current.sessionID, setupProfile, { directory: current.directory })
         Object.assign(current, { agent: setupProfile.agent, model: setupProfile.model })
@@ -221,7 +245,8 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
         await state.update(() => { delete current.setupProfile })
       }
       const profile = await currentProfile(binding)
-      const preparedFiles = await prepareSavedFilesForServer(files, { server: opencode.server(binding.serverID), sessionID: binding.sessionID, signal })
+      const transferred = await prepareSavedFilesForServer(files, { server: opencode.server(binding.serverID), sessionID: binding.sessionID, signal })
+      const preparedFiles = await prepareInlineFiles(transferred)
       await state.addPendingPrompt({
         serverID: binding.serverID,
         sessionID: binding.sessionID,
@@ -255,6 +280,8 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
         await reportMissingSession(binding).then(() => { error.feedbackReported = true }, logError)
       } else await reportPromptFeedbackError(binding, error).then(() => { error.feedbackReported = true }, logError)
       throw error
+    } finally {
+      await cleanupFiles(files).catch(logError)
     }
   }
 
@@ -470,6 +497,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     flushAttachmentText,
     handleAttachmentMessage,
     discardAttachmentBatch: (key) => attachmentBuffer.discard(key),
+    discardTopicBuffers,
     hasPendingAttachmentBatch: (key) => attachmentBuffer.has(key),
     maybeExtendBindingActivity,
     multipartPrompts,
@@ -518,6 +546,7 @@ function parseQueueCaption(caption) {
 }
 
 function queueAttachmentFeedback(result, fileCount) {
+  if (result.status === "full") return t("prompt.queueFull")
   const files = t("prompt.files", { count: fileCount })
   if (result.status === "sent") return t("prompt.attachmentSent", { files })
   if (result.status === "queued") return t("prompt.attachmentQueued", { position: result.position, files })

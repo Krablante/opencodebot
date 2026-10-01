@@ -33,6 +33,7 @@ export function createTelegramCommandHandlers({
   multipartPrompts,
   createPendingTopic,
   discardAttachmentBatch = async () => 0,
+  discardTopicBuffers,
   detachBinding = () => {},
   notifyLatestManualCompaction = async () => false,
   speech,
@@ -94,10 +95,10 @@ export function createTelegramCommandHandlers({
         : (enabled ? "✓ Notifications are ready. Manage your bot in the group's General topic." : "Notifications are disabled in your settings. Manage your bot in General.") })
     },
     async handle(message, command, promptKey) {
-      const handler = handlers[command.name]
+      const handler = Object.hasOwn(handlers, command.name) && handlers[command.name]
       if (!handler) return false
-      if (command.name === "kill") multipartPrompts.discardKey?.(promptKey)
-      else if (command.name !== "reset") await multipartPrompts.flushKey(promptKey)
+      if (command.name === "kill") await discardBufferedTopic(message, promptKey)
+      else if (!["reset", "artifacts_here", "sounds_here"].includes(command.name)) await multipartPrompts.flushKey(promptKey)
       await handler(message, command.args, promptKey)
       return true
     },
@@ -329,6 +330,10 @@ export function createTelegramCommandHandlers({
     }
 
     const result = await promptQueue.enqueue(binding, input, { sourceMessageId: message.message_id })
+    if (result.status === "full") {
+      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("prompt.queueFull") })
+      return
+    }
     if (result.status === "queued") {
       await telegram.sendMessage({
         chatId: message.chat.id,
@@ -613,8 +618,7 @@ export function createTelegramCommandHandlers({
         titleSource: "user",
         ...titleFields,
       })
-      const discardedMultipart = pending ? multipartPrompts.discardKey?.(promptKey) || false : false
-      const discardedAttachments = pending ? await discardAttachmentBatch(promptKey) : 0
+      const { multipart: discardedMultipart, attachments: discardedAttachments } = await discardBufferedTopic(message, promptKey)
       const discarded = [
         discardedMultipart ? t("commands.reset.discardedMultipart") : null,
         discardedAttachments
@@ -692,8 +696,7 @@ export function createTelegramCommandHandlers({
     }
 
     const cleared = promptQueue.clear(binding, "Discarded by /reset")
-    const discardedMultipart = multipartPrompts.discardKey?.(promptKey) || false
-    const discardedAttachments = await discardAttachmentBatch(promptKey)
+    const { multipart: discardedMultipart, attachments: discardedAttachments } = await discardBufferedTopic(message, promptKey)
     const titleFields = managedTopicTitle(topicBaseTitle(topic), targetServerID, opencode.servers)
     const reset = await state.resetBindingToPending(binding, {
       ...profile,
@@ -766,7 +769,10 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("commands.speech.disabled") })
       return
     }
+    const binding = state.findBindingByTopic?.(message.chat.id, topicId(message))
     await speech.setCurrentTopic(message)
+    await discardBufferedTopic(message)
+    if (binding) { promptQueue.clear(binding); detachBinding(binding) }
     await speech.createOrRefreshMenu({ chatId: message.chat.id, topicId: topicId(message) })
   }
 
@@ -812,7 +818,7 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("commands.notifications.disabledConfig") })
       return
     }
-    const userIds = configuredFinalNotificationUserIds()
+    const userIds = configuredFinalNotificationUserIds(message.from?.id)
     if (!userIds.length) {
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("commands.notifications.noRecipients") })
       return
@@ -846,13 +852,13 @@ export function createTelegramCommandHandlers({
   }
 
   async function handleNotifyOff(message) {
-    const userIds = configuredFinalNotificationUserIds()
+    const userIds = configuredFinalNotificationUserIds(message.from?.id)
     for (const userID of userIds) await state.disableFinalNotificationsFor(userID)
     await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("commands.notifications.disabled", { count: userIds.length }) })
   }
 
   async function handleNotifyStatus(message) {
-    const userIds = configuredFinalNotificationUserIds()
+    const userIds = configuredFinalNotificationUserIds(message.from?.id)
     const enabled = config.finalNotifications?.enabled !== false ? userIds.filter((userID) => state.finalNotificationsEnabledFor(userID)) : []
     await telegram.sendMessage({
       chatId: message.chat.id,
@@ -885,8 +891,13 @@ export function createTelegramCommandHandlers({
     })
   }
 
-  function configuredFinalNotificationUserIds() {
-    return [...new Set((config.finalNotifications?.userIds || []).map(String))]
+  function configuredFinalNotificationUserIds(actorID) {
+    return [...new Set((config.finalNotifications?.userIds || []).map(String))].filter((id) => id === String(actorID))
+  }
+
+  async function discardBufferedTopic(message, promptKey) {
+    if (discardTopicBuffers) return discardTopicBuffers(message.chat.id, topicId(message))
+    return { multipart: multipartPrompts.discardKey?.(promptKey) || false, attachments: await discardAttachmentBatch(promptKey) }
   }
 
   async function handleArtifactsHere(message) {
@@ -896,6 +907,7 @@ export function createTelegramCommandHandlers({
       return
     }
     const existing = state.topicRecord(message.chat.id, currentTopicId)
+    const binding = state.findBindingByTopic?.(message.chat.id, currentTopicId)
     const target = await state.setArtifactsTopic({
       chatId: message.chat.id,
       topicId: currentTopicId,
@@ -904,6 +916,8 @@ export function createTelegramCommandHandlers({
         || existing?.topicTitle || null,
       setBy: message.from?.id,
     })
+    await discardBufferedTopic(message)
+    if (binding) { promptQueue.clear(binding); detachBinding(binding) }
     await telegram.sendMessage({
       chatId: message.chat.id,
       topicId: currentTopicId,

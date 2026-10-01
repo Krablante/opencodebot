@@ -1,603 +1,119 @@
-# Telegram Workflow
+# Telegram workflow
 
-[English](telegram-workflow.md) · [Русский](../ru/telegram-workflow.md)
+[English](telegram-workflow.md) · [Русский](../ru/telegram-workflow.md) · [All languages](../README.md)
 
-Telegram is the companion surface, not a second OpenCodez backend. The bot binds Telegram forum topics to OpenCodez
-sessions, sends prompts through the normal OpenCodez API, and mirrors visible progress from OpenCodez events and
-history. If OpenCodez says something happened, Telegram can show it; if a browser dropdown changed but no prompt was
-sent, the bot does not invent that local browser state.
-
-The useful shape is deliberately narrow. A topic is a working thread with at most one active session binding, `/new`
-creates a session-backed topic, `/reset` starts fresh without replacing the Telegram topic, `/q` keeps the next prompt
-ready while a run is busy, `/kill` stops the current run, `/compact` condenses an idle session's context, attachments
-travel with the prompt text, and optional speech transcription turns voice messages into copyable drafts without
-creating OpenCodez prompts. The mirror should feel like the visible web UI in Telegram, not like raw backend JSON.
+Use General to create topics, choose profiles and change settings. Use a working topic to talk to the agent. Each topic follows one active OpenCodez session; the session and its history remain in OpenCodez.
 
 ## Topics
 
-The bot expects a forum-enabled Telegram chat when topic creation is used. A topic can be created from Telegram with
-`/new`, or autocreated for web-created OpenCodez sessions discovered through events or bounded reconcile. When the first
-prompt materializes a `/new` topic, its new OpenCodez session is bound to that Telegram topic before profile
-model/System settings are applied; setup events therefore cannot be mistaken for an unbound web session and create a
-second forum topic. Until both settings succeed, the binding keeps its unfinished launch profile. A failed setup sends
-no prompt and reports the error; resending retries setup in the same session, including after a bot restart.
+`/new` opens a personal wizard. It shows a concrete profile, provider/model, reasoning, server and directory before creation. The default title is a random bundled Old Russian noun; **Another word**, **Title** and **Settings → Random topic names** control naming. The first ordinary prompt creates the backend session. The launch snapshot stays the one shown at creation, even if its named profile changes before that prompt.
 
-Short-lived vision sessions whose exact normalized OpenCodez title is `opencode-see delegate` are internal and ignored
-on every configured server. They do not create Telegram topics, bindings, pending-topic records, seen markers, or
-reconcile/accounting entries. Startup removes legacy bot state for previously discovered delegates but deliberately does
-not delete or close existing Telegram topics; topic deletion remains an explicit operator action.
+With several servers, titles get a managed ` (<serverID>)` suffix. User-chosen/random names survive backend title changes. A manual Telegram rename becomes topic-owned and updates retained history too. `/reset` preserves that title while changing only the server suffix when needed. Single-server titles have no suffix. Icons are random when Telegram supplies available stickers.
 
-Deleting or closing a Telegram topic is treated as an explicit stop for that topic's mirror binding. The bot disables
-the binding, clears its queued prompts and scheduled recovery, and removes its pending launch. It must not continue
-mirroring that session into `#General` or any other fallback topic. Closure has a service update; deletion is detected
-when Recent topics checks the topic or a delivery returns a missing-topic error. Bot API supplies no deletion update.
-The OpenCodez session remains intact; use `/kill` before removing the topic if its backend run also needs to stop.
+Close or delete a topic to stop its mirror. This clears queued prompts, scheduled recovery and pending launch while preserving the backend session and disabled binding history. Use `/kill` first if backend execution should stop too. Recent topics detects deletions using a silent operator-only ephemeral probe, immediately deleted; it does not reapply a saved title. Telegram has no topic-list/read method or deletion update. Network/permission/rate-limit errors preserve the binding. Each explicit opening checks at most 18 candidates, stopping when six available topics are found; another Refresh continues cleanup when many old topics disappeared.
 
-If `telegram.chatId` is missing and `telegram.allowChatBootstrap` is enabled, the first message from an allowed user
-initializes the chat in local state. For a shared bot, set `telegram.chatId` and `telegram.allowedUserIds` deliberately
-instead of relying on accidental bootstrap messages.
-
-New topics default to a random Old Russian word; General → Settings → Random topic names disables this mode. The name
-is preserved as a topic-owned title, and an explicit `/new ... Title` overrides the random choice. See [topic creation](control-menu.md#create-a-topic).
-When random names are disabled and OpenCodez later updates a session title, the linked Telegram topic is renamed too
-unless its title was chosen explicitly or preserved from an earlier random choice. This lets placeholder titles such
-as a profile name become real session titles, while `/new local sol Refactor auth` keeps `Refactor auth`.
-`/reset` always promotes the reused topic's current visible title
-to user-owned, even when the old binding was previously session-owned, so the new session cannot rename an established
-thread. New topics use a random forum icon when Telegram exposes available topic icon stickers to the bot.
-
-Topic title and icon metadata are canonical per Telegram topic, even though state retains historical session bindings
-for delayed events. A manual Telegram rename is always user-owned and updates the active, historical, and pending copies
-together. On startup, older divergent copies are repaired from the newest title update. Disabled sessions cannot resume
-title synchronization after `/reset`.
+Internal child sessions and exact normalized `opencode-see delegate` sessions do not become working topics. Their old bot records are removed without deleting Telegram topics.
 
 ## Commands
 
-One pinned Rich Message menu in General owns session discovery and global/personal settings. `/menu`, `/start`, and
-`/help` open that panel. `/new` without arguments opens a personal creation flow; `/setup` checks connections. See [General Control Menu](control-menu.md) for its UI, state, callback, and recovery
-contract.
+Common actions appear in Telegram's slash menu. Setup and advanced commands still work when typed. Bot API has no per-topic command-menu scope.
 
-Telegram's visible slash suggestions are deliberately limited to the common panel and topic actions:
+| Command | Action |
+| --- | --- |
+| `/menu` | Move the pinned General panel to a fresh message |
+| `/new` | Open topic creation |
+| `/new [server] [profile] [dir:<path>] [title]` | Create directly; session starts on the first prompt |
+| `/session` | Server, copyable session ID, status, saved launch settings and separate file/audio destinations |
+| `/q <prompt>`, `/q status`, `/q delete N` | Queue work, inspect it or remove an item |
+| `/kill` | Abort this session and discard its queued/multipart prompts |
+| `/compact` | Condense an existing idle session using native OpenCodez compaction |
+| `/reset [profile] [server]` | Start fresh in the same topic and preserve the old session |
+| `/context [N]`, `/set_context N` | Export recent turns; save a personal default, 1–10 |
+| `/reminder [on\|off]` | Show/change automatic mid-run prompt reminders |
+| `/speak` | Reply to text for one spoken summary |
+| `/help`, `/start`, `/setup` | Guide, General or connection setup |
 
-```text
-/menu                              open the singleton General control panel
-/new [server] [profile] [dir:<path>] [title]   create a topic and wait for the first prompt
-/reset [profile] [server]          preserve the old session and start fresh, optionally changing profile/server
-/session                           show topic, binding, session URL, and special topic status
-/q <prompt>                       queue or send a prompt in this topic/session
-/q status                         show queued prompts
-/q delete <number>                remove a queued prompt by status number
-/kill                             stop the current run and clear queued prompts
-/compact                          compact the current session context
-/reminder [on|off]                 show or change automatic prompt reminders
-/context [N]                      export recent completed or interrupted turns as collapsed context
-/speak                           reply to text to voice a one-off summary
-/help                            open the panel's concise usage guide
-```
+Advanced shortcuts include `/mode full|economy`, `/mirror_on`, `/mirror_off`, `/lang eng|ru`, `/notify_on`, `/notify_off`, `/notify_status`, `/debug_on`, `/debug_off`, `/debug_status`, `/update`, `/artifacts_here`, `/sounds_here`, `/sounds_off`, `/sounds_status` and `/tts`. Their normal controls live in General; [voice](final-voice.md) and [updates](self-update.md) have dedicated references.
 
-Setup and operator commands such as `/set_context`, `/artifacts_here`, `/sounds_here`, `/notify_on`, `/tts`, `/lang`,
-`/update`, `/debug_on`, `/mode`, and `/mirror_on` are still accepted when typed. They are hidden only from suggestions.
+### Direct creation and reset
 
-The bot syncs the small slash-command menu on startup through Bot API `setMyCommands` for default, private-chat,
-group-chat, administrator, configured-chat, and configured-member scopes. Bot API has no command scope for one forum
-topic, so General and working topics share this list.
-
-`/tts` is the compact Final Voice interface. `/speak` works only as a reply to a text message. See
-[Final Voice](final-voice.md) for provider configuration, command forms, global state, queue behavior, and operations.
-
-`/artifacts_here` marks the current forum topic as the only artifact target for agent uploads. If another topic later
-runs `/artifacts_here`, the new topic replaces the old one. Artifact topics do not mirror OpenCodez sessions. Ordinary
-text there is ignored as a prompt and returns concise dropbox instructions, while user-dropped files are saved to the
-configured artifact upload folder. A caption such as `workstation photo1, photo2.png` selects the server and renames files in
-order; omitted extensions are inherited from each source filename. See
-[Artifact Gateway](artifact-gateway.md#user-dropped-files) for the complete caption contract, plugin, gateway, and file
-dropbox setup.
-
-When `speech.enabled` is configured, a Telegram voice message in any ordinary non-artifact topic is downloaded and
-transcribed through the selected OpenRouter or direct Groq model. The bot replies directly to the voice message with the
-complete transcript in ordinary Telegram Mono messages; it never uses Rich Messages or a truncation marker. The original
-`Transcribing…` status becomes the first part, later parts are sequential replies to the same voice message, every
-payload stays within the ordinary 4,096-character limit after HTML escaping, and model/timing metadata appears only
-after the final part. A later-part delivery failure preserves already delivered text and adds a short retry warning
-instead of overwriting the first part. This route stops before question handling, attachment buffering, and prompt
-dispatch: the user must copy the transcript and send it as a text message before OpenCodez receives it. General audio
-files keep the normal attachment behavior.
-
-`/sounds_here` additionally marks the current forum topic as the dedicated voice/audio transcription inbox. If another
-topic later runs `/sounds_here`, the new topic replaces the old one. The command creates and pins a model menu with one
-button per available transcription model and a `Refresh` button that redraws the menu after config changes. Each button
-names the API provider, so an OpenRouter-routed Whisper model is distinct from direct Groq Whisper. Models whose
-provider key is missing stay out of the menu without disabling models from another configured provider. Dedicated speech
-topics do not mirror OpenCodez sessions: ordinary text is kept out of the prompt flow, while voice messages, general
-audio files, and supported audio documents are transcribed. `/sounds_off` clears only the dedicated inbox binding;
-ordinary-topic voice transcription remains active. `/sounds_status` shows provider readiness, the selected model,
-dedicated topic, and queue activity.
-
-`/session` shows the server and a native tap-to-copy session ID in the main table, alongside status, launch profile,
-model, reasoning and queued prompts. Expanded details distinguish the topic where the command was called from the
-assigned file and audio destinations; destination names link to those topics. Session links can use the stored project
-directory when the server is unavailable. Server lookups run concurrently with a five-second timeout, and unavailable
-or deleted sessions are not reported as ready. Launch settings are identified as saved settings rather than a live model reading.
-
-Between `/reset` and the first prompt, the new session has no ID yet; the preserved previous ID appears only in details.
-An inactive binding is labelled as the last session. FILES/AUDIO show their service purpose and no obsolete agent
-session settings. Telegram rename updates synchronize service-topic names without adding a server suffix. If the bot
-has never received a topic name, it shows that the name is unknown instead of inventing one or using the group name.
-Bot API has no read method for an existing topic's current name, so missed historical renames require a verified state
-correction. `/session` does not print secrets or runtime tokens.
-
-`/kill` is a topic-scoped stop command. It calls OpenCodez `POST /session/:sessionID/abort` for the bound session, then
-clears that topic's in-memory queued prompts so a stopped run does not immediately advance into the next queued prompt.
-It does not delete the OpenCodez session, remove the Telegram topic, or restart the backend service.
-
-`/compact` is a topic-scoped native context compaction command. It is accepted only for an existing idle binding with
-conversation history and a resolvable current provider/model. The running decision comes from authoritative live
-OpenCodez `sessionStatus`, not the prompt queue's in-memory busy hint; stale queue state therefore cannot block
-compaction after a final response, while a genuinely non-idle backend still rejects it. A separate in-memory
-`compactOperations` guard prevents duplicate compaction requests that are actually in flight. The bot calls OpenCodez
-`POST /session/:sessionID/summarize` with `auto=false` in the background, so Telegram polling remains responsive during
-a long summary run. A status message shows `Compacting context…` while it runs. On success the bot removes that status
-and posts the same completion marker as other compactions; on failure the status changes to the error.
-Prompts received after the operation starts use the ordinary per-session queue and are released after OpenCodez is idle
-and the summarize request has completed successfully; queue release does not depend on receiving a terminal SSE event.
-The command also refreshes the binding's bounded reconcile lease before it starts. OpenCodez's internal assistant message
-marked `summary=true` is recorded as handled but never mirrored into Telegram. `/compact` does not create a session, change the selected model,
-delete history, or modify OpenCodez/Harness deployment state. Use `/kill` if an in-progress compaction must be aborted.
-
-Every successful completed compaction posts one `🗜️ session compacted` message in the active session topic, whether
-started automatically, by `/compact`, or manually in OpenCodez. The marker can arrive before the final answer if
-OpenCodez continues working. It appears in both mirror modes and contains no summary or private context. Closed,
-reset, and unbound topics receive no marker. The bot tracks delivered compactions across restarts and checks recent
-session history if a live event was missed. If a `/compact` notification cannot be delivered, its status message
-still changes to the success result.
-
-Automatic prompt reminders are on by default. After automatic compaction during an active run, the bot sends the
-original request back to the same OpenCodez session with an English `REMINDER:` introduction and its attachments.
-The introduction asks the agent to continue from its progress and preserve later user corrections. Once OpenCodez
-has saved the reminder, the topic receives `🔁 Original prompt added as a reminder.`; the full repeat is not mirrored
-or pinned as a new human prompt. Delivery uses the existing backend API and needs no plugin. OpenCodez may take another
-step before consuming the reminder.
-
-Use `/reminder` (or `/reminder status`) to check the setting, `/reminder off` to disable it, and `/reminder on` to enable
-it. This setting applies to all mirrored topics and survives restarts. Manual compaction, pre-turn compaction, closed
-topics, and stopped or finished runs receive no reminder. Previously completed compactions are not replayed on upgrade.
-Repeated compactions resolve to the original request rather than nesting reminders. Images and other inline media reuse
-their saved payloads; text attachments reuse their captured text, and large uploaded files keep their server-local paths.
-These paths must remain available. Repeated content still has to fit the model's context.
-
-`/context` exports the latest three main-session user turns from the topic; `/context N` overrides the count once and
-`/set_context N` stores a personal default for that Telegram user. `N` is limited to 1–10 and counts both completed and
-interrupted turns. A completed turn contains the user prompt plus its final `finish=stop` answer. A ledger-marked
-interruption, or an older user prompt superseded by a later user turn without a final answer, is exported as
-`### User — interrupted`, the original prompt, and all visible assistant text messages accumulated in that turn as
-numbered `### Progress N` sections. Progress is not labeled as final; `visibleTextFromParts` excludes reasoning, tool
-payloads and step metadata. The active unfinished turn has no interruption marker and remains omitted. Extraction pages
-backward only until enough eligible turns are available, excludes subagent sessions and synthetic prompts, and keeps
-attachment descriptors with user prompts. The resulting Markdown-like text is HTML-escaped inside
-`<details><summary>…</summary><pre><code>…</code></pre></details>` so the topic remains visually compact and Telegram
-clients can expose their native code-copy control after expansion. Collapsing is presentation, not access control: every
-chat member who can read the topic can expand the exported context. Escaped content is packed below 30,000 UTF-8 bytes
-per Rich Message, split without truncation, and rejected above a 240,000-character safety ceiling. The bot stores only
-the per-user numeric default, never exported prompt, progress, or answer text. Rich Message delivery is fail-closed:
-already sent parts are deleted best-effort after a later-part failure and the fallback is a short error, never the full
-context as plain text.
-
-`/reset [profile] [server]` is a topic-scoped context reset. With no arguments, it preserves the current binding's
-profile, server, and directory. The inherited profile is resolved from the current configuration so its complete agent,
-model, variant, and System settings are applied. If the profile was deleted, the retained launch snapshot keeps reset usable; only a topic with neither a resolvable profile nor a snapshot needs an explicit selection. One argument may be either a configured profile or server; two arguments
-are interpreted strictly as profile then server, so `/reset solh workstation` changes both while `/reset workstation` changes only the
-server. Unknown, extra, or ambiguous arguments are rejected before any abort or state change. A same-server
-reset preserves the exact current directory. A cross-server reset first checks the target backend and then uses that
-server's configured default new-session directory instead of carrying an invalid host-local path across machines. Only
-after a successful preflight does the command apply the same backend abort boundary as `/kill`; abort failure leaves the
-active binding in place. On success the bot clears queued prompts, an unfinished multipart prompt, and buffered
-attachments, then atomically disables the old binding and records the same topic as pending on the selected server. The
-previous OpenCodez session remains available on its original server, while delayed reconcile and run-watchdog work can
-no longer write into the reused topic. The next normal prompt lazily creates and binds the new session. Before sending
-that prompt, the bot switches the OpenCodez session's next model and selects its System prompt, keeping the web composer
-aligned with the prompt payload.
-
-Running `/reset` again while the topic is pending is safe: it discards any newly buffered multipart prompt or
-attachments, applies supplied profile/server overrides with the same preflight and directory rules, and reports that the
-first prompt is still expected. It does not abort or create another session in this state. The response shows profile,
-server transition, effective directory, managed topic title, preserved session id, and the first-prompt action with
-concise emoji labels. The redundant “topic name will be preserved” sentence is intentionally omitted. The command is
-rejected in `#General`, the artifacts topic, the sounds topic, and a manually created topic that has no active or
-pending binding.
-
-`/new` parses arguments from left to right. If the first argument matches a configured server id, that server is used.
-If the next argument, or the first argument when no server was given, matches a profile in `promptProfiles`, that profile
-is used. A `dir:<path>` or `directory:<path>` argument sets the OpenCodez session directory for this topic; otherwise
-the configured new-session directory policy chooses the server home when available or leaves the OpenCodez default.
-Quote the whole directory argument when it contains spaces, for example `/new local sol "dir:/workspace/My Project" My topic`.
-Everything left becomes the user-owned topic title, including unknown server/profile tokens; a typo does not select that
-server or profile. For a title matching a configured name, specify server and profile first: `/new local sol sol` names
-the topic `sol`. The built-in guide shows all combinations and explains wizard versus direct creation.
-
-Telegram topic titles include a managed ` (<serverID>)` suffix only when two or more OpenCodez servers are configured.
-The suffix is applied to `/new`, web-created topics, backend title synchronization, manual topic renames, and `/reset`;
-changing server replaces only the managed suffix without changing the user-owned base title. For example,
-`/reset sol workstation` turns `trash (local)` into `trash (workstation)`. Single-server installations keep plain titles. The formatter
-recognizes every configured server suffix, reserves suffix space inside Telegram's 128-character title limit, and avoids
-duplicate suffixes.
-
-Examples:
+`/new` parses server first, then profile, then optional `dir:`/`directory:` and title. Unknown tokens remain title text; a typo does not select another server/profile. To name a topic after a configured name, specify server and profile first. Quote a whole path argument with spaces.
 
 ```text
-/new TGBOT
+/new Review uploads
 /new workstation Release check
-/new d4flash Fix upload flow
-/new local sol Architecture pass
-/new local terra dir:/srv/opencodebot Artifact gateway
-/new workstation d4flash dir:"C:\Users\Operator\code\project" project
+/new sol Fix parser
+/new workstation sol Review uploads
+/new workstation sol "dir:/workspace/My Project" Review uploads
+/new workstation sol sol
 /reset
-/reset sol
-/reset terra
+/reset solm
 /reset workstation
-/reset solh workstation
+/reset solx workstation
 ```
 
-New installations start with `d4flash`, `sol`, `solm` and `solx`. Existing installations import their former profile collection once. GPT-6.1 Sol uses `sol=high`, `solm=medium`, `solx=xhigh`. See [Prompt Profiles](config-runtime.md#prompt-profiles) for ownership and migration. Each profile keeps its agent, model, variant, and optional System selection in durable preferences. After creating the session and before sending the first
-prompt, the bot switches the session's next model and selects that System.
+With no reset arguments, profile/server/directory are inherited. An existing named profile is resolved from current preferences; a deleted one falls back to the retained topic snapshot. One argument selects a profile or server; two mean profile then server. Ambiguous, unknown or extra arguments are rejected before abort or state changes. Same-server reset keeps the directory; a different server gets its own default directory after preflight. Abort failure preserves the active binding. A successful reset atomically disables the old binding and records a pending launch. Repeating reset while pending creates no extra session. General, FILES, AUDIO and unbound manual topics cannot be reset.
+
+`/session` distinguishes active, pending, disabled, deleted and unavailable sessions. Pending launches have no new ID; the previous ID appears in details only. Service topics show their purpose without obsolete agent settings. Unknown destination names remain explicitly unknown. Backend reads run concurrently with five-second limits, so an offline server does not freeze the command.
 
 ## Prompts
 
-For an existing topic, the bot sends prompts with the session's current `agent`, `model`, and `variant`, or the last
-user-message metadata when available. Last sent settings win. For a new topic created from Telegram, the bot uses the
-runtime default profile unless a configured chat profile overrides it.
+Send ordinary text in a working topic. Near-limit multipart text is briefly collected into one prompt. Files with captions travel with that text; captionless files wait for text from the same actor/topic. Rich Messages preserve readable text and supported photos through the same route. File counts/sizes are checked before download and against the actual remaining batch budget.
 
-Long Telegram-origin prompts can arrive as multiple Telegram messages. Near-limit prompt parts are held briefly in
-memory and joined with a blank line before being sent to OpenCodez. Ordinary short messages are sent immediately.
-
-After a Telegram prompt is handed to OpenCodez, the bot sends a short acknowledgement in the same topic. If the topic is
-not bound, the backend rejects the prompt, or OpenCodez later emits a session error, the bot reports that in Telegram
-instead of dropping the message silently. Session errors include a normalized error title, status code, and provider
-message when available. The event's structured `error.data.message` is authoritative; when an event contains no detail,
-the bot checks the latest assistant error in OpenCodez history. Known message-less errors receive a short operational
-explanation, such as running `/compact` after context overflow. Telegram output is capped and never serializes raw
-provider response bodies, headers, metadata, or arbitrary nested fields. Expected abort fallout from `/kill`, reset,
-rewind, and queue interruption remains suppressed.
-
-If a prompt receives an authoritative session-level `404`, the stale binding and all bot state scoped to that OpenCodez
-session are deleted instead of being retained as disabled history. The existing Telegram topic is converted to a clean
-pending topic with its server, directory, title, and launch profile preserved. Telegram explains that the prompt was not
-accepted and asks the user to send it once more; that retry creates a fresh OpenCodez session in the same topic.
-
-The first two `session.status=retry` events stay silent so brief provider recovery does not create Telegram noise. From
-attempt three, the acknowledgement becomes one concise warning with the provider message, attempt number, time until the
-next attempt, and an action button when OpenCodez supplies a safe web link. Later retries edit that same message instead
-of adding topic noise. The warning disappears as soon as assistant/tool output resumes, the session becomes idle, or a
-terminal error replaces it. This uses the existing event stream and prompt-feedback message; it adds no polling timer or
-persistent retry state.
-
-Telegram-origin prompts can include attachments. The bot downloads supported files into its local staging uploads
-directory. Small files are sent to OpenCodez as data URL file parts next to the prompt text. Larger accepted files are
-copied to the selected server's configured `uploadRoot`, and the prompt receives that server-local path. Files with
-captions flush as one prompt after media groups settle. Files without captions wait for plain text from the same
-user/topic; if Telegram splits that text into near-limit chunks, those chunks are collected until the short
-attachment-text idle window settles and then sent with the files as one prompt.
-
-Telegram-authored Rich Messages are normalized before ordinary command and prompt routing. Telegram `RichText` strings,
-mixed arrays, and nested formatting nodes are flattened in source order without dropping visible spans. Paragraphs,
-section headings, list labels and captions, quote captions and credits, preformatted captions, details headers, tables,
-custom-emoji alternatives, mathematical expressions, and explicit link targets keep readable plain-text structure.
-Ordinary `text` or `caption` messages with Bot API `entities` keep the original Telegram string unchanged; entity offsets
-are metadata and are never used to slice prompt content. Rich Message normalization is only the fallback when those
-ordinary fields are absent.
-Photo blocks, including photos nested in collage or slideshow `blocks`, select the largest Telegram
-`PhotoSize` and enter the same attachment download, size-limit, buffering, queue, reply-to-rewind, and OpenCodez
-file-part path as ordinary photos. File descriptors are deduplicated by Telegram file identity. Rich text plus photos
-sends immediately as one prompt; photo-only rich messages wait for follow-up text exactly like ordinary captionless
-photos. Unsupported rich media types are reported in safe metadata-only logs, and a Rich Message with no readable text
-or supported photos receives a concise resend hint instead of being silently ignored.
+Acceptance appears as one short status message. From the third provider retry it becomes one editable warning; output/idle removes it. A rejected prompt receives a concise error. If the backend session was deleted, the topic becomes pending and asks for a resend; no replacement prompt is silently issued. OpenCodez always generates message IDs.
 
 ### Reply-to-rewind
 
-Reply to an earlier Telegram **user prompt** in an active bound topic to replace that turn. The reply may contain text,
-attachments, or both. The bot stores a compact durable link from the Telegram message id to the exact OpenCodez
-user-message id; it does not retain prompt text or attachment contents for this feature, and the link survives a bot
-restart.
+Reply to an earlier Telegram user prompt to replace its exact OpenCodez turn. The stored origin link must belong to the same active session/topic and unreplaced branch. Replies to old pre-reset prompts or another topic are rejected; unrelated replies remain ordinary prompts. Prompts predating durable origin links cannot rewind.
 
-For a valid reply, one service message progresses from `🟡 Reverting…` to `🟢 Reverted`; the normal
-`Accepted by OpenCodez` service message is not emitted for this flow. The rewind status is sticky through mirrored
-OpenCodez user and assistant output, then is cleared only when the next ordinary prompt, another rewind, or a topic
-reset supersedes it. The bot discards later queued prompts, aborts an active run when necessary, waits for the OpenCodez
-session to become idle, calls OpenCodez's session-revert API at the replied user message, and sends the reply as the
-replacement prompt. OpenCodez restores the saved working-tree state and removes the reverted branch as it accepts that
-replacement prompt. Before changing its durable origin links or sending the replacement, the bot requires the returned
-session to confirm both the bound session id and the exact reverted user-message id, with no partial-revert marker. A
-missing or stale target therefore leaves the branch and origin links unchanged and does not send the replacement. If the
-backend response is absent or ambiguous, the status says that the revert was not confirmed and the replacement was not
-sent; inspect the current session before retrying. If the revert succeeds but its replacement prompt cannot be sent, it
-becomes `🟠 Reverted · replacement not sent`.
-
-The guard is intentionally strict: the replied prompt must belong to the same active `(server, session, Telegram topic)`
-binding. A reply to a prompt from before `/reset`, another topic, a closed session, or a branch already rewound is
-rejected and is never silently sent to the current session. A reply to an unrelated Telegram message keeps normal prompt
-behavior. Prompts created before this feature was deployed have no durable Telegram-to-OpenCodez link and therefore
-cannot trigger a rewind.
-
-OpenCodez is the sole owner of message ids. Telegram prompts are submitted without a client-generated id. The bot keeps
-a short pending marker and records the reply-to-rewind origin only after `session.next.prompted` reports the canonical
-OpenCodez user-message id; full reconcile provides the same fallback when the live event was missed. Client ids such as
-`msg_tg_*` must never be introduced: imported or migrated histories may contain non-monotonic ids, and only OpenCodez can
-preserve the canonical message identity and Web UI grouping for its session history.
-
-```text
-workstation upload root: /home/operator/.opencodebot/uploads
-```
-
-Supported attachment inputs include documents, photos, videos, animations, audio, voice messages, video notes, and media
-groups. File count, file size, total size, and cleanup limits are conservative runtime settings. Cloud Bot API mode
-clamps download size to Telegram's cloud limit; local Bot API mode can accept larger files when configured.
-
-## Telegram update isolation
-
-Topics are processed independently, including messages that arrive in later Telegram batches. A slow transcription or
-file upload does not hold up the next fetch. Each chat/topic keeps its input order; up to two handlers run per OpenCodez
-server. Control work, speech, and artifact dropbox uploads have separate two-handler groups, so long speech/file work
-does not occupy the control-menu slots. Work sharing a saturated group still waits for a slot. First-chat bootstrap is
-serialized until its initial handlers finish.
-
-`getUpdates(offset)` acknowledges earlier events at Telegram itself. Before advancing that cursor, the bot saves the
-received events and cursor together in a synced local inbox journal. It then immediately continues polling while topic
-handlers work. Successful handlers retire their events individually, including out-of-order completion across topics.
-An action that failed but delivered an error notice is also finished; an error without delivered feedback retries in its
-own topic with backoff from 2.5 to 30 seconds, releasing its group slot between attempts. Later input in that topic waits
-behind the retry, while other topics continue.
-
-The inbox has a 1,000-event limit and a 16 MiB pending-payload threshold. Telegram returns at most 100 events per fetch,
-further limited by the remaining event capacity; the byte threshold may be exceeded by that final fetched batch. At
-capacity, intake pauses and Telegram retains subsequent events until there is room. This is overload backpressure, not
-a barrier after every batch. Startup, retry, and capacity transitions are logged without message contents; `health:live`
-reports pending event count, bytes, and any capacity pause through the existing health snapshot.
-
-Shutdown cancels polling and API work; unfinished inbox events survive and resume in topic order on restart. A crash
-after an external side effect but before its completion record can still replay that action: this is not an exactly-once
-delivery promise. The inbox covers input-handler lifetime, not downstream memory-only queues. Once an event has been
-handed to `/q`, multipart/attachment or media-group buffering, or an internal speech queue, those existing buffers still
-have their documented restart limits. Inbox storage, migration, and recovery are described in
-[Config And Runtime](config-runtime.md#paths-and-state).
+The bot discards later queue items, aborts if needed, waits for idle, and asks OpenCodez to revert. It requires the returned session and user-message ID to confirm the exact target before changing origin links or sending replacement text/files. One status message moves from Reverting to Reverted, or explains that confirmation/replacement failed. Rewind uses OpenCodez's own working-tree and history restoration.
 
 ## Queue
 
-`/q <prompt>` checks authoritative OpenCodez status on admission, including after a bot restart. It sends immediately when
-the bound session is idle and its local terminal-mirror gate is clear. If the session is busy, the prompt is kept in
-memory for that session. The same rule applies to a file or media group whose caption starts with `/q`: the prompt text
-and downloaded attachments stay together in the queue and are sent as one prompt after the current run finishes.
+`/q` checks backend status when admitted. Idle work starts immediately; busy work waits in memory with its files. Release requires backend idle plus a delivered terminal answer/notice, in either order. History recovery supplies missing final/idle signals. Questions and in-flight manual compaction hold the queue. A failed run clears pending items and lists their summaries; duplicate events cannot release two prompts.
 
-The queue advances only after both conditions are true: OpenCodez reports the session idle, and the terminal assistant
-answer from that run has been mirrored to Telegram. The signals may arrive in either order. On an idle event the bot
-reconciles OpenCodez history before releasing the queue, so a missed or delayed terminal SSE event cannot cause the next
-prompt to overtake the final answer. Reconciliation also replays a terminal signal for an already mirrored final and
-checks authoritative backend status while a queue is non-empty, so a missed idle event cannot leave the next prompt
-waiting indefinitely. Duplicate idle events and reconcile passes are idempotent and cannot release multiple prompts. If
-OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and
-lists the cleared items by number plus the same first-words summary used by `/q status`. A service restart drops queued
-prompts instead of writing full user prompts into `state.json`. Standard `session.error` and step-failure events share
-the same queue-clearing behavior. While a bot-initiated `/compact` request is in flight, ordinary text and `/q` both wait
-behind its explicit queue hold, even if a terminal or idle event arrives before the summarize request returns.
-Kill, reset, and rewind cancel that same in-memory compaction operation, preventing its late completion from releasing
-or changing the queue state of a replacement run.
+Limits are 20 waiting prompts per session, 100 overall and 64 MiB of text/inline content. Full queues reject with an explicit resend notice; `/q delete N` makes room. Kill, reset, closure/deletion and conversion to FILES/AUDIO discard the whole topic's multipart/attachment buffers, including other operators' pending input. A restart drops queues and downstream buffers. It does not delete backend history. [Storage guarantees](config-runtime.md#paths-and-state) explain why durable input receipt is a different boundary.
 
-The bot observes a new `message.updated` user message as the practical start of a run; `session.next.prompted` remains
-supported but is not required because classic OpenCodez prompt flows do not reliably emit it. On every bound-session
-idle event, the bot waits briefly and treats freshly fetched OpenCodez message history as authoritative. The latest
-assistant in the latest logical user turn counts as a successful answer only when it ends with `finish=stop` and contains visible
-non-synthetic text, or when it is a known internal summary. A missing assistant, `finish=unknown`, a tool-call-only
-ending, an output-limit ending, or another non-terminal ending produces one `OpenCodez run was interrupted` warning with
-an `Open session` button. A terminal stop with no visible text produces the more precise
-`OpenCodez stopped without a final response` warning. Each warning explains the last state in plain language and counts
-as the terminal notice that allows `/q` to continue.
+## Compaction and context
 
-Recent periodic reconciliation performs the same status-and-history check, so a missed idle event or bot restart does
-not permanently disable detection. A periodic message snapshot that appears incomplete is never treated as terminal
-immediately: it enters the same short grace path and is fetched again after the backend reports idle, preventing a
-just-completed `finish=stop` update from racing with an older snapshot. Repeated reconcile passes reuse the already
-scheduled grace check instead of postponing it indefinitely. When that authoritative idle snapshot contains an
-unmirrored final answer, the bot sends that exact stored assistant message directly; this also covers a final produced
-immediately after compaction when its live text/step events were missed. The real Telegram message then follows the
-ordinary final-notification path. It never creates a DM for an already mirrored historical answer or without an exact
-Telegram `message_id`. Repeated user updates, duplicate idle events, and reconnect reconciliation are idempotent.
-`state.json` keeps a bounded handling ledger keyed by server, session, and
-originating user message; once an outcome is handled, this prevents duplicate warnings across later reconnects or restarts
-without storing prompt text. Expected stops initiated by `/kill`, queue interruption, rewind, or reset are recorded in
-the same ledger when their idle outcome is handled and do not generate an interrupted-run warning. Pending OpenCodez
-questions continue to suppress the check while user input is required.
+`/compact` requires an idle existing session with history and a known model. It runs in the background and accepts later prompts into the queue. Kill/reset/rewind cancel the bot's in-flight operation. Completion posts one `🗜️ session compacted`; internal summaries remain private. The same marker appears for automatic or web-initiated compaction.
 
-Explicit `session.error`, failed assistant steps, and unexpected interrupted or empty-terminal outcomes additionally
-send a short private operational alert to every configured `finalNotifications.userIds` recipient. These alerts are
-independent of the `/notify_on`/`/notify_off` final-answer preference because they represent failed work. They include
-only the topic title, source host, concise error/reason, and `Open topic`/`Open session` buttons; prompt, progress, tool
-output, and answer text are excluded. Expected `/kill`, queue interruption, rewind/reset, and normal compaction stops
-remain silent. A bounded `state.runAlerts` marker keyed by recipient and the latest active user prompt deduplicates
-multiple error event shapes and later interruption reconciliation without suppressing a later failed continuation in the
-same session.
+Reminders are initially on. Automatic compaction during active work rebuilds the original request and attachments from OpenCodez and adds an English `REMINDER:` asking the agent to preserve progress and later corrections. Admission must succeed before `🔁 Original prompt added as a reminder.` appears. The repeated payload is not mirrored as another human prompt. Manual/pre-turn compaction, finished/stopped runs and disabled topics receive no reminder. Repeated compactions follow the original request rather than nesting reminders. Retained large-file paths must still exist.
+
+`/context` exports three recent main-session turns, or the selected 1–10. Completed turns contain the original request and final answer. Interrupted or superseded turns contain the request and numbered visible progress notes; active unfinished turns are omitted. Compaction/replay/reminder records stay inside the original logical turn. Reasoning, tools and internal summaries are excluded.
+
+Context arrives in collapsed Rich Message code blocks, fully escaped and split without truncation. The total ceiling is 240,000 characters, with chunks below 30,000 UTF-8 bytes. If later delivery fails, prior parts are removed best-effort and only a short error remains. **Collapsed content is readable by every group member**, not private storage. The bot persists only your numeric depth preference.
 
 ## Questions
 
-OpenCodez `question.asked` events are mirrored into the bound Telegram topic. A request containing one single-choice
-question gets one button per option. Clicking an option replies through the OpenCodez question API, removes the
-keyboard, and edits the same Telegram message to show the selected answer. If the question is answered or rejected in
-OpenCodez first, `question.replied` or `question.rejected` updates the Telegram message instead.
+A single-choice OpenCodez question has one button per option. A click answers through the backend, removes the keyboard and updates the same message. For custom answers, reply to the question message with text. Multi-question/multi-select requests link to OpenCodez. A question resolved in the web UI also closes its Telegram controls.
 
-Requests with multiple questions or multi-select answers are shown without answer buttons and direct the operator to
-OpenCodez. For a single question that allows a custom answer, the operator can reply directly to the Telegram question
-message with ordinary text. The bot sends that reply through the OpenCodez question API, edits the original question
-message, and does not mirror the reply as a new session prompt.
+Pending questions are recovered by the existing 15-second reconcile loop and after SSE reconnect, sharing host backoff and per-request single-flight. They never count as a terminal queue signal. Blocking question alerts reach configured DM recipients even when their final-answer notifications are off.
 
-Every configured final-notification recipient receives a separate direct message with a button linking to the topic
-question. Question alerts are blocking-work notices, so they use the configured recipient list even when final-answer
-notifications were toggled off with `/notify_off`.
+## Final notifications
 
-Minimal question/message bindings are kept in `state.json`. OpenCodez `question.*` events are ephemeral and cannot be
-replayed after an event-stream gap, so pending-question recovery is not limited to startup: the bot checks every unique
-active bound working directory during the existing 15-second reconcile loop and immediately after every SSE reconnect.
-The same recovery recreates questions that do not yet have a saved Telegram message and closes stale keyboards. A single
-in-flight operation keyed by OpenCodez server/request id makes simultaneous SSE and polling discovery idempotent.
-Backend outages use the shared backoff instead of producing a request/log storm. A pending question suppresses the
-incomplete-run watchdog and never counts as a terminal queue signal.
+Open the private bot chat once. Final DMs are per-user and can be disabled; `/notify_on`, `/notify_off` and `/notify_status` affect only their caller. Blocking questions and run-failure alerts still arrive. A final DM is sent only after a concrete Telegram final-message ID exists, with recipient-specific durable dedupe. Historical restart catch-up does not backfill DMs.
 
-`/kill` also clears the queue for the current topic after sending the OpenCodez abort request, and it discards any
-pending multipart prompt buffer instead of flushing that text as a new prompt. This keeps the command's meaning simple:
-stop the active run and do not launch another queued prompt automatically.
+The DM links to the exact answer and shows the current topic name/icon, logical-turn duration, actual model/reasoning, aggregate input/output/cache tokens, quoted original request, a completed task list when available, and compact tool/patched-file counts. It does not repeat the answer. Child-session usage is excluded. `/debug_on` adds global timing/TPS/tool diagnostics; `/debug_off` removes them. TPS measures end-to-end model-step throughput after known tool intervals, not peak streaming speed.
 
-## Final Notifications
+## Files and audio
 
-Final-summary metadata is read from the exact completed assistant message and paged backward only to the current turn's
-originating user message. A responsive compaction marker's durable `turn_id`/`replay_id` lineage makes replay and
-synthetic continuation messages part of that same logical turn, so wall-clock duration, model calls, token usage, tools,
-diagnostics, and the quoted prompt do not restart at an internal user record. If the exact-message or paginated API path fails, the bot uses a full-history recovery lookup;
-notification content is unchanged.
+FILES receives agent artifacts and saves user uploads on the selected server. Empty captions use the default server; `workstation first, backup` selects a server and renames files by position. Existing files are never silently replaced. [Artifact delivery](artifact-gateway.md#user-dropped-files) describes paths, extensions and setup.
 
-`/notify_on`, `/notify_off`, and `/notify_status` control private DM notifications for `finalNotifications.userIds`.
-When enabled, the bot sends a short private message to each configured recipient only after a final answer has been
-mirrored into Telegram and has an exact Telegram `message_id`. Delivery is deduplicated independently per recipient and
-final assistant message. Restart reconciliation never backfills a DM for an already mirrored historical answer or links
-only to a topic root. The DM includes a source `Topic:` line from the topic's current canonical Telegram
-metadata, not the stale session snapshot that happened to finish, with the Telegram topic name and topic custom emoji
-when Telegram provides it. A compact `⏱️ … · 🤖 model (variant)` line reports wall-clock time from the originating external user
-message to the completed final assistant message plus the main model metadata for that turn. The following
-`🪙 Tokens: total · in … · out … · cache …` line sums every assistant model call in the same main-session turn: `out`
-combines output and reasoning tokens, while `cache` combines cache reads and writes. Child/subagent sessions and their
-models or token usage are not included. The DM also includes an `Open topic` button targeting the exact mirrored answer,
-quotes the original user prompt in an expandable block for orientation, and includes a compact quoted `📋 Tasks [n/n]:`
-checklist when the agent closed a todo list for that run. A separate quoted `Tools:` / `Patched:` block counts
-non-hidden tools in the current user turn and lists file names from successful structured file mutations separated by
-semicolons. Task/subagent tools and configured hidden tools are omitted. Shell calls remain in `Tools`, but the bot does
-not guess changed paths from arbitrary shell command text. The DM does not include the final answer text.
-
-`/debug_on`, `/debug_off`, and `/debug_status` control one global persistent final-DM diagnostics mode for the bot. The
-commands work from any allowed command context; when enabled, every final DM ends with an expandable
-`🐛 Run diagnostics` block showing agent-step p50/p95/max, effective output TPS, exact completed/error ToolPart timing
-totals, failure count, and the three slowest raw tool names. Overall duration is intentionally not repeated because it
-already appears in the notification header. Effective TPS divides output plus reasoning tokens by assistant-step time
-after subtracting the union of known tool intervals; its average is token-weighted across the turn, while p50/p95
-describe individual steps. It deliberately includes context prefill/cache retrieval, provider/network latency, and model
-stream stalls, so it measures real agent throughput rather than burst token streaming after first token. OpenCodez does
-not expose protocol origin in ToolPart metadata, so the block labels the combined metric `Tools/MCP` instead of guessing
-which non-built-in names came from MCP. `Σ` is cumulative tool time and may exceed overall duration when calls overlap.
-Debug diagnostics are omitted entirely from all final DMs when the global mode is off.
+Voice notes in ordinary non-FILES topics are transcript-only drafts when speech is enabled. AUDIO additionally accepts audio files/documents. Long transcripts are losslessly split into ordinary copyable Mono messages with metadata only after the last part. Send the transcript as text to give it to the agent. `/sounds_off` clears the dedicated topic, not ordinary-topic transcription. Spoken final answers are configured separately in [Final Voice](final-voice.md).
 
 ## Mirror
 
-Web-origin text prompts are mirrored into Telegram with a small `💬` marker. Prompts that fit the configured
-ordinary-message limit keep the lightweight `sendMessage` path. Longer prompts use escaped Rich Message HTML with a
-clear `Web prompt` heading and entity auto-detection disabled, so arbitrary user Markdown, code, links, and HTML-looking
-text stay literal. Only prompts beyond the conservative 32,000-character rich limit are split into numbered rich
-messages. If Telegram rejects rich delivery before it completes, the bot falls back to the existing numbered
-ordinary-message chunks without truncating prompt text. Telegram-origin prompts are suppressed when the bot can match
-them to its own pending send. Consuming that pending marker also binds the canonical OpenCodez message id to the
-original Telegram message for reply-to-rewind.
+Economy is the initial mode: visible progress, final answers and failures, with ordinary tool output hidden. Full mode adds compact expandable tool status. Both hide reasoning, raw arguments, internal bookkeeping and child activity; both show a short subagent-spawn title. Completed text blocks are sent once, not edited per token. Rollback part-removal events delete stale progress best-effort.
 
-OpenCodez compaction markers, replayed users, and synthetic continuation prompts are backend control records, not new
-human prompts. The mirror follows the compaction lineage and marks those records handled without posting a
-`💬 Web prompt`, including after reconnect reconciliation. Repeated compactions resolve back to the original external
-user turn.
+Web prompts are literal escaped text: ordinary messages first, Rich Messages for longer input, splitting beyond 32,000 characters. A rich rejection falls back to complete ordinary chunks. Telegram-origin prompts are matched to canonical backend IDs and do not echo as web prompts. Local Markdown links/images become readable paths; HTTP images get one link-only retry if Telegram rejects photo content. Other formatting failures use ordinary text; transport failures propagate. Final `finish=stop` text gets `🏁`, and its originating user prompt is pinned.
 
-Assistant text is accumulated from standard OpenCodez `message.part.delta` events only after `message.updated` has
-identified the message as assistant-owned and a full part event has identified the same part id as `type=text`. OpenCodez
-reasoning also uses `field=text`, so field name alone is never treated as proof of visible output; reasoning and unknown
-parts cannot enter the Telegram renderer. Accumulation ends when the matching text part receives a completed
-`message.part.updated` event. The bot does not edit Telegram token-by-token. Each completed assistant progress note is
-mirrored once using its OpenCodez message id as the durable dedupe key. A completed assistant `message.updated` event
-finalizes the message; an exact-message lookup runs only when live part delivery was missing.
-Completed/final assistant text is sent as Telegram Rich Message markdown. Local links and Markdown images become readable
-labels with code-formatted paths before delivery, for example `Screenshot — /tmp/preview.png`; Telegram cannot fetch files
-from an agent's filesystem. This preserves the rest of the answer's emphasis, lists, and links instead of letting one
-local image force the entire answer into raw Markdown. Inline and reference-style links share the same CommonMark
-handling, including spaces and parentheses in destinations; literal examples in code remain untouched. Actual file
-delivery still uses the attachment/artifact path, not automatic filesystem reads by the text renderer.
+## Telegram update isolation
 
-HTTP(S) images remain images on the normal path. If Telegram rejects photo content, the bot retries once as a Rich Message
-with image links instead of embedded photos. Subsequent edits of that block, including the final marker, reuse this choice
-without retrying the broken image. Other Rich Message rejections retain the last-resort ordinary-text fallback; transport
-errors propagate rather than triggering a second send in another format. Recovery logs use `mirror.text.image_links` and
-`mirror.text.rich_fallback` without answer text or image URLs.
+Topic handlers keep input order while later Telegram batches continue arriving. Two handlers run per backend, with separate control, speech and upload groups. First-chat bootstrap stays serialized. Receipts are synced before `getUpdates(offset)` acknowledges them; completions retire individual events, including out of order across topics.
 
-Real final answers are identified by `finish=stop` and marked with `🏁 ` on the exact delivered text block being finalized.
-If that block starts with a Markdown quote or heading, the marker goes inside its first line so Telegram renders the
-quote or heading instead of a literal `>` or `#`. Before a leading code fence or list, the marker gets its own line.
-The bot pins the user prompt that started the run: the original Telegram message for Telegram-origin prompts, or the
-mirrored user message for web-origin prompts.
-
-Responsive retries can roll back already emitted OpenCodez parts. A `message.part.removed` event removes the matching
-Telegram progress text or tool line best-effort and clears its short-lived renderer index, so a replacement attempt does
-not leave stale output beside the new branch. Removal never rewrites OpenCodez history or durable bot state.
-
-Telegram Rich Message currently loses the parent list level after a nested Markdown or HTML list: a following top-level
-item is rendered as another child, and each later nested list can push subsequent siblings deeper. Before sending rich
-markdown, the bot parses CommonMark into mdast. A list block that actually contains another list is rendered as
-parser-neutral visual lines with hard breaks, guarded ordered markers, literal bullets, and fixed visual indentation;
-inline emphasis, code, and links remain Markdown. Simple one-level lists and text that only looks like a list inside
-fenced code are left unchanged. Parsing or normalization failure is fail-open and keeps the original
-rich-message/fallback path.
-
-`/mode full` and `/mode economy` switch one persistent global mode for all mirrored topics; `/mode` reports the current
-value. Both modes emit one short `🤖 Subagent spawned` notice when a task/subagent is started. The notice uses the
-web-visible task title when OpenCodez provides it, falling back to the subagent type only when there is no title. Full
-mode keeps normal tool rendering. Economy mode mirrors assistant progress text, final answers, and failures, but
-suppresses ordinary Telegram tool sends and edits. OpenCodez execution and final-notification tool accounting are
-unchanged in both modes.
-
-In full mode, tool calls are compact and expandable. Adjacent tool results update one Telegram message until assistant
-text starts a new block. Tool batches use Telegram MarkdownV2 expandable blockquotes, so details are one tap away
-without filling the topic with raw output.
-
-Internal helper tools such as todo-style task-list tools are suppressed from live mirror and reconcile so bookkeeping
-does not crowd Telegram. Closed task lists may still appear in private final-answer DMs as a compact quoted checked task
-list. Task/subagent result logs and child-session activity are implementation details and stay hidden; both mirror modes
-only announce the spawn event with the web-visible task title.
+Failed actions with delivered feedback finish. Failures without delivered feedback retry in their own topic with 2.5–30-second backoff and release their group slot while waiting. The inbox pauses intake at 1,000 events or 16 MiB, allowing one final fetched batch across the byte threshold. Shutdown preserves unfinished events. A crash after a side effect but before completion can replay it; queues/media buffers have their separate restart limits.
 
 ## Reconcile
 
-Live SSE is the primary path. Session discovery uses the cursor-paged `/experimental/session` list of root sessions:
-global scope spans projects, while server-home scope supplies the configured home directory. Startup seeds historical
-sessions without replaying them; a host that cannot initialize is retried by the existing loop without terminating
-recovery for the other hosts. Global mirroring consumes OpenCodez's aggregate `/global/event` endpoint through one
-connection per configured server; `serverHome` mode keeps the workspace-scoped `/event` endpoint. Reconcile is a narrow
-fallback, not an unbounded historical backfill. A Telegram prompt, a freshly autocreated web topic, or a live web prompt
-opens a bounded reconcile window for that binding and ends any startup users-only catch-up mode, because assistant
-output after a known-live prompt must remain eligible for recovery. Within that window, reconcile may recover missed
-user/assistant messages and especially the final answer. Topic autocreation is single-flight per OpenCodez
-server/session across SSE and the session-list reconcile path; the session becomes seen only after its Telegram binding
-is stored, so a transient topic-creation failure remains retryable. Binding reconciliation uses the same per-session
-coordination, and delayed reconcile requests are debounced, so concurrent periodic and event-driven recovery attempts
-are coalesced instead of duplicating mirror output. Reconcile reads recent OpenCodez message pages and follows the
-`before` cursor only until it reaches the durable high-water message from the previous complete scan, the active window
-boundary, or the current logical user turn; it no longer downloads a long session's complete history on every pass. A restart
-reuses that checkpoint and conservatively rescans only any uncheckpointed tail, while message markers remain
-authoritative for dedupe. Every successful SSE connection also runs one ordered catch-up pass for that server's recent
-bindings, open reconcile leases, and non-empty queues. This reconnect pass is limited to the ordinary active-window
-duration, hard-capped at five message pages per binding, and uses the durable cursor. A long-expired session therefore
-resumes with new live events instead of being polled or flooding Telegram with stale history.
-The session-list `time.updated` value gates unchanged bindings, while a bounded watchdog
-verifies the small session object before fetching message pages. Different OpenCodez hosts reconcile concurrently, but
-bindings on one host remain ordered to avoid host-local request bursts. If an already-bound web session is updated after
-its reconcile window expired, the session-list pass reopens a fresh user-prompt catch-up window so missed web prompts
-still reach Telegram. Encountering the current logical user turn ends that catch-up even when its prompt already has a durable
-mirror marker; this prevents long-running sessions from muting their assistant output when a reconcile window is
-refreshed after several hours. Old assistant/tool backlog before the recovered user prompt is marked processed in one
-durable batch instead of being replayed into the topic; assistant output after the recovered prompt mirrors normally.
-Outside recent activity, old topics stay quiet.
-
-The lower bound is stored on the binding as `reconcileAfter`, the expiry as `reconcileUntil`, and the last complete scan
-as `reconcileCursorMessageID`. Cursor checkpoints and high-frequency activity leases update the live state immediately
-but share one deferred atomic save bounded to one minute; durable message markers remain authoritative for dedupe.
-Assistant window membership uses the latest of creation, completion, and failure time, so a message created before the
-window but completed inside it remains recoverable.
-Session discovery queries each OpenCodez host from its previous `time.updated` high-water with a five-minute overlap and
-runs independent hosts concurrently. The watchdog first verifies the small session object and fetches message pages only
-when it changed. Stable user-part events may use the exact message endpoint, while assistant output remains on the
-established lifecycle-event/paginated recovery path and any missing signal or failed optimization falls back to the
-existing paginated scan. The lookback, active window, page size, change gate, watchdog, overlap, and loop interval are
-fixed conservative defaults. Mirrored message markers are tracked per session so a busy session cannot evict markers for
-another one and cause phantom replays.
-
-Backend hosts may be off. Event streams and retryable reconcile failures (network errors, timeouts, `408`, `429`, and
-server `5xx` responses) use exponential backoff up to two minutes with rate-limited offline and recovery logs. A
-resource-level `404` never marks the whole host offline. On startup, active bindings absent from the session list receive
-one exact session lookup; a confirmed missing session is physically removed together with its prompt links, question and
-notification records, incomplete-run ledger entries, seen marker, and mirror-marker buckets. The topic becomes pending
-for a fresh session. Recovery checks skipped during a real backend backoff are scheduled once at the backoff deadline
-instead of being silently abandoned or polled rapidly.
+Missed events recover through bounded backend history, rather than an endless backfill. Root-session discovery spans the configured scope; startup seeds old sessions without posting history. Active cursors and lightweight unchanged-session checks limit reads. Reconnect catch-up considers recent bindings and queues, with five pages per binding. [Architecture](architecture.md#recovery-and-limits) documents coordination, deadlines and the remaining tradeoffs.

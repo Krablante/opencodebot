@@ -72,6 +72,19 @@ export async function cleanupPayloadSpool(payload) {
   spools.delete(payload)
 }
 
+export async function cleanupArtifactSpools(spoolDir, maxAgeMs = 24 * 60 * 60_000) {
+  let directory
+  try { directory = await fsp.opendir(spoolDir) }
+  catch (error) { if (error.code === "ENOENT") return; throw error }
+  const cutoff = Date.now() - maxAgeMs
+  for await (const entry of directory) {
+    if (!entry.isDirectory() || !/^\d{13}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(entry.name)) continue
+    const localDir = path.join(spoolDir, entry.name)
+    const stat = await fsp.stat(localDir).catch((error) => { if (error.code === "ENOENT") return null; throw error })
+    if (stat && stat.mtimeMs < cutoff) await fsp.rm(localDir, { recursive: true, force: true })
+  }
+}
+
 function readStreamMetadata(request) {
   const encoded = String(request.headers["x-opencodebot-artifact-meta"] || "")
   if (!encoded) return {}

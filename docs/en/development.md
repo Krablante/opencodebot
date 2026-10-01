@@ -1,262 +1,70 @@
 # Development
 
-[English](development.md) · [Русский](../ru/development.md)
+[English](development.md) · [Русский](../ru/development.md) · [All languages](../README.md)
 
-This operated bot has grown beyond a one-sitting read. Follow a user action from its owner through the event and state boundaries below rather than reading the whole tree in order.
+OpenCodeBot runs directly as Node.js ES modules. There is no compiler, bundler or application framework. Two mdast packages handle CommonMark structure and safe inline formatting; built-in Node APIs cover HTTP, streams, storage and processes. Keep `package-lock.json` committed. Read [architecture](architecture.md) before changing event ownership or recovery.
 
-The current split is intentionally modest. `main.mjs` wires startup, shutdown, and module composition.
-`telegram-polling.mjs` owns update polling, ordered topic lanes, bounded group concurrency, and Telegram input routing.
-`telegram-inbox.mjs` owns the small synced append journal: durable receipts before Telegram acknowledgement, independent
-completion records, startup recovery, and atomic compaction. It is separate from downstream memory-only prompt buffers.
-The pure `telegram-rich-message.mjs` normalizes
-incoming Telegram Rich Message block trees into prompt text and embedded photo records; it owns no state, downloads, or
-routing. `prompt-routing.mjs` owns Telegram-origin prompt delivery, attachments, multipart prompt buffering, prompt
-feedback, and the prompt queue. `session-reconcile.mjs` owns OpenCodez event handling, cursor-paged incremental message
-recovery, session-update gating, cross-host reconcile scheduling, and the bounded watchdog. `topic-lifecycle.mjs` owns
-forum topic creation and lifecycle handling, while the small `single-flight.mjs` helper coalesces duplicate fallback
-work and lets primary SSE events wait behind active per-session recovery without being dropped.
-Reply-to-rewind remains inside `prompt-routing.mjs`: after any required abort it accepts the existing session-revert
-response only when that response confirms the bound session and exact user-message id. An unconfirmed or stale target
-must not consume origin links or send a replacement prompt. This uses the response already returned by OpenCodez and
-adds no extra backend request.
-`logical-turn.mjs` is the one pure boundary resolver for responsive OpenCodez runs: it follows durable compaction
-`turn_id`/`replay_id` links and skips internal compaction or synthetic users. Event handling, incomplete-run detection,
-and final metadata therefore agree on which original user prompt owns a continued run. The idle outcome check reuses its
-already-fetched logical-turn history to deliver an unmirrored `finish=stop` message directly, so a post-compaction final
-does not depend on receiving every live text/step event or on a second general reconcile pass.
-`compaction-reminders.mjs` owns automatic prompt reminders, backend admission confirmation, and recovery through the
-existing reconcile lane. Reminder text parts carry their original turn and compaction identifiers; `logical-turn.mjs`
-uses those links even when attachments make the reminder more than a synthetic text-only user. State retains only
-bounded delivery records and the global `/reminder` setting. Prompt and media payloads are rebuilt from OpenCodez.
-`internal-sessions.mjs` owns session visibility. Parent/subagent sessions remain hidden through the established internal
-path, while an exact normalized `opencode-see delegate` title is ignored more strongly: no topic, seen marker, observed
-update, or reconcile entry is created on any server. State loading removes legacy bindings and pending-topic records for
-that title without deleting Telegram topics. Event-driven web-topic creation waits for authoritative session metadata;
-if the exact-session read is temporarily unavailable, bounded reconcile retries discovery instead of creating a topic
-without knowing whether the session is internal.
-Global mirroring uses OpenCodez `/global/event`, not one workspace stream per directory. On connection, bound-session
-catch-up considers only recent bindings, open leases, and non-empty queues. It is sequential per server, limited to the
-normal active window, cursor-bounded, and capped at five pages per binding; this keeps recovery deterministic without
-stale Telegram floods, continuous polling, or reconnect request bursts. `OpenCodeClient` unwraps the global
-`{ directory, payload }` envelope once at the transport boundary, so downstream event handlers share the same shape in
-both mirror scopes.
-Standard OpenCodez text transport identifies a part with `message.part.updated` or `message.part.added`, streams its
-content through `message.part.delta`, and ends it with an updated text part whose `time.end` is present;
-`message.updated` owns assistant completion. Because both visible text and private reasoning use `field=text` deltas,
-event handling admits a delta to the renderer only after the same message has been identified as assistant-owned and the
-same part id as `type=text`.
-Unknown or reasoning parts stay out of Telegram. The renderer buffers admitted deltas and sends only completed blocks.
-Exact message reads and paginated reconcile are recovery paths and must not become an API request per healthy live message.
-HTTP `404` for a specific session is likewise session-scoped: it removes the binding through `StateStore`, while only
-network/timeouts, `408`, `429`, and `5xx` responses enter shared host backoff.
-`final-notifications.mjs` owns final-answer DMs. `commands.mjs` owns Telegram command handlers. `render.mjs` coordinates
-Telegram message rendering, including best-effort removal of rolled-back text and tool parts, while
-`render-side-effects.mjs` owns pin/final/mirror side effects. `prompt-routing.mjs` also owns the one mutable prompt-status
-message that moves from accepted to provider retry information starting at attempt three and disappears when output
-resumes. `tool-formatting.mjs` and `rich-markdown.mjs` hold pure formatting helpers; `rich-list-normalization.mjs` uses mdast to isolate Telegram's
-nested-list workaround from general rich-message preparation.
-`rich-markdown.mjs` also uses the existing mdast dependencies to replace unsupported link/image destinations by source
-range, without reserializing unrelated Markdown. `MirrorRenderer.deliverAssistantText` owns the shared send/edit policy:
-rich Markdown, one image-to-link retry for photo rejection, then the existing ordinary-text fallback. The selected mode
-lives only on the in-memory text block; there is no new config, journal, worker, or polling path.
+## Source map
+
+Directories follow concrete boundaries. `src/config/` normalizes installation settings, `src/i18n/` holds UI catalogs, `src/speech/` handles inbound transcription and `src/artifacts/` holds gateway parsing/formatting helpers. The root modules own the bot's related workflows. A directory per tiny helper would make this tree harder to follow.
+
+| Area | Owner |
+| --- | --- |
+| Startup and composition | `src/main.mjs` |
+| Telegram transport / input | `telegram.mjs`, `telegram-polling.mjs`, `telegram-inbox.mjs`, `telegram-rich-message.mjs` |
+| Prompt dispatch, buffers and queue | `prompt-routing.mjs`, `prompt-queue.mjs`, `multipart-prompts.mjs`, `attachments.mjs` |
+| Backend transport / recovery | `opencode.mjs`, `session-reconcile.mjs`, `backend-backoff.mjs`, `single-flight.mjs` |
+| Logical turns / compaction | `logical-turn.mjs`, `compaction-reminders.mjs`, `context-export.mjs` |
+| Topic lifecycle and titles | `topic-lifecycle.mjs`, `topic-titles.mjs` |
+| General / personal screens / setup | `control-menu.mjs`, `launch-menu.mjs`, `setup.mjs` |
+| Saved preferences / durable storage | `user-settings.mjs`, `state.mjs` |
+| Visible output | `render.mjs`, `render-side-effects.mjs`, `rich-markdown.mjs`, `rich-list-normalization.mjs`, `tool-formatting.mjs` |
+| Commands, questions and notifications | `commands.mjs`, `questions.mjs`, `final-notifications.mjs`, `run-alerts.mjs` |
+| Optional voice / artifact transport | `final-voice.mjs`, `speech/`, `artifacts-gateway.mjs`, `artifact-uploads.mjs`, `upload-transfer.mjs` |
+| Update protocol / operational health | `update-manager.mjs`, `update-shared.mjs`, `runtime-health.mjs` |
+
+`plugins/opencodebot-artifacts/` is a separately installed agent plugin, with its own package. `skills/telegram-artifact-send/` is the complete companion skill. Bot deployment does not install either into OpenCodez. `scripts/` contains operator commands and the central smoke check; `test/` contains a few API/state contracts. `assets/` contains shipped guides and the attributed word list.
 
 ## Checks
 
-The Telegram workspace UI has three owners beside the existing General panel: `launch-menu.mjs` handles personal topic/profile drafts, `user-settings.mjs` handles preferences and one-time profile import, and `setup.mjs` handles connection setup. Provider-key updates are filtered before inbox receipt, including recovery of old pending updates. Topic creation lives in `topic-lifecycle.mjs` and shares request identity between the wizard and shortcuts. Automatic menu status updates reuse SSE; manual opening/refresh performs the scoped lookup.
-
-Use `node scripts/preview-ui.mjs /tmp/opencodebot-ui` to generate portable HTML previews and printable guide pages. The guide PDFs in `assets/` must be regenerated from those pages and visually inspected when their text or illustrated menu changes. The preview accepts `OPENCODEBOT_PREVIEW_FONT` and `OPENCODEBOT_PREVIEW_BOLD_FONT` for a local Cyrillic-capable font. Telegram's prepared-message API checks the actual Rich HTML/button parser without publishing the preview; ephemeral send/edit/delete must also be exercised against Bot API 10.3+.
-
-The default maintenance path is syntax checking, manual behavior verification, and inspection of the actual runtime and
-logs. Do not add test files for ordinary fixes. Existing test/smoke commands below are optional focused tools, not part
-of deployment. `deploy:bot` and the approved updater run dependency installation, syntax checks, image deployment, and
-the production health check instead of executing mocked regression scenarios inside the live container.
-
-For delivery changes, manually exercise rejected JSON file metadata and one valid streamed upload on an isolated
-gateway; delayed HTTP bodies; a failed file transfer; queued prompts across busy/idle/error/compaction; and a failed then
-retried launch profile. Use disposable data and no second Telegram poller with the production token. Check both available
-backend scopes with read-only API calls, and inspect startup/recovery logs after rollout. Rich Message limits and normal
-answer rendering are independent of these reliability checks.
-
-For inbox changes, manually hold one topic handler open while delivering another topic in the next fetched batch; verify
-that the latter starts before the held handler finishes and that a same-topic follower waits. Also check restart recovery
-after out-of-order completion, cancellation during a handler/retry, failed receipt/completion writes, a torn final append,
-and capacity pause/resume. Use disposable runtime state and inline probes rather than new test files, and never a second
-poller with the production token. Two busy speech handlers should leave the control-menu group available. The live health
-output and startup/retry/capacity logs expose queue status without logging input payloads.
-
-Run syntax checks:
+For a small change, start with syntax and a bounded manual scenario. Use the existing checks for changes to shared state, transport or delivery. Do not add a test file per helper or formatter branch.
 
 ```bash
+npm ci
 npm run check
-```
-
-For assistant-formatting fixes, manually inspect prepared Markdown for local images, reference links, paths containing
-spaces/parentheses/backticks, linked images, nested lists, and literal code. Telegram's `savePreparedInlineMessage` with an
-article containing `InputRichMessageContent` can validate disposable Markdown against the real Bot API parser without
-posting to a chat or starting another poller. Use an allowed operator and an allowed chat type; the prepared result expires
-automatically and must not be shared. This validates parsing, not phone-client layout or actual send/edit delivery; it also
-restricts inline media to previously uploaded files. Check the renderer's send, edit, final-marker, photo-rejection, and
-transport-failure branches with bounded inline probes, then inspect deployment health and metadata-only fallback logs.
-Do not create test files for these checks.
-
-Run the small dedicated test suite:
-
-```bash
-npm test
-```
-
-Run the short smoke check:
-
-```bash
-npm run smoke
-```
-
-`npm run check` is implemented as a Node script so it works on Linux, macOS, and Windows without relying on shell glob
-expansion. `npm test` holds only the few contracts that benefit from a dedicated test file, such as chat-profile shape,
-the OpenCodez System selection payload, the terminal-mirror/idle latch that guards queued prompts, and single-choice
-question callbacks. `npm run smoke` is the central regression check: it verifies config shape and aggregated
-server-config validation, ordered SSE event handling, OpenCode request timeouts, and Telegram update isolation: a slow
-backend group cannot delay another group in subsequent batches, same-backend work respects its concurrency bound, and the
-next fetch uses the durable receipt cursor while earlier handlers are still running. It also verifies whole-session state pruning without
-per-session message loss, Telegram download limits, synthetic file text filtering, nested rich-list normalization,
-`/kill`, native `/compact` request shape and internal-summary suppression, structured session-error normalization and
-history fallback without raw provider-data leakage, queued prompt release after terminal mirror and session idle, the
-interrupted and empty-terminal warning paths, per-recipient final-notification delivery/dedupe with mandatory Telegram
-message ids, full/economy mode behavior, task/subagent spawn notices, final notification
-summaries, artifact-topic host rejection, and artifact upload path handling. Incoming Rich Message smoke uses the current
-Bot API schema and covers mixed `RichText` arrays, inline wrappers, custom emoji and math alternatives, section headings,
-list labels/captions/credits, preformatted captions, details headers, table rows/captions/credits, quote captions/credits,
-collage `blocks`, largest-photo selection, attachment descriptor reuse, and unsupported-media reporting. Web-prompt smoke
-covers the ordinary
-threshold, literal escaped rich HTML, rich splitting only beyond 32,000 characters, and complete ordinary-message
-fallback after a simulated rich rejection. The incomplete-run smoke deliberately uses the real classic sequence
-(`message.updated` for the user followed by `session.idle`) without fabricating `session.next.prompted`; it also covers
-repeated user/idle events, durable dedupe, empty `finish=stop`, the OpenCodez button, and expected-stop suppression. The
-list matrix covers unchanged flat lists and fenced code plus ordered, unordered, mixed, deep, blockquoted, task-like,
-inline-formatted, and code-containing nested lists. When a valid runtime config is available, smoke also checks Telegram
-`getMe` and probes configured OpenCodez servers with `GET /session`. With an explicit runtime config, it verifies that
-the local artifact upload root is writable when the default artifact server uses local transfer. It should not create
-sessions, send prompts, or print tokens.
-
-Incremental-reconcile checks cover `limit`/`before` cursor propagation, a durable restart cursor, parallel overlapping
-session discovery, the lightweight unchanged-session watchdog, exact-message recovery, bounded current-turn final
-summaries with a full-history fallback, and an incomplete-run grace timer that still fires while frequent reconcile
-passes continue. Final-recovery smoke overlaps a delayed binding reconcile with idle verification and requires one
-mirrored final, while final-notification smoke overlaps two callbacks for the same assistant and requires one DM.
-Telegram `/new` smoke also fixes the setup order contract: bind and mark the new session seen before
-profile model/System mutations can emit session events. Queue recovery smoke additionally covers a terminal message that
-was already mirrored and an authoritative idle status discovered without a live SSE event. Compact-command smoke must
-keep live OpenCodez `sessionStatus` authoritative over a stale local queue-busy hint while separately rejecting a
-genuinely in-flight compaction. Context-export checks cover completed answers, ledger-marked and superseded
-interruptions with all visible progress notes, reasoning/tool/step exclusion, active-turn exclusion, paginated stopping,
-attachment descriptors, escaped collapsed Rich Message chunking without truncation, strict 1–10 parsing, turn-count
-preference behavior, command wiring, and fail-closed rich delivery. State smoke covers no-op/deferred saves plus compact
-append-journal loading and successful marker recovery after reload. Keep
-these contracts in the existing focused tests and central smoke rather than introducing a separate performance-test
-framework.
-
-Question recovery smoke covers an SSE `question.asked` racing with pending-question reconciliation, one Telegram send
-under request single-flight, resolution after that send completes, the periodic reconcile hook, and the SSE connected
-hook. Keep this in central smoke rather than adding a dedicated test file.
-
-Run-alert smoke covers per-recipient durable dedupe across error/interruption shapes, separation of later
-prompt/continuation failures in the same session, expected-stop suppression, explicit `session.error`, failed
-assistant-step wiring, unexpected idle interruption wiring, topic/session buttons, and marker persistence. Keep this in
-central smoke rather than adding a dedicated test file.
-
-Speech transcript smoke covers HTML escaping, lossless multi-message reconstruction beyond 10,000 characters, the
-ordinary 4,096-character payload ceiling, footer-only-last behavior, sequential reply delivery, and partial-delivery
-accounting. Long-transcript behavior stays in central smoke rather than a new speech-specific test file.
-
-The runtime dependencies `mdast-util-from-markdown` and `mdast-util-to-markdown` are deliberately narrow: they provide
-CommonMark structure and safe inline serialization without introducing a general application framework. Keep
-`package-lock.json` committed; Docker installs the locked production dependency graph with `npm ci --omit=dev`.
-
-Keep dedicated test files few and focused. This is a small operated bot, so tests should protect important configuration
-and API contracts rather than every formatter branch and helper function. Prefer real disposable-session checks for
-runtime and multihost behavior; clean those sessions up immediately.
-
-On Windows, use PowerShell and the same npm commands:
-
-```powershell
-npm run check
+npm run docs:check
 npm test
 npm run smoke
-npm start
 ```
 
-Docker checks use the same source tree:
+The same npm commands work in PowerShell. `check` walks JavaScript files through Node without shell glob expansion. The focused tests protect launch parsing, model/System request shape, queue gates, questions and reconcile/context behavior. Smoke checks configuration, event ordering, timeouts, input isolation, rendering, state recovery, notifications, voice and file transport using disposable data. No-config smoke uses the public example and skips live access.
+
+With an explicit runtime config, `node scripts/smoke.mjs /absolute/config.json` additionally performs read-only Telegram/backend checks and verifies a local dropbox mount. Never start a second poller with the production token. `npm run health:live` checks the running Compose process; `smoke:live` is its compatibility alias.
+
+GitHub Actions runs one job on `main` pushes and pull requests: install locked dependencies, syntax, documentation, focused tests and isolated smoke. Documentation checks validate matching language topic files, local links/anchors, npm commands and JSON examples. The job has no deployment credentials and sends no Telegram messages. Release and production health remain separate operator actions.
+
+## Verify behavior, not just helpers
+
+For prompt/recovery changes, check an idle prompt, a queued prompt after terminal delivery, a failed launch retry, a missing session, and a restart using isolated state. For inbox changes, overlap two topics across fetched batches, hold one handler, finish out of order, and exercise capacity and failed disk writes. Topic order and receipt durability must survive those scenarios.
+
+For file changes, reject oversized input before download, enforce the actual remaining budget, stream a valid file, simulate interrupted transfer and repeat a dropbox filename. Verify final bytes and staging cleanup. Test SSH on a disposable destination on each changed platform; a mock process invocation does not verify a remote shell.
+
+For assistant-formatting changes, inspect local paths, spaces/parentheses/backticks, reference links, images, nested lists and code. Telegram's `savePreparedInlineMessage` with `InputRichMessageContent` checks its real Rich Message parser without publishing. Real send/edit/delete checks and phone-sized previews are still needed for transport and layout. Prepared messages cannot validate every client's pixels.
+
+## UI and guides
 
 ```bash
-docker compose build
-docker compose run --rm opencodebot npm run check
+node scripts/preview-ui.mjs /tmp/opencodebot-ui
 ```
 
-Run live Compose smoke against the running service:
+This produces portable HTML previews and printable pages from the actual menu renderers. `OPENCODEBOT_PREVIEW_FONT` and `OPENCODEBOT_PREVIEW_BOLD_FONT` select local Cyrillic-capable fonts. Guide text lives in `src/user-guide.mjs`; regenerate `assets/guide-en.pdf` and `assets/guide-ru.pdf` and inspect the rendered pages whenever text or illustrations change.
 
-```bash
-npm run smoke:live
-```
+User documentation follows `docs/<language-code>/<topic>.md`; [the language index](../README.md) owns the available languages. Add a directory with matching topic filenames, update navigation and keep meaning synchronized in one change. README translations are entry points. UI catalogs have their separate extension rules in [interface language](interface-language.md).
 
-`smoke:live` is a compatibility alias for `health:live`. The latter executes the production `src/runtime-health.mjs`
-check inside the existing container. It verifies main-process identity, polling/recovery progress, Telegram access,
-and required backend discovery APIs. It neither starts a bot nor sends messages, creates sessions, or writes dropbox
-files. A dead recovery loop initiates shutdown so Compose can restart the process instead of leaving a silently degraded
-bot. Startup discovery failures are retried per host within the existing loop.
+## Change and release
 
-HTTP deadlines include reading response bodies, and shutdown cancellation reaches polling and ordinary API requests.
-Manual compaction allows 21 minutes, covering OpenCodez's 20-minute remote-compaction budget without ending the client
-request prematurely; ordinary OpenCodez requests remain bounded to two minutes.
-SSH file transfer has a 10-second connect bound and a 15-minute command deadline; pipeline errors reject only the upload.
-The bot requests cancellation and immediately flushes deferred state on shutdown, with an eight-second final grace.
+Keep a workflow's state and side effects with its owner. Extract a helper when it separates a real responsibility; avoid parallel routers, copied recovery loops or a new dependency to replace a small stable function. OpenCodez owns canonical message IDs and session history. Runtime files belong outside Git.
 
-## Service
+Use concise Conventional Commit subjects. The update card turns `feat:`, `fix:` and `perf:` subjects into user-facing notes and groups maintenance commits. Before publishing, inspect status/diff, run checks proportionate to the change, update matching documentation and verify the version matches package metadata.
 
-For a rollout approved by the operator, a source change still needs a live Compose rebuild/restart and verification;
-a local check does not replace this step. Rebuild/restart and check logs with Compose:
-
-```bash
-npm run deploy:bot
-docker compose logs --since=2m opencodebot
-npm run smoke:live
-```
-
-Do not add or document a second live service manager. Compose is the live service path; direct `npm start` is for
-local/manual runs.
-
-## Change Style
-
-Prefer small modules with clear ownership over broad rewrites. Good extraction targets are pure parsing, formatting,
-short-lived buffers, and retry helpers. Be more careful with event flow, prompt sending, state updates, and Telegram
-message editing; those paths are where small behavior changes become visible.
-
-Missing-session cleanup is intentionally destructive and centralized. It must remove all server/session keyed state and
-compact the marker journal, then retain only a pending topic launch record. Do not replace it with another disabled
-binding or let one session-level error suppress work for neighboring bindings on the same host.
-
-Do not introduce TypeScript as a build pipeline by default. A useful future step would be lightweight JSDoc or
-`tsc --checkJs` style checking if it can run without changing the Compose runtime shape.
-
-Tests should stay proportional. Add or keep checks only when a regression is expensive to catch manually or has already
-caused production pain. Avoid pretending this is an enterprise test suite.
-
-Use concise Conventional Commit subjects because the self-updater turns the exact deployed-to-target range into Telegram
-release notes. Prefer `feat:`, `fix:`, and `perf:` for user-visible outcomes; use `docs:`, `test:`, `refactor:`, `build:`,
-and `chore:` for maintenance that can be collapsed. Describe the result a user or operator will notice, not the editing
-process. See [Self-Update](self-update.md#telegram-ux).
-
-## Git
-
-Check status before and after work:
-
-```bash
-git status --short
-git diff --stat
-npm run check
-npm test
-npm run smoke
-npm run smoke:live
-```
-
-Track source, docs, `config.example.json`, scripts, and Compose files. Do not track `token.env`, generated runtime
-config, bot state, uploaded files, WireGuard keys, peer configs, QR images, logs, `node_modules`, or build output.
+The release path is [Compose deployment](docker.md#run), followed by live health and a runtime revision check. The image's `OPENCODEBOT_BUILD_SHA` and OCI label must match the committed source. Publish the GitHub release only for the verified revision. Compose/host-runner changes need manual deployment; plugin/skill changes need their own installed-copy rollout. [Self-update](self-update.md) defines that boundary.

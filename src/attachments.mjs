@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { createHash, randomUUID } from "node:crypto"
 import { normalizeTelegramRichMessage } from "./telegram-rich-message.mjs"
+import { safeFilename } from "./upload-transfer.mjs"
 
 export class AttachmentBuffer {
   constructor({ settings, uploadDir, flushPrompt, onExpire, onError = (error) => console.error(error) }) {
@@ -50,6 +51,12 @@ export class AttachmentBuffer {
 
   has(key) {
     return this.pending.has(key)
+  }
+
+  remainingLimits(key) {
+    const files = this.pending.get(key)?.files || []
+    return { maxFiles: this.settings.maxFiles - files.length,
+      maxTotalBytes: this.settings.maxTotalBytes - files.reduce((total, file) => total + (file.size || 0), 0) }
   }
 
   async discard(key) {
@@ -178,11 +185,15 @@ export function extractTelegramFiles(message, richContent = normalizeTelegramRic
   })
 }
 
-export async function downloadTelegramFiles(telegram, descriptors, uploadDir, settings, { inline = true } = {}) {
+export async function downloadTelegramFiles(telegram, descriptors, uploadDir, settings, { inline = true, deferInline = false } = {}) {
   const normalized = normalizeAttachmentSettings(settings)
+  if (descriptors.length > normalized.maxFiles) throw new Error(`Too many attachments; max ${normalized.maxFiles} files`)
+  const declaredBytes = descriptors.reduce((total, file) => total + (Number(file.size) || 0), 0)
+  if (declaredBytes > normalized.maxTotalBytes) throw new Error(`Attachment batch is too large; max ${normalized.maxTotalBytes} bytes`)
   await fs.mkdir(uploadDir, { recursive: true, mode: 0o700 })
   const downloads = []
   const createdPaths = []
+  let totalBytes = 0
   try {
     for (const descriptor of descriptors) {
       if (descriptor.size && descriptor.size > normalized.maxFileBytes) {
@@ -193,7 +204,9 @@ export async function downloadTelegramFiles(telegram, descriptors, uploadDir, se
       createdPaths.push(localPath)
       let downloaded
       try {
-        downloaded = await telegram.downloadFile({ fileId: descriptor.fileID, destination: localPath, maxBytes: normalized.maxFileBytes })
+        const remainingBytes = normalized.maxTotalBytes - totalBytes
+        if (remainingBytes <= 0) throw new Error(`Attachment batch exceeded ${normalized.maxTotalBytes} bytes`)
+        downloaded = await telegram.downloadFile({ fileId: descriptor.fileID, destination: localPath, maxBytes: Math.min(normalized.maxFileBytes, remainingBytes) })
       } catch (error) {
         logAttachment("attachment.download.failed", descriptor, { error })
         throw error
@@ -201,13 +214,16 @@ export async function downloadTelegramFiles(telegram, descriptors, uploadDir, se
       const stat = await fs.stat(localPath)
       const mime = descriptor.mime || "application/octet-stream"
       const size = stat.size || downloaded.file?.file_size || descriptor.size || 0
+      totalBytes += size
+      if (totalBytes > normalized.maxTotalBytes) throw new Error(`Attachment batch exceeded ${normalized.maxTotalBytes} bytes`)
       const embed = inline && size <= normalized.maxInlineBytes
       logAttachment("attachment.download.complete", descriptor, { size, inline: embed, sourcePath: downloaded.file?.source_path })
       downloads.push({
         type: embed ? "file" : "saved_file",
         mime,
         filename: descriptor.filename,
-        url: embed ? await dataURL(localPath, mime) : undefined,
+        url: embed && !deferInline ? await dataURL(localPath, mime) : undefined,
+        inlinePending: embed && deferInline,
         path: embed ? undefined : localPath,
         source: { type: "telegram", kind: descriptor.kind, fileUniqueId: descriptor.fileUniqueID },
         localPath,
@@ -246,6 +262,13 @@ async function dataURL(filePath, mime) {
   return `data:${mime};base64,${encoded}`
 }
 
+export async function prepareInlineFiles(files) {
+  const prepared = []
+  for (const file of files) prepared.push(file.inlinePending
+    ? { ...file, inlinePending: false, url: await dataURL(file.localPath, file.mime) } : file)
+  return prepared
+}
+
 export async function cleanupUploads(uploadDir, maxAgeMs) {
   const cutoff = Date.now() - Number(maxAgeMs || 0)
   if (!Number.isFinite(cutoff)) return
@@ -273,9 +296,9 @@ export function normalizeAttachmentSettings(settings = {}) {
     mediaGroupIdleMs: numberAtLeast(settings.mediaGroupIdleMs, 1500, 100),
     promptIdleMs: numberAtLeast(settings.promptIdleMs, 60_000, 1000),
     maxFiles: numberAtLeast(settings.maxFiles, 10, 1),
-    maxFileBytes: numberAtLeast(settings.maxFileBytes, 20_000_000, 1024),
-    maxTotalBytes: numberAtLeast(settings.maxTotalBytes, 60_000_000, 1024),
-    maxInlineBytes: numberAtLeast(settings.maxInlineBytes, 20_000_000, 1024),
+    maxFileBytes: numberAtLeast(settings.maxFileBytes, 20_000_000, 1),
+    maxTotalBytes: numberAtLeast(settings.maxTotalBytes, 60_000_000, 1),
+    maxInlineBytes: numberAtLeast(settings.maxInlineBytes, 20_000_000, 1),
     cleanupAfterMs: numberAtLeast(settings.cleanupAfterMs, 24 * 60 * 60 * 1000, 60_000),
   }
 }
@@ -297,14 +320,6 @@ function fileDescriptor(file, kind, fallbackName, fallbackMime) {
 
 function uploadFileName(filename) {
   return `${Date.now()}-${randomUUID()}-${safeFilename(filename)}`
-}
-
-function safeFilename(filename) {
-  return String(filename || "file")
-    .replace(/[\x00-\x1f\x7f/\\]/g, "-")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 160)
 }
 
 function numberAtLeast(value, fallback, min) {

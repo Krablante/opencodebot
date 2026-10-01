@@ -43,32 +43,53 @@ async function transferSavedFile(file, { server, sessionID, signal }) {
   }
 }
 
-export async function transferFile({ localPath, targetPath, server, signal }) {
+export async function transferFile({ localPath, targetPath, server, signal, overwrite = true }) {
   signal?.throwIfAborted()
   const transfer = server.transfer || { type: "local" }
   if (transfer.type === "local") {
     await fsp.mkdir(parentPath(targetPath, pathStyle(server)), { recursive: true })
-    await fsp.copyFile(localPath, targetPath)
+    if (overwrite) await fsp.copyFile(localPath, targetPath)
+    else {
+      const temporary = `${targetPath}.${randomUUID()}.part`
+      try {
+        await fsp.copyFile(localPath, temporary)
+        signal?.throwIfAborted()
+        await fsp.link(temporary, targetPath)
+      } catch (error) {
+        if (error.code === "EEXIST") throw new Error("A file with this name already exists. Choose a different filename.")
+        throw error
+      } finally { await fsp.rm(temporary, { force: true }) }
+    }
     return
   }
   if (transfer.type === "ssh") {
-    await transferFileViaSsh({ localPath, targetPath, server, transfer, signal })
+    await transferFileViaSsh({ localPath, targetPath, server, transfer, signal, overwrite })
     return
   }
   throw new Error(`unsupported upload transfer type for ${server.id}: ${transfer.type}`)
 }
 
-async function transferFileViaSsh({ localPath, targetPath, server, transfer, signal }) {
+async function transferFileViaSsh({ localPath, targetPath, server, transfer, signal, overwrite }) {
   const target = sshTarget(transfer)
   const style = pathStyle(server)
   const targetDir = parentPath(targetPath, style)
   if (style === "windows") {
     await run("ssh", [...sshArgs(transfer), target, windowsMkdirCommand(targetDir)], undefined, signal)
-    await run("scp", [...scpArgs(transfer), localPath, `${target}:${scpRemotePath(targetPath, style)}`], undefined, signal)
+    const remotePath = overwrite ? targetPath : `${targetPath}.${randomUUID()}.part`
+    await run("scp", [...scpArgs(transfer), localPath, `${target}:${scpRemotePath(remotePath, style)}`], undefined, signal)
+    if (!overwrite) {
+      const quote = (value) => `'${String(value).replaceAll("'", "''")}'`
+      // File.Move refuses an existing destination; use an encoded script so
+      // names pass through neither the remote shell nor PowerShell interpolation.
+      const script = `$ErrorActionPreference='Stop'; try { [System.IO.File]::Move(${quote(remotePath)}, ${quote(targetPath)}) } finally { Remove-Item -LiteralPath ${quote(remotePath)} -ErrorAction SilentlyContinue }`
+      await run("ssh", [...sshArgs(transfer), target, `powershell.exe -NoProfile -EncodedCommand ${Buffer.from(script, "utf16le").toString("base64")}`], undefined, signal)
+    }
     return
   }
   await run("ssh", [...sshArgs(transfer), target, `mkdir -p -- ${shellQuote(targetDir)}`], undefined, signal)
-  await run("ssh", [...sshArgs(transfer), target, `cat > ${shellQuote(targetPath)}`], localPath, signal)
+  const command = overwrite ? `cat > ${shellQuote(targetPath)}`
+    : `tmp=${shellQuote(`${targetPath}.${randomUUID()}.part`)}; trap 'rm -f -- "$tmp"' EXIT HUP INT TERM; cat > "$tmp" && ln -- "$tmp" ${shellQuote(targetPath)}`
+  await run("ssh", [...sshArgs(transfer), target, command], localPath, signal)
 }
 
 function sshTarget(transfer) {
@@ -149,8 +170,14 @@ export function safeFilename(value) {
     .replace(/[\x00-\x1f\x7f/\\]/g, "-")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 160)
-  return text || "file"
+  let name = "", bytes = 0
+  for (const character of text) {
+    const width = Buffer.byteLength(character)
+    if (bytes + width > 160) break
+    name += character
+    bytes += width
+  }
+  return !name || name === "." || name === ".." ? "file" : name
 }
 
 function shortHash(value) {

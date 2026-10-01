@@ -1,243 +1,111 @@
 # Docker
 
-[English](docker.md) · [Русский](../ru/docker.md)
+[English](docker.md) · [Русский](../ru/docker.md) · [All languages](../README.md)
 
-Docker Compose is the recommended deployment path for most people. It keeps the bot as one long-running process with local config and state mounted from the project directory. OpenCodez does not need to be in Docker.
-
-You need Node.js 22 or newer for helper scripts such as `npm run init-config`, plus Docker Compose for the runtime container.
+Compose runs OpenCodeBot and the optional local Telegram Bot API. OpenCodez and optional VPN access remain separate. Use Node.js 22+ for host helper commands and Docker Compose for the containers.
 
 ## Files
 
-`npm run setup` prepares private files and ordinary local mounts interactively. For native Node installation use `npm run setup -- --node`; Windows defaults to native paths. Use the manual steps below for custom layouts. Rich menus require Bot API 10.3+; when updating the local sidecar, preserve its state volume and recreate it with `docker compose --profile telegram-local up -d telegram-bot-api`.
+Start with `npm run setup`. It prepares private configuration, paths and mounts, and records your UID/GID on POSIX so writable state belongs to the container user too. For native Node use `npm run setup -- --node`; Windows defaults to native paths. Rich menus require Bot API 10.3+.
 
-Create local files once:
+For manual setup:
 
 ```bash
 npm run init-config
-```
-
-This creates:
-
-```text
-config.local.json
-servers.json
-```
-
-Create `token.env` next to them:
-
-```bash
 cp token.env.example token.env
+mkdir -p state
 ```
+
+Fill the Telegram token/operator IDs and optional OpenCodez password in `token.env`. PowerShell equivalents are `Copy-Item token.env.example token.env` and `New-Item -ItemType Directory -Force state`.
+
+Default sources are `./config.local.json`, `./servers.json`, `./token.env`, `./state`, `./uploads`, `./trash` and `./ssh`. Override host paths in ignored `.env`:
 
 ```env
-OPENCODEBOT_TOKEN=123456:telegram-token
-OPENCODEBOT_ALLOWED_USER_IDS=123456789
-OPENCODEZ_SERVER_PASSWORD=your-opencodez-password
-# Optional STT providers; configure either or both.
-OPENROUTER_API_KEY=your-openrouter-api-key
-GROQ_API_KEY=your-groq-api-key
+OPENCODEBOT_CONFIG_FILE=/absolute/config.local.json
+OPENCODEBOT_SERVERS_FILE=/absolute/servers.json
+OPENCODEBOT_TOKEN_ENV_FILE=/absolute/token.env
+OPENCODEBOT_STATE_DIR=/absolute/state
+OPENCODEBOT_UID=1000
+OPENCODEBOT_GID=1000
+OPENCODEBOT_UPLOAD_ROOT=/home/operator/.opencodebot/uploads
+OPENCODEBOT_ARTIFACT_UPLOAD_SOURCE=/home/operator/trash
+OPENCODEBOT_ARTIFACT_UPLOAD_ROOT=/home/operator/trash
+OPENCODEBOT_SSH_DIR=/home/operator/.ssh
 ```
 
-These files stay local and are ignored by git. The Compose file mounts them into the container read-only and mounts `state/` for durable bot state and uploads.
+Use the owner's actual UID/GID for manual installation; `1000:1000` is only the Compose fallback. Config/inventory/secrets/SSH are read-only mounts. State and file destinations must be writable by the bot. Back up config and state together while stopped; [storage](config-runtime.md#paths-and-state) lists the journals and compatibility rules.
 
-The Telegram inbox journal lives beside the configured state file in that same writable volume; no extra service or
-mount is required. Keep the volume across rebuilds so unfinished input can resume. The journal temporarily contains
-private incoming message text: include it only in private stopped-bot backups, not diagnostic log bundles. See
-[State](config-runtime.md#paths-and-state) before deleting runtime files or rolling back to a version without inbox support.
+## Artifact dropbox paths
 
-For the optional local Telegram Bot API sidecar, add app credentials from `https://my.telegram.org/apps` to the same `token.env`:
+`OPENCODEBOT_ARTIFACT_UPLOAD_SOURCE` is the host directory; `OPENCODEBOT_ARTIFACT_UPLOAD_ROOT` is its container path. Local transfer needs that container path to match the server path printed to OpenCodez and Telegram. The same applies to `uploadRoot` through `OPENCODEBOT_UPLOAD_ROOT`.
 
-```env
-TELEGRAM_API_ID=12345678
-TELEGRAM_API_HASH=your-api-hash
-```
+| Destination | Recommended arrangement |
+| --- | --- |
+| Same Linux/macOS host | Mount the final absolute path at the same path inside the bot |
+| Remote POSIX host | SSH transfer; no bind mount of the remote directory |
+| Windows drive/UNC paths | Native Node on Windows or SSH transfer to Windows |
+| Deliberate container-only paths | Mount to `/app/uploads` and `/app/artifact-uploads`, and configure the server paths accordingly |
 
-By default Compose reads these host paths:
-
-```text
-./config.local.json
-./servers.json
-./token.env
-./state
-./uploads
-./trash
-./ssh
-```
-
-If you keep runtime files somewhere else, put path overrides in an ignored `.env` file:
-
-```env
-OPENCODEBOT_CONFIG_FILE=/path/to/config.local.json
-OPENCODEBOT_SERVERS_FILE=/path/to/servers.json
-OPENCODEBOT_TOKEN_ENV_FILE=/path/to/token.env
-OPENCODEBOT_STATE_DIR=/path/to/state
-OPENCODEBOT_UPLOAD_ROOT=/home/alice/.opencodebot/uploads
-OPENCODEBOT_ARTIFACT_UPLOAD_SOURCE=/home/alice/trash
-OPENCODEBOT_ARTIFACT_UPLOAD_ROOT=/home/alice/trash
-OPENCODEBOT_SSH_DIR=/home/alice/.ssh
-```
-
-## Artifact Dropbox Paths
-
-Files dropped by users in the `/artifacts_here` topic are saved under the selected server's artifact upload root. The path printed back to Telegram is the server path, not an arbitrary container scratch path. With the default config, `artifactUploads.root` is `~/trash`, so a server whose `home` is `/home/alice` gets files under `/home/alice/trash/YYYY-MM-DD/`.
-
-Docker adds one extra requirement: the bot container must be able to write that folder. Compose therefore has two artifact dropbox variables. `OPENCODEBOT_ARTIFACT_UPLOAD_SOURCE` is the host folder Docker mounts. `OPENCODEBOT_ARTIFACT_UPLOAD_ROOT` is where that folder appears inside the container. When the selected server uses `transfer: { "type": "local" }`, this container path must match the server path the bot is going to write.
-
-For a normal Linux or macOS host where Docker and the default OpenCodez server share the same host folder, set both values to the same absolute path. On Linux this is often under `/home/alice`; on macOS it is often under `/Users/Alice`.
-
-```env
-OPENCODEBOT_ARTIFACT_UPLOAD_SOURCE=/home/alice/trash
-OPENCODEBOT_ARTIFACT_UPLOAD_ROOT=/home/alice/trash
-```
-
-For a simple local-only setup where you are fine with container-style paths, leave the defaults and set `artifactUploads.root` to `/app/artifact-uploads` or set a matching `artifactUploadRoot` on the local server. This is easy to mount, but the path shown in Telegram will be a container path, so it is usually less convenient for a human-operated desktop host.
-
-```env
-OPENCODEBOT_ARTIFACT_UPLOAD_SOURCE=./trash
-OPENCODEBOT_ARTIFACT_UPLOAD_ROOT=/app/artifact-uploads
-```
-
-On Docker Desktop for Windows, a Windows path such as `C:\Users\Alice\trash` is a good server path to show to OpenCodez and to the user, but it is not a good Linux container target path. For Windows hosts, prefer either running opencodebot directly with Node on Windows, or using `transfer: { "type": "ssh" }` for that Windows server so the bot copies files to `C:\Users\Alice\trash` through SSH. If you intentionally use local Docker transfer on Windows, make sure Docker mounts the Windows folder to a container path and configure the server's artifact root to the path the container can actually write.
-
-Remote servers are different. If the selected server uses SSH transfer, Docker does not need the remote final folder as a bind mount. The bot downloads the Telegram file into its own runtime area, then copies it to the remote server's `artifactUploadRoot` or expanded `artifactUploads.root` over SSH.
+For `/home/operator` plus `artifactUploads.root=~/trash`, both dropbox variables are `/home/operator/trash`. On macOS use the actual `/Users/...` path. A Linux container cannot write `C:\Users\...` just because that path appears in inventory. Remote paths belong to the target server.
 
 ## OpenCodez URL
 
-Edit `servers.json` so the container can reach OpenCodez.
-
-If OpenCodez is reachable on your LAN, use the LAN URL:
+The URL must be reachable from the container. For a host API, `http://host.docker.internal:4096` commonly works; LAN hostnames/IPs work too. `127.0.0.1` means the bot container unless host networking was deliberately enabled.
 
 ```json
-{
-  "servers": [
-    {
-      "id": "local",
-      "label": "OpenCodez",
-      "url": "http://host.docker.internal:4096",
-      "home": "/home/alice",
-      "uploadRoot": "/home/alice/.opencodebot/uploads",
-      "transfer": { "type": "local" }
-    }
-  ]
-}
+{ "servers": [{ "id": "local", "url": "http://host.docker.internal:4096",
+  "home": "/home/operator", "uploadRoot": "/home/operator/.opencodebot/uploads",
+  "transfer": { "type": "local" } }] }
 ```
 
-If OpenCodez runs on the same Windows machine as Docker Desktop and you want the bot to report Windows paths, prefer SSH transfer to the Windows host. The OpenCodez URL can still use `host.docker.internal`, while file copies go through Windows OpenSSH or another SSH server reachable from the container.
-
-```json
-{
-  "servers": [
-    {
-      "id": "local",
-      "label": "OpenCodez",
-      "url": "http://host.docker.internal:4096",
-      "home": "C:\\Users\\Alice",
-      "uploadRoot": "C:\\Users\\Alice\\.opencodebot\\uploads",
-      "artifactUploadRoot": "C:\\Users\\Alice\\trash",
-      "pathStyle": "windows",
-      "transfer": { "type": "ssh", "host": "host.docker.internal", "user": "Alice" }
-    }
-  ]
-}
-```
-
-Use `transfer: { "type": "local" }` with Docker Desktop only when the server paths in `servers.json` are paths the Linux container can actually write. That is usually fine for WSL-style or container-style paths, but not for plain `C:\...` paths.
-
-Do not use `127.0.0.1` for host OpenCodez from inside Docker unless you intentionally run the container with host networking. In normal Compose networking, `127.0.0.1` means the container itself.
+For a Windows backend, keep the reachable API URL but use `pathStyle: "windows"`, Windows home/upload roots and `transfer: { "type": "ssh", "host": "host.docker.internal", "user": "Operator" }`, or run the bot natively.
 
 ## Run
 
-Linux/macOS:
+Deploy from a clean Git checkout:
 
 ```bash
-mkdir -p state
 npm run deploy:bot
 docker compose logs -f opencodebot
 ```
 
-PowerShell:
+The wrapper installs locked dependencies, checks syntax, builds with the exact Git SHA, recreates only the bot and runs live health. `npm run deploy:all` rebuilds/starts the full Compose project for service changes; add `COMPOSE_PROFILES=telegram-local` to `.env` when that sidecar should be part of the full project. Stop with `docker compose down`, preserving state.
 
-```powershell
-New-Item -ItemType Directory -Force state
-npm run deploy:bot
-docker compose logs -f opencodebot
-```
-
-Stop it with:
-
-```bash
-docker compose down
-```
+Update with `git pull --ff-only` then `npm run deploy:bot`. Use `deploy:all` for Compose/sidecar changes. Do not run `npm start` alongside a container polling the same token. `npm run health:live` checks the actual main process and both loops, Telegram and required backend APIs; `offline_ok` servers are excluded from that deployment gate.
 
 ## Local Telegram Bot API
 
-The local Bot API server is an optional sidecar in the same Compose project. It is not a separate opencodebot project. It stores TDLib/Bot API state under `state/telegram-bot-api`, and opencodebot mounts the same path at `/var/lib/telegram-bot-api` so large artifacts can be handed to Telegram by local file path.
+The optional `telegram-local` profile runs the pinned `aiogram/telegram-bot-api:10.3` image. It stores state in `state/telegram-bot-api`, shared with the bot at `/var/lib/telegram-bot-api`. The sidecar port is internal to Compose by default. Get `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` from https://my.telegram.org/apps and add them to `token.env`.
 
-The bot container normally runs as your user, while the local Bot API sidecar uses its own `telegram-bot-api` user inside the container. Keep the shared local Bot API state owned by uid/gid `101:101`, and keep only the artifact spool writable by the bot uid/gid. Compose adds the bot to group `101` so it can read local Bot API downloads without owning that state; set `TELEGRAM_BOT_API_GID` in `.env` only if the sidecar image uses a different group id. If you previously ran the bot as root or changed ownership recursively, repair the volume before debugging file downloads.
+```json
+{ "telegram": { "botApi": { "mode": "local",
+  "rootUrl": "http://telegram-bot-api:8081",
+  "localFilesRoot": "/var/lib/telegram-bot-api" } } }
+```
+
+The sidecar uses uid/gid `101:101`. The bot joins group 101 to read its downloads; `TELEGRAM_BOT_API_GID` can override that group for another image. The spool belongs to the bot and remains readable to the sidecar. Repair only these exact directories if ownership was previously changed:
 
 ```bash
 sudo chown -R 101:101 state/telegram-bot-api
 sudo mkdir -p state/telegram-bot-api/opencodebot-spool
 sudo chown -R "$(id -u):$(id -g)" state/telegram-bot-api/opencodebot-spool
-docker compose restart telegram-bot-api opencodebot
 ```
 
-Enable it in `config.local.json`:
+For external state, replace `state/telegram-bot-api` with that installation's exact directory. Suppress token-bearing subdirectory paths in diagnostic/backup errors.
 
-```json
-{
-  "telegram": {
-    "botApi": {
-      "mode": "local",
-      "rootUrl": "http://telegram-bot-api:8081",
-      "localFilesRoot": "/var/lib/telegram-bot-api"
-    }
-  }
-}
-```
-
-Start or update the stack with the profile:
+Start the sidecar, move the token from the cloud endpoint, then deploy the bot:
 
 ```bash
-docker compose --profile telegram-local up -d --build
-npm run telegram-local -- enable --yes
-docker compose exec -T opencodebot npm run telegram-local -- doctor
-npm run smoke:live
-```
-
-`enable --yes` calls Telegram `logOut` on the cloud Bot API so the token can be served by the local Bot API server. The sidecar port is not published to the LAN; opencodebot reaches `http://telegram-bot-api:8081` on the Compose network. If you return to cloud mode, run `docker compose exec -T opencodebot npm run telegram-local -- disable --yes` while config still points at the local server, then set `telegram.botApi.mode` back to `cloud` and restart the bot. Telegram documents a short restriction window before cloud Bot API accepts the token again.
-
-Update after pulling new code:
-
-```bash
-git pull
+docker compose --profile telegram-local up -d telegram-bot-api
+docker compose run --rm --no-deps opencodebot npm run telegram-local -- enable --yes
 npm run deploy:bot
+docker compose exec -T opencodebot npm run telegram-local -- doctor
 ```
 
-`deploy:bot` is cross-platform, refuses a dirty checkout, labels the image with the exact Git revision, runs checks,
-recreates only opencodebot, and finishes with `health:live`. This checks the actual process and both main loops, not just
-container existence; an unavailable required backend fails deployment verification. Use `npm run deploy:all` when Compose services or the Telegram
-Bot API sidecar itself changed; it preserves the same revision metadata while rebuilding the full project.
+The enable helper calls cloud `logOut`; the one-off helper is not a poller. Preserve the shared volume when updating the sidecar. To return to cloud, run `docker compose exec -T opencodebot npm run telegram-local -- disable --yes` while config still points at local, then change mode to `cloud` and restart. Telegram can impose a short restriction before cloud serves the token again.
 
-For approved Telegram-button updates on the Linux Compose host, install the user-level request watcher once:
+## Operations
 
-```bash
-npm run update-runner:install
-systemctl --user status opencodebot-update.path
-```
+The bot normally makes outgoing requests only. Enabling artifacts starts its authenticated gateway; Compose publishes `OPENCODEBOT_ARTIFACT_PORT` (8788 by default) to container port 8788. Changing the container listener port needs a matching Compose port override. Keep access limited to trusted senders.
 
-The self-updater never refreshes or restarts OpenCodez. If Git paths for the bundled artifact plugin or Telegram skill
-changed, the final Telegram card reports the manual follow-up. See [Self-Update](self-update.md) and
-[Artifact Gateway](artifact-gateway.md#updating).
-
-Updates that change `docker-compose*.yml` or the host runner scripts are manual by design. Telegram omits the apply
-button and shows the appropriate `git pull`, optional `update-runner:install`, and `deploy:bot`/`deploy:all` command.
-This avoids claiming rollback when the deployment contract itself changed.
-
-## What Docker Owns
-
-Docker runs opencodebot and, only when the `telegram-local` profile is enabled, the optional Telegram Bot API sidecar. It does not run OpenCodez or WireGuard.
-
-Without the artifact gateway, the bot only makes outgoing requests to Telegram and OpenCodez, and writes state/uploads to the mounted `state/` directory. When the artifact gateway is enabled, Compose publishes the token-protected gateway on `OPENCODEBOT_ARTIFACT_PORT` or `8788` by default so OpenCodez plugins can upload files to Telegram. User-dropped files in the artifacts topic use the mounted `OPENCODEBOT_ARTIFACT_UPLOAD_ROOT`. Keep the gateway port private to hosts that should be allowed to send artifacts.
-
-WireGuard remains a host-level optional helper. If you want remote private access to the OpenCodez web UI, set up WireGuard on the host and keep using the same OpenCodez URL pattern in `servers.json`.
+The bot container has no Docker socket or source mount. Optional Telegram-driven updates use a fixed Linux host runner installed with `npm run update-runner:install`; [self-update](self-update.md) describes its permissions, rollback and manual cases. Plugin/skill deployment is owned by the OpenCodez installation.

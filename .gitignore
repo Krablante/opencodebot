@@ -19,5 +19,6 @@ wireguard/
 *.key
 *.conf
 *.png
+!assets/*.png
 
 .DS_Store

@@ -1,5 +1,6 @@
 import { assertRuntimeConfig, loadConfig } from "./config.mjs"
 import { startArtifactGateway } from "./artifacts-gateway.mjs"
+import { cleanupArtifactSpools } from "./artifacts/http-body.mjs"
 import { ArtifactUploadBuffer, handleArtifactUploadMessage } from "./artifact-uploads.mjs"
 import { cleanupUploads, extractTelegramFiles } from "./attachments.mjs"
 import { createBackendRequester } from "./backend-backoff.mjs"
@@ -105,6 +106,7 @@ const {
   showPromptFeedback,
 } = promptRouter
 const topicLifecycle = createTopicLifecycle({ config, state, telegram, opencode, settings, activateBindingForPrompt, clearPromptFeedback,
+  onTopicDisabled: (chatId, topicId) => promptRouter.discardTopicBuffers(chatId, topicId),
   onBindingDisabled: (binding) => {
     promptQueue.clear(binding)
     sessionReconciler?.detachBinding(binding)
@@ -190,6 +192,7 @@ const commandHandlers = createTelegramCommandHandlers({
   multipartPrompts,
   createPendingTopic,
   discardAttachmentBatch: promptRouter.discardAttachmentBatch,
+  discardTopicBuffers: promptRouter.discardTopicBuffers,
   detachBinding: sessionReconciler.detachBinding,
   notifyLatestManualCompaction: sessionReconciler.notifyLatestManualCompaction,
   speech,
@@ -233,8 +236,12 @@ await finalVoice.start()
 await telegramPolling.syncCommandMenu()
 await controlMenu.start()
 await updateManager.start()
-await cleanupUploads(config.paths.uploadsDir, config.attachments.cleanupAfterMs).catch(logError)
-setInterval(() => cleanupUploads(config.paths.uploadsDir, config.attachments.cleanupAfterMs).catch(logError), 60 * 60 * 1000).unref?.()
+const cleanupStaging = () => Promise.all([
+  cleanupUploads(config.paths.uploadsDir, config.attachments.cleanupAfterMs),
+  cleanupArtifactSpools(config.telegram.botApi.spoolDir),
+]).catch(logError)
+await cleanupStaging()
+setInterval(cleanupStaging, 60 * 60 * 1000).unref?.()
 artifactGateway = startArtifactGateway({ config, state, telegram, signal: abort.signal })
 console.log(`[opencodebot] starting ${config.opencode.servers.length} OpenCodez event streams`)
 

@@ -38,15 +38,17 @@ export class GroqSpeechClient {
         headers: { Authorization: `Bearer ${apiKey}` },
         body,
       })
+      if (!response.ok) {
+        await response.body?.cancel()
+        throw new Error(`Groq STT returned HTTP ${response.status}`)
+      }
       const raw = await response.text()
-      if (!response.ok) throw new Error(`Groq STT failed (${response.status}): ${raw.slice(0, 500)}`)
       const text = parseTranscription(raw, modelProfile.responseFormat)
       if (!text) throw new Error("Groq STT returned an empty transcript")
       return {
         text,
         model: modelProfile.apiModel,
         modelProfile,
-        raw,
       }
     } finally {
       clearTimeout(timeout)

@@ -1,6 +1,6 @@
 {
   "name": "opencodebot",
-  "version": "0.3.9",
+  "version": "0.4.0",
   "type": "module",
   "description": "Telegram mirror and companion bot for OpenCodez sessions.",
   "license": "MIT",
@@ -18,12 +18,12 @@
     "opencodez",
     "codex",
     "ai-agent",
-    "wireguard",
     "sse"
   ],
   "scripts": {
     "start": "node src/main.mjs",
     "check": "node scripts/check.mjs",
+    "docs:check": "node scripts/check-docs.mjs",
     "test": "node --test test/*.test.mjs",
     "smoke": "node scripts/smoke.mjs",
     "health:live": "docker compose exec -T opencodebot node src/runtime-health.mjs /app/config.local.json",

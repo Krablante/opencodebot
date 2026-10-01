@@ -1,3 +1,7 @@
+const MAX_QUEUED_PER_SESSION = 20
+const MAX_QUEUED_TOTAL = 100
+const MAX_QUEUED_BYTES = 64 * 1024 * 1024
+
 export class PromptQueue {
   constructor(sendPrompt, { onDrop, sessionStatus, onQueued } = {}) {
     this.sendPrompt = sendPrompt
@@ -82,7 +86,15 @@ export class PromptQueue {
       await this.sendNow(binding, value, files, metadata)
       return { status: "sent" }
     }
-    const position = state.items.push({ text: value, files, createdAt: Date.now(), sourceMessageId: metadata?.sourceMessageId })
+    const bytes = Buffer.byteLength(value) + files.reduce((total, file) => total + (file.inlinePending
+      ? Math.ceil((file.size || 0) / 3) * 4 : Buffer.byteLength(file.url || "")), 0)
+    let count = 0, retainedBytes = 0
+    for (const session of this.sessions.values()) for (const item of session.items) { count++; retainedBytes += item.bytes || 0 }
+    if (state.items.length >= MAX_QUEUED_PER_SESSION || count >= MAX_QUEUED_TOTAL || retainedBytes + bytes > MAX_QUEUED_BYTES) {
+      await this.onDrop(files)
+      return { status: "full" }
+    }
+    const position = state.items.push({ text: value, files, bytes, createdAt: Date.now(), sourceMessageId: metadata?.sourceMessageId })
     await this.onQueued?.(binding)
     return { status: "queued", position }
   }
@@ -187,9 +199,10 @@ function beginRun(state) {
 }
 
 export function summarizeWords(text, maxWords = 10) {
-  const words = String(text || "").trim().split(/\s+/).filter(Boolean)
-  if (words.length <= maxWords) return words.join(" ")
-  return `${words.slice(0, maxWords).join(" ")}...`
+  const words = String(text || "").trim().split(/\s+/, maxWords + 1).filter(Boolean)
+  const summary = words.slice(0, maxWords).join(" ")
+  if (summary.length <= 160 && words.length <= maxWords) return summary
+  return `${summary.slice(0, 157).replace(/[\uD800-\uDBFF]$/, "")}...`
 }
 
 export function summarizeQueueItem(item, maxWords = 10) {

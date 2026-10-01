@@ -1,22 +1,18 @@
 # 🤖 OpenCodeBot
 
-**Your OpenCodez sessions in Telegram, without moving the workspace out of OpenCodez.**
+**Run OpenCodez from Telegram. Choose a model, send a task and keep the same session in your web workspace.**
 
-OpenCodeBot follows the OpenCodez API and sends visible session activity to Telegram forum topics. You can start a session, send a prompt, answer a question, and see the final reply from your phone. OpenCodez keeps the sessions, message IDs, tools, and web UI; the bot is a second, deliberately smaller control surface.
+OpenCodeBot turns Telegram forum topics into conversations with your OpenCodez agent. Create topics and profiles in General, send prompts and files from your phone, answer blocking questions, and receive progress and final replies. OpenCodez keeps execution, history and the web workspace.
 
-🇬🇧 [English](README.md) · 🇷🇺 [Русский](README.ru.md) · 📚 [Documentation](docs/en/README.md) · [MIT license](LICENSE)
+🇬🇧 [English](README.md) · 🇷🇺 [Русский](README.ru.md) · 📚 [Documentation and languages](docs/README.md) · [Releases](https://github.com/Krablante/opencodebot/releases) · [MIT license](LICENSE)
 
 💬 **Session topics** · 🧰 **Compact progress** · 🎙️ **Optional voice** · 📎 **Artifact delivery**
 
 ## 🧭 How it works
 
-```text
-OpenCodez API + one event stream per server
-                 ↓
-       OpenCodeBot (Node.js)
-                 ↕
-       Telegram forum topics
-```
+![General and personal topic creation](assets/workspace-en.png)
+
+*General on the left; personal topic creation on the right. Preview from the actual menu renderers with sample data; Telegram client layout varies.*
 
 A Telegram topic follows one main OpenCodez session. Assistant text arrives in completed blocks. Economy mode is the default and hides ordinary tool status; `/mode full` enables compact tool status. A saved mode survives restarts and updates. Hidden reasoning, raw tool arguments, and child sessions stay out of the mirror. The bot persists topic bindings, delivery markers, and incoming Telegram receipts so it can recover after a restart. Its `/q` prompt queue remains in memory.
 
@@ -36,14 +32,14 @@ The installer asks for the BotFather token, your user ID, the OpenCodez URL and 
 
 Start the bot, add it as an administrator to a forum-enabled group, and run `/setup`. It checks rights, preserves or creates FILES and AUDIO, opens General and offers connection setup. Open the bot's private chat once to allow notifications. Groq keys are entered in the same topic where setup requested them. Preferences persist in bot state; routine profile and connection changes need no JSON edits.
 
-For Docker Compose, create a writable `state` directory (`mkdir -p state` on Linux/macOS, `New-Item -ItemType Directory -Force state` in PowerShell). The revision-aware `npm run deploy:bot` command requires a **clean Git checkout** and runs the live health check after starting the bot:
+The installer creates writable state and records the owner's UID/GID on Linux/macOS. `npm run deploy:bot` requires a **clean Git checkout** and checks the live process after deployment:
 
 ```bash
 npm run deploy:bot
 docker compose logs -f opencodebot
 ```
 
-For a local Node.js run, use `npm start`. Do not run it alongside a container polling the same Telegram token. [Docker setup](docs/en/docker.md) covers mounts, host paths, the optional local Bot API, and updates; [configuration](docs/en/config-runtime.md) covers every runtime file and server setting.
+For native Node.js, run `npm ci` first, then `npm start`. Do not run it alongside a container polling the same token. [Docker setup](docs/en/docker.md) covers mounts, host paths, the optional local Bot API, and updates; [configuration](docs/en/config-runtime.md) covers runtime files and server settings.
 
 ## 💬 Use it
 
@@ -55,8 +51,8 @@ See [Telegram workflow](docs/en/telegram-workflow.md) for topic rules and the fu
 
 ## 🛠️ Operate and develop
 
-`npm run check` checks syntax, `npm test` runs focused contracts, and `npm run smoke` checks the local integration paths without posting to Telegram. `npm run health:live` checks the deployed Compose process, Telegram access, and required OpenCodez discovery endpoints. `npm run deploy:all` rebuilds the full Compose project when its services change. No CI workflow is required to run the bot; [development](docs/en/development.md) and [self-update](docs/en/self-update.md) explain the source, runtime, and host-runner boundaries.
+`npm run check` checks syntax, `npm run docs:check` validates documentation, `npm test` protects focused contracts, and `npm run smoke` checks integration paths without posting to Telegram. One GitHub Actions job runs these checks for pushes and pull requests. `npm run health:live` checks the deployed process, Telegram and required OpenCodez APIs. Use `npm run deploy:all` for Compose service changes. [Architecture](docs/en/architecture.md), [development](docs/en/development.md) and [updates](docs/en/self-update.md) explain ownership, recovery and the release path.
 
-**Documentation:** 🇬🇧 [English index](docs/en/README.md) · 🇷🇺 [Русский справочник](docs/ru/README.md). Each topic has a matching path under `docs/en/` and `docs/ru/`; add another language as another directory and link it from the indexes.
+**Documentation:** [language index](docs/README.md) · 🇬🇧 [English](docs/en/README.md) · 🇷🇺 [Русский](docs/ru/README.md). Every language follows the same topic structure; another language is one directory and navigation update.
 
 The application is MIT licensed; the bundled [Old Russian word list](assets/old-russian-words.LICENSE.md) is CC BY-SA 4.0. OpenCodeBot is an independent companion to [OpenCodez](https://github.com/Krablante/opencodez).

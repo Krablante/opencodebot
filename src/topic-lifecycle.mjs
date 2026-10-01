@@ -7,7 +7,7 @@ import { parseNewTopicArgs } from "./prompt-profiles.mjs"
 import { t } from "./i18n/index.mjs"
 import { baseTitleFromTelegramTitle, managedTopicTitle, randomTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
 
-export function createTopicLifecycle({ config, state, telegram, opencode, settings, activateBindingForPrompt, clearPromptFeedback, onBindingDisabled }) {
+export function createTopicLifecycle({ config, state, telegram, opencode, settings, activateBindingForPrompt, clearPromptFeedback, onBindingDisabled, onTopicDisabled }) {
   const topicCreations = new Map()
   const topicChecks = new Map()
 
@@ -100,6 +100,7 @@ export function createTopicLifecycle({ config, state, telegram, opencode, settin
   async function disableTopicMirror(chatId, targetTopicId, reason) {
     topicChecks.delete(`${chatId}:${targetTopicId}`)
     const bindings = await state.disableTopic(chatId, targetTopicId, reason)
+    await onTopicDisabled?.(chatId, targetTopicId)
     for (const binding of bindings) {
       onBindingDisabled?.(binding)
       await clearPromptFeedback(binding, { force: true }).catch(() => {})
@@ -108,18 +109,16 @@ export function createTopicLifecycle({ config, state, telegram, opencode, settin
     return Boolean(bindings.length)
   }
 
-  async function topicExists(record, { force = false } = {}) {
-    const topic = state.topicRecord(record.chatId, record.topicId) || record
-    const name = topic.topicTitle || managedTopicTitle(topicBaseTitle(topic), topic.serverID, opencode.servers).topicTitle
+  async function topicExists(record, { force = false, receiverUserId = config.telegram.allowedUserIds[0] } = {}) {
     const key = `${record.chatId}:${record.topicId}`
     const cached = topicChecks.get(key)
-    if (!force && cached?.name === name && Date.now() - cached.at < 60_000) return true
+    if (!force && cached && Date.now() - cached.at < 60_000) return true
     const exists = await telegram.forumTopicExists({ chatId: record.chatId, topicId: record.topicId,
-      name })
+      receiverUserId })
     if (!exists) await disableTopicMirror(record.chatId, record.topicId, "Telegram topic deleted")
     else {
       topicChecks.delete(key)
-      topicChecks.set(key, { name, at: Date.now() })
+      topicChecks.set(key, { at: Date.now() })
       if (topicChecks.size > 256) topicChecks.delete(topicChecks.keys().next().value)
     }
     return exists
@@ -177,7 +176,14 @@ export function createTopicLifecycle({ config, state, telegram, opencode, settin
     return runSingleFlight(
       topicCreations,
       bindingKey(serverID, sessionID),
-      () => state.findBinding(serverID, sessionID) || task(),
+      () => {
+        const existing = state.findBinding(serverID, sessionID)
+        if (existing) return existing
+        // The bounded seen list is a discovery cache. Retained disabled binding
+        // history still owns an explicit topic stop after that cache expires.
+        if (state.data?.bindings?.some((binding) => binding.serverID === serverID && binding.sessionID === sessionID)) return null
+        return task()
+      },
     )
   }
 

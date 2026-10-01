@@ -15,8 +15,8 @@ import {
   parseArtifactUploadCaption,
   resolveUploadTarget,
 } from "../src/artifact-uploads.mjs"
-import { AttachmentBuffer, extractTelegramFiles } from "../src/attachments.mjs"
-import { startArtifactGateway } from "../src/artifacts-gateway.mjs"
+import { AttachmentBuffer, cleanupFiles, downloadTelegramFiles, extractTelegramFiles, prepareInlineFiles } from "../src/attachments.mjs"
+import { artifactFileCaptionHtml, startArtifactGateway } from "../src/artifacts-gateway.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "../src/commands.mjs"
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { normalizeFinalVoiceConfig } from "../src/config/final-voice.mjs"
@@ -25,7 +25,8 @@ import { createFinalNotifier, finalNotificationMarkdown, finalNotificationTopicS
 import { FinalVoiceModule, speakableVoiceMetadata } from "../src/final-voice.mjs"
 import { catalogKeys, configureI18n, getLanguage, setLanguage, t, tFor } from "../src/i18n/index.mjs"
 import { OPENCODE_REQUEST_TIMEOUT_MS, OpenCodeClient, visibleTextFromParts } from "../src/opencode.mjs"
-import { bindPendingTopicSession } from "../src/prompt-routing.mjs"
+import { bindPendingTopicSession, createPromptRouter } from "../src/prompt-routing.mjs"
+import { safeFilename, transferFile } from "../src/upload-transfer.mjs"
 import { PromptQueue } from "../src/prompt-queue.mjs"
 import { createQuestionManager } from "../src/questions.mjs"
 import { MirrorRenderer, richWebPromptMessages, webPromptMessages } from "../src/render.mjs"
@@ -62,6 +63,7 @@ await smokeRuntimeHealth(config, { explicit: Boolean(explicitConfigPath) })
 async function smokeLocalInvariants() {
   await smokeI18n()
   await smokeWorkspacePreferences()
+  await smokeDeliveryBounds()
   smokeConfigExample()
   smokeWireguardAddresses()
   smokeUpdateSubsystem()
@@ -216,6 +218,180 @@ async function smokeWorkspacePreferences() {
     await migrated.initialize()
     assert.equal(migrated.data.profiles.luna, undefined)
     console.log("workspace: profile migration, snapshot isolation, stale/foreign UI and pre-journal key handling verified")
+  } finally { await rm(root, { recursive: true, force: true }) }
+}
+
+async function smokeDeliveryBounds() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-delivery-"))
+  try {
+    const c = loadConfig(path.join(projectRoot, "config.example.json"))
+    const state = new StateStore(path.join(root, "state.json"))
+    await state.load()
+    configureI18n({ state, defaultLanguage: "en" })
+    const settings = new UserSettings({ config: c, state, opencode: {} })
+    await settings.initialize()
+    await settings.saveProfile("constructor", c.promptProfiles.sol)
+    assert.equal(c.promptProfiles.constructor.model.modelID, c.promptProfiles.sol.model.modelID)
+
+    let saves = 0
+    const save = state.save.bind(state)
+    state.save = async () => { saves++; await save() }
+    await state.markSeenSession("local", "seen")
+    saves = 0
+    await state.markSeenSession("local", "seen")
+    await state.consumePendingPrompt("local", "seen", "web prompt")
+    assert.equal(saves, 0)
+    await state.markAssistantMirroredMany("local", "history", Array.from({ length: 10_000 }, (_, i) => `msg-${i}`))
+    assert.equal(state.isAssistantMirrored("local", "history", "msg-9999"), true)
+    await writeFile(state.markerPath, '["a","local","history","torn', { flag: "a" })
+    const reloaded = new StateStore(state.filePath)
+    await reloaded.load()
+    assert.equal(reloaded.isAssistantMirrored("local", "history", "msg-9999"), true)
+
+    let downloaded = 0
+    const downloader = { downloadFile: async ({ destination, maxBytes }) => {
+      downloaded++
+      assert.equal(maxBytes, downloaded === 1 ? 1500 : 500)
+      await writeFile(destination, Buffer.alloc(1000))
+      return { file: {} }
+    } }
+    const descriptors = [{ filename: "one", fileID: "1" }, { filename: "two", fileID: "2" }]
+    await assert.rejects(downloadTelegramFiles(downloader, descriptors, root, { maxFiles: 1 }), /Too many/)
+    assert.equal(downloaded, 0)
+    await assert.rejects(downloadTelegramFiles(downloader, descriptors, root, { maxFileBytes: 2000, maxTotalBytes: 1500 }, { inline: false }), /exceeded/)
+    const deferred = await downloadTelegramFiles({ downloadFile: async ({ destination }) => {
+      await writeFile(destination, "bytes")
+      return { file: {} }
+    } }, [{ filename: "файл.txt", fileID: "deferred", size: 5 }], root, {}, { deferInline: true })
+    assert.equal(deferred[0].inlinePending, true)
+    assert.equal(deferred[0].url, undefined)
+    assert.equal((await prepareInlineFiles(deferred))[0].url, "data:application/octet-stream;base64,Ynl0ZXM=")
+    await cleanupFiles(deferred)
+
+    const localPath = path.join(root, "source.txt"), targetPath = path.join(root, "saved.txt")
+    await writeFile(localPath, "first")
+    await transferFile({ localPath, targetPath, server: { transfer: { type: "local" } }, overwrite: false })
+    await writeFile(localPath, "second")
+    await assert.rejects(transferFile({ localPath, targetPath, server: {}, overwrite: false }), /already exists/)
+    assert.equal(await readFile(targetPath, "utf8"), "first")
+    assert.ok(Buffer.byteLength(safeFilename("файл".repeat(80))) <= 160)
+    assert.equal(safeFilename(".."), "file")
+    const longCaption = artifactFileCaptionHtml("<&>".repeat(400), ["/workspace/" + "<&>".repeat(400)])
+    assert.ok(longCaption.length <= 950)
+    assert.match(longCaption, /<blockquote>[\s\S]*<\/blockquote>$/)
+    assert.equal((longCaption.match(/<blockquote>/g) || []).length, 1)
+    assert.equal((longCaption.match(/<\/blockquote>/g) || []).length, 1)
+
+    for (const C of [GroqSpeechClient, OpenRouterSpeechClient]) {
+      const client = new C({ apiKey: "test", url: "http://provider.invalid", timeoutMs: 1000 }, {},
+        async () => new Response("private provider payload must not appear", { status: 500 }))
+      await assert.rejects(client.transcribeFile({ localPath, filename: "audio.ogg" }, { apiModel: "test" }), (error) => {
+        assert.match(error.message, /HTTP 500/)
+        assert.doesNotMatch(error.message, /private provider payload/)
+        return true
+      })
+    }
+
+    let entered = 0, unlock, ready
+    const held = new Promise((resolve) => { unlock = resolve })
+    const admitted = new Promise((resolve) => { ready = resolve })
+    const gateway = startArtifactGateway({ config: { artifacts: { enabled: true, token: "test", port: 0, listenHost: "127.0.0.1", maxPayloadBytes: 65536, maxTextChars: 3400, maxCaptionChars: 900 }, telegram: { botApi: { mode: "cloud" } } },
+      state: { artifactsTopic: () => ({ chatId: -1001, topicId: 1 }) }, telegram: { sendMessage: async () => { if (++entered === 4) ready(); await held; return { message_id: entered } } } })
+    await new Promise((resolve) => gateway.once("listening", resolve))
+    const url = `http://127.0.0.1:${gateway.address().port}/artifacts/send`
+    const send = () => fetch(url, { method: "POST", headers: { authorization: "Bearer test", "content-type": "application/json" }, body: JSON.stringify({ mode: "text", text: "audit" }) })
+    const active = Array.from({ length: 4 }, send)
+    try {
+      await admitted
+      const overflow = await send()
+      assert.equal(overflow.status, 503)
+      assert.equal(overflow.headers.get("retry-after"), "5")
+      assert.equal((await overflow.json()).error, "gateway_busy")
+      unlock()
+      for (const response of await Promise.all(active)) assert.equal((await response.json()).ok, true)
+    } finally { unlock(); gateway.closeAllConnections(); await new Promise((resolve) => gateway.close(resolve)) }
+
+    let photoFailure = Object.assign(new Error("PHOTO_INVALID_DIMENSIONS"), { status: 400 }), documents = 0
+    const filesGateway = startArtifactGateway({ config: { artifacts: { enabled: true, token: "test", port: 0, listenHost: "127.0.0.1", maxFileBytes: 1024, maxTextChars: 3400, maxCaptionChars: 900 },
+      telegram: { botApi: { mode: "local", spoolDir: path.join(root, "spool") } } }, state: { artifactsTopic: () => ({ chatId: -1001, topicId: 1 }) },
+      telegram: { local: true, sendPhoto: async () => { throw photoFailure }, sendDocument: async ({ file }) => {
+        documents++
+        assert.equal(await readFile(file.localPath, "utf8"), "bytes")
+        return { message_id: documents }
+      } } })
+    await new Promise((resolve) => filesGateway.once("listening", resolve))
+    const fileSend = () => fetch(`http://127.0.0.1:${filesGateway.address().port}/artifacts/send-file`, {
+      method: "POST", headers: { authorization: "Bearer test", "content-type": "image/png",
+        "x-opencodebot-artifact-meta": Buffer.from(JSON.stringify({ file: { filename: "photo.png", contentType: "image/png" } })).toString("base64url") }, body: "bytes" })
+    try {
+      const rejected = await fileSend()
+      assert.equal((await rejected.json()).messages[0].method, "sendDocument")
+      photoFailure = new Error("uncertain network failure")
+      const uncertain = await fileSend()
+      assert.equal(uncertain.status, 500)
+      await uncertain.json()
+      assert.equal(documents, 1)
+    } finally { filesGateway.closeAllConnections(); await new Promise((resolve) => filesGateway.close(resolve)) }
+
+    const queue = new PromptQueue(async () => {}, { onDrop: async (files) => { assert.equal(files.length, 0) } })
+    const binding = { serverID: "local", sessionID: "bounded" }
+    queue.markBusy(binding)
+    for (let i = 0; i < 20; i++) assert.equal((await queue.enqueue(binding, "queued")).status, "queued")
+    assert.equal((await queue.enqueue(binding, "overflow")).status, "full")
+    queue.delete(binding, 1)
+    assert.equal((await queue.enqueue(binding, "replacement")).status, "queued")
+    const byteBound = new PromptQueue(async () => {})
+    byteBound.markBusy(binding)
+    assert.equal((await byteBound.enqueue(binding, "large inline file", [{ inlinePending: true, size: 50 * 1024 * 1024 }])).status, "full")
+
+    const tg = new TelegramClient("test")
+    const calls = []
+    tg.request = async (method, payload) => { calls.push({ method, payload }); return { ephemeral_message_id: 42 } }
+    assert.equal(await tg.forumTopicExists({ chatId: -1001, topicId: 1, receiverUserId: 42 }), true)
+    assert.deepEqual(calls.map((call) => call.method), ["sendRichMessage", "deleteEphemeralMessage"])
+    assert.ok(!calls.some((call) => Object.hasOwn(call.payload, "name")))
+
+    const snapshot = structuredClone(c.promptProfiles.sol)
+    snapshot.model.variant = "medium"
+    const pending = { chatId: -1001, topicId: 1, serverID: "local", promptProfileName: "sol", promptProfile: snapshot }
+    await state.addPendingTopic(1, pending)
+    let created = 0, model, payload
+    const backend = {
+      createSession: async () => { created++; await new Promise((resolve) => setTimeout(resolve, 5)); return { id: "launch" } },
+      defaultNewSessionDirectory: () => undefined,
+      switchSessionModel: async (_server, _session, value) => { model = value },
+      selectSystemPrompt: async () => {},
+      server: () => ({}),
+      promptAsync: async (_server, _session, value) => { payload = value },
+    }
+    const message = { chat: { id: -1001 }, from: { id: 42 }, message_thread_id: 1, message_id: 2 }
+    const currentPending = state.pendingTopic(1)
+    const pair = await Promise.all([1, 2].map(() => bindPendingTopicSession({ state, opencode: backend, pending: currentPending, message })))
+    assert.equal(created, 1)
+    assert.equal(pair[0].sessionID, pair[1].sessionID)
+    const router = createPromptRouter({ config: c, state, telegram: { sendMessage: async () => ({ message_id: 3 }), editMessageText: async () => {}, deleteMessage: async () => {} },
+      opencode: backend, renderer: { shouldPinUserPrompts: () => false }, scheduleReconcile: () => {}, logError: () => {} })
+    await router.queueTelegramPrompt("launch", "first prompt", { message, binding: pair[0] })
+    assert.equal(model.variant, "medium")
+    assert.equal(payload.variant, "medium")
+    assert.equal(c.promptProfiles.sol.model.variant, "high")
+    for (const actor of [42, 43]) {
+      const waitingMessage = { ...message, from: { id: actor } }
+      await router.queueTelegramPrompt(`-1001:1:${actor}`, "buffered ".repeat(500), { message: waitingMessage, binding: pair[0] })
+    }
+    assert.equal(router.multipartPrompts.pending.size, 2)
+    const disposed = await router.discardTopicBuffers(-1001, 1)
+    assert.equal(disposed.multipart, true)
+    assert.equal(router.multipartPrompts.pending.size, 0)
+    await state.enableFinalNotificationsFor(42)
+    await state.enableFinalNotificationsFor(43)
+    c.finalNotifications.userIds = [42, 43]
+    const notifyCommands = createTelegramCommandHandlers({ config: c, state, telegram: { sendMessage: async () => ({ message_id: 4 }) },
+      multipartPrompts: { flushKey: async () => {} } })
+    await notifyCommands.handle(message, { name: "notify_off", args: "" }, "unused")
+    assert.equal(state.finalNotificationsEnabledFor(42), false)
+    assert.equal(state.finalNotificationsEnabledFor(43), true)
+    console.log("delivery: launch snapshot, queue/download/gateway bounds, provider privacy, collision protection, marker recovery and non-mutating topic checks verified")
   } finally { await rm(root, { recursive: true, force: true }) }
 }
 

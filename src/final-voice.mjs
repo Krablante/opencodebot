@@ -340,7 +340,10 @@ export class FinalVoiceModule {
         }),
         signal: controller.signal,
       })
-      if (!response.ok) throw new Error(`Summary provider returned HTTP ${response.status}`)
+      if (!response.ok) {
+        await response.body?.cancel()
+        throw new Error(`Summary provider returned HTTP ${response.status}`)
+      }
       const bytes = await readLimited(response, config.maxResponseBytes)
       let payload
       try {
@@ -374,7 +377,10 @@ export class FinalVoiceModule {
         }),
         signal: controller.signal,
       })
-      if (!response.ok) throw new Error(`TTS provider returned HTTP ${response.status}`)
+      if (!response.ok) {
+        await response.body?.cancel()
+        throw new Error(`TTS provider returned HTTP ${response.status}`)
+      }
       const bytes = await readLimited(response, profile.maxResponseBytes)
       return validateAudio(bytes, response.headers.get("content-type"), profile.responseFormat)
     } finally {

@@ -43,6 +43,11 @@ export class UserSettings {
   get data() { return this.state.data.preferences }
 
   apply() {
+    // Profile names are data, including valid names such as constructor/toString.
+    // Normalize both dictionaries after JSON load so inherited properties never
+    // become launch profiles or archived entries.
+    Object.setPrototypeOf(this.data.profiles, null)
+    Object.setPrototypeOf(this.data.deletedProfiles, null)
     this.config.promptProfiles = this.data.profiles
     const selected = this.data.profiles[this.data.defaultProfile]
     if (selected) this.config.defaultPrompt = { ...this.config.defaultPrompt, ...selected, profileName: this.data.defaultProfile }

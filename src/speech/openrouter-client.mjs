@@ -36,12 +36,12 @@ export class OpenRouterSpeechClient {
         },
         body: JSON.stringify(this.requestBody(audio, format, modelProfile)),
       })
+      if (!response.ok) {
+        await response.body?.cancel()
+        throw new Error(`OpenRouter STT returned HTTP ${response.status}`)
+      }
       const bodyText = await response.text()
       const parsed = parseJson(bodyText)
-      if (!response.ok) {
-        const message = openRouterErrorMessage(parsed, bodyText)
-        throw new Error(`OpenRouter STT failed (${response.status}): ${message}`)
-      }
       const text = typeof parsed?.text === "string" ? parsed.text.trim() : ""
       if (!text) throw new Error("OpenRouter STT returned an empty transcript")
       return {
@@ -49,7 +49,6 @@ export class OpenRouterSpeechClient {
         model: modelProfile?.apiModel || this.config.model,
         modelProfile,
         format,
-        raw: parsed,
       }
     } finally {
       clearTimeout(timeout)
@@ -104,10 +103,4 @@ function parseJson(value) {
   } catch {
     return null
   }
-}
-
-function openRouterErrorMessage(parsed, bodyText) {
-  if (parsed?.error?.message) return parsed.error.message
-  if (parsed?.message) return parsed.message
-  return String(bodyText || "unknown error").slice(0, 500)
 }

@@ -1,658 +1,155 @@
-# Config And Runtime
+# Configuration and runtime
 
-[English](config-runtime.md) · [Русский](../ru/config-runtime.md)
+[English](config-runtime.md) · [Русский](../ru/config-runtime.md) · [All languages](../README.md)
 
-The repo contains source, defaults, and docs. Runtime config and state live outside git so the bot can be repaired,
-restarted, and shared without committing private values.
+Configuration describes the installation: credentials, server addresses, paths and provider access. Telegram preferences describe how people use it: profiles, language, notifications and topic choices. After the first import, edit profiles in General; changing their installation seeds does not change saved preferences.
 
-For guided installation use `npm run setup`; see [first run and upgrades](first-run.md). Manual config creation remains available:
-
-```bash
-npm run init-config
-```
-
-Default runtime config path:
-
-```text
-./config.local.json
-```
-
-`config.example.json` is the public shape and smoke-test baseline. It leaves scheduled updates and optional providers off and contains no host-specific network values. `npm run init-config` creates the local runtime copy
-and an editable `servers.json`. Edit the runtime copy for local behavior, and update `config.example.json` only when the
-shareable default shape changes.
+Use [first run](first-run.md) for guided installation and [Docker](docker.md) for mounts. This page is the configuration and storage reference. Event flow and failure recovery belong in [architecture](architecture.md).
 
 ## Loading
 
-The bot reads `OPENCODEBOT_CONFIG` when it is set. If it is not set, the loader uses `config.local.json` in the repo
-root. If that file does not exist, startup fails. `scripts/smoke.mjs` passes `config.example.json` explicitly for local
-contract checks, but the runtime loader no longer falls back to example config by itself.
+`npm run setup` prepares private files. `npm run init-config` creates `config.local.json` and `servers.json` for manual setup. Startup reads `OPENCODEBOT_CONFIG`, or `config.local.json` in the checkout. A missing file is an error; the bot never silently runs the public example.
 
-Relative paths in config are resolved from the config file's directory. This keeps the same config shape usable on Linux
-and Windows.
+Relative paths resolve from the configuration file's directory. `paths.tokenEnv` is read first, then process environment overrides it. Keep secrets out of JSON and Git.
 
-The Docker Compose setup mounts `config.local.json`, `servers.json`, `token.env`, and `state/` into the container at the
-same `/app/...` paths. That means the config created by `npm run init-config` works for both direct npm usage and
-Docker. The only common Docker-specific edit is the OpenCodez URL in `servers.json`: use a LAN URL or
-`host.docker.internal`, not `127.0.0.1`, when OpenCodez runs on the host.
+| File or setting | Purpose |
+| --- | --- |
+| `config.example.json` | Shareable configuration shape, with optional providers and scheduled updates off |
+| `config.local.json` | Private installation configuration |
+| `paths.serversJson` | Server inventory; normally `servers.json` |
+| `paths.tokenEnv` | Secret environment file; normally `token.env` |
+| `paths.statePath` | Durable state; normally `state/state.json` |
+| `paths.uploadsDir` | Temporary Telegram downloads; normally beside state |
+| `.env` | Compose host paths and UID/GID; [mount variables](docker.md#files) |
 
-The loader also reads `paths.tokenEnv` and then overlays process environment variables on top. That means Compose,
-PowerShell, shell sessions, and local scripts can override values from `token.env` without editing the runtime JSON.
+Compose mounts the private files at `/app/config.local.json`, `/app/servers.json`, `/app/token.env` and `/app/state`. Configuration used inside Docker must refer to those container paths. Native Node configuration refers to host paths. Keep these two views explicit when using an external configuration directory.
 
-OpenCodez servers come from `paths.serversJson`, not from the main config body. The public example points at
-`servers.example.json`; `npm run init-config` creates a local ignored `servers.json` for your real hosts.
+## Secrets and access
 
-`ui.timeZone` optionally sets an IANA time zone for the daily answer counter, for example `"UTC"`. If omitted, the bot uses `updates.timeZone` when present, otherwise the process's local zone. Delivery timestamps remain absolute, so changing the zone recalculates the retained counts without discarding them. See [Home statistics](control-menu.md#home-statistics).
+The Telegram token source is explicit: `telegram.token.env`. Operator IDs come from a literal `telegram.allowedUserIds` array or its `.env` reference. OpenCodez credentials use `opencode.passwordEnvNames`. The loader does not search unrelated environment variables for Telegram-looking values.
 
-## Secrets
-
-`token.env` is read by local scripts and the Compose runtime. It holds values such as the Telegram bot token, allowed
-user ids, the OpenCodez password, the optional artifact gateway token, optional `OPENROUTER_API_KEY` for speech
-transcription, and optional `TELEGRAM_API_ID`/`TELEGRAM_API_HASH` credentials for the local Telegram Bot API sidecar. Do
-not print it, paste it into docs, or commit it.
-
-The runtime config must explicitly name Telegram secret sources. Use `telegram.token.env` for the bot token and either a
-literal `telegram.allowedUserIds` array or `telegram.allowedUserIds.env` for operator ids. The loader does not scan
-unrelated environment variables for Telegram-looking tokens or user ids. `opencode.passwordEnvNames` remains a
-configured list for OpenCodez password lookup.
-
-Non-secret config is intentionally small. It covers deployment identity and ownership: chat id, allowed user ids,
-OpenCodez servers, default prompt profile, prompt profiles, attachment limits, speech transcription settings, artifact
-upload folders, final-notification recipients, artifact gateway address, update schedule, paths, and optional
-web/WireGuard helpers. The global full/economy mirror mode is runtime state controlled by `/mode`, and the global
-final-DM diagnostics mode is
-runtime state controlled by `/debug_on`, `/debug_off`, and `/debug_status`; prompt pinning, reconcile windows, multipart
-buffering, and tool compaction limits are fixed defaults in code.
-
-## Updates
-
-`updates.enabled` explicitly enables scheduled GitHub checks. When enabled, `updates.checkAt` and `updates.timeZone` are
-required runtime settings rather than code defaults; for example, `"checkAt": "07:00"` with `"timeZone": "Europe/London"`.
-`updates.repository` and `updates.branch` select the public source. `/update`
-performs an immediate check without moving or enabling the configured schedule. Omitting the `updates` block leaves
-automatic checks disabled but does not disable the manual command.
-
-The image build supplies `OPENCODEBOT_BUILD_SHA`; it is not a secret and should be a full 40-character revision. The
-container derives its update request/status directory beside `paths.state`, normally `/app/state/updates`. The Linux
-host runner uses the source side of that same state bind mount. See [Self-Update](self-update.md).
-
-## Telegram
-
-`telegram.chatId` pins the bot to the intended Telegram forum chat.
-
-`telegram.allowedUserIds` limits who can control the bot. Keep this explicit before handing the bot to someone else.
-`telegram.allowChatBootstrap` is useful only during first setup: if no chat is configured yet, the first allowed message
-can bind the bot to that chat. After setup, set the chat id and turn bootstrap off.
-
-The bot autocreates Telegram forum topics for ordinary new OpenCodez sessions discovered through Telegram commands,
-OpenCodez events, or bounded reconcile. Topic creation is part of the product model, not a runtime mode. Short-lived
-sessions whose exact normalized title is `opencode-see delegate` are an internal exception on every server and are not
-tracked or mirrored.
-
-`telegram.botApi` controls which Bot API endpoint the bot uses. If it is omitted, the bot uses the normal cloud endpoint
-at `https://api.telegram.org`. Local mode is explicit:
-
-```json
-{
-  "telegram": {
-    "botApi": {
-      "mode": "local",
-      "rootUrl": "http://telegram-bot-api:8081",
-      "localFilesRoot": "/var/lib/telegram-bot-api"
-    }
-  }
-}
+```env
+OPENCODEBOT_TOKEN=123456:bot-token
+OPENCODEBOT_ALLOWED_USER_IDS=123456789
+OPENCODEZ_SERVER_PASSWORD=optional-password
+OPENCODEBOT_ARTIFACT_TOKEN=separate-random-token
+GROQ_API_KEY=optional-transcription-key
+OPENROUTER_API_KEY=optional-transcription-key
 ```
 
-Local mode requires `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` in `token.env`, the `telegram-local` Compose profile, and
-`npm run telegram-local -- enable --yes` before the token can move from Telegram's cloud Bot API to the local server. In
-Docker deployments, use `docker compose exec -T opencodebot npm run telegram-local -- doctor` after restart to verify
-config, endpoint reachability, `getMe`, and the shared file root. The local server is an HTTP sidecar reachable only
-inside Docker by default.
+`telegram.chatId` selects the forum group. With no configured chat, `telegram.allowChatBootstrap=true` lets the first allowed group message bind it in state. For a shared installation, set the intended chat and operator IDs explicitly. Opening the bot's private chat permits notifications; explicit notification opt-outs persist.
 
-To leave local mode, run `docker compose exec -T opencodebot npm run telegram-local -- disable --yes` while config still
-points at the local server, then switch `telegram.botApi.mode` back to `cloud` and restart. This lets the helper call
-Telegram `close` on the right endpoint.
-
-## Attachments
-
-`attachments` is top-level config. It controls whether Telegram files are accepted and the accepted inline, per-file,
-and per-message totals. Cloud Bot API mode clamps each file to Telegram's conservative cloud download limit. Local Bot
-API mode can use larger per-file values, up to the local Bot API file limit.
-
-When files arrive without captions, the bot waits for plain text from the same user/topic before sending the prompt to
-OpenCodez. If Telegram splits a large follow-up text into several messages, the bot keeps collecting those chunks until
-the short attachment-text idle window settles, then sends one prompt with all files and text chunks together.
-Telegram-authored Rich Messages require no additional configuration: readable block text becomes the prompt, and
-embedded rich photo blocks use these same attachment limits and buffering rules. Mixed rich-text arrays are flattened in
-source order; visible captions, credits, details headers, custom-emoji alternatives, and mathematical expressions are
-preserved as plain text.
-
-```json
-{
-  "attachments": {
-    "enabled": true,
-    "maxInlineBytes": 20000000,
-    "maxFileBytes": 20000000,
-    "maxTotalBytes": 60000000
-  }
-}
-```
-
-## Speech Transcription
-
-`speech` is an optional OpenRouter/direct-Groq voice transcription module. It is disabled by default and has no local
-model, GPU, or worker dependency. Set `speech.enabled` to `true`, then provide `OPENROUTER_API_KEY`, `GROQ_API_KEY`, or
-both in `token.env` or the process environment. A missing provider key hides only that provider's models; it does not
-disable another configured provider.
-
-```json
-{
-  "speech": {
-    "enabled": true,
-    "maxFileBytes": 25000000,
-    "queueConcurrency": 1,
-    "defaultModel": "openai/whisper-large-v3-turbo",
-    "language": "auto",
-    "temperature": 0,
-    "responseFormat": "json",
-    "prompt": "Русская голосовая заметка. Сохраняй технические названия, команды, пути и сокращения латиницей.",
-    "openrouter": {
-      "apiKeyEnv": "OPENROUTER_API_KEY",
-      "url": "https://openrouter.ai/api/v1/audio/transcriptions"
-    },
-    "groq": {
-      "apiKeyEnv": "GROQ_API_KEY",
-      "url": "https://api.groq.com/openai/v1/audio/transcriptions"
-    },
-    "models": [
-      {
-        "id": "openai/whisper-large-v3-turbo",
-        "apiProvider": "openrouter",
-        "apiModel": "openai/whisper-large-v3-turbo",
-        "label": "Whisper V3 Turbo",
-        "upstreamProvider": "Groq",
-        "price": "$0.04/hour"
-      },
-      {
-        "id": "groq/whisper-large-v3",
-        "apiProvider": "groq",
-        "apiModel": "whisper-large-v3",
-        "label": "Whisper V3",
-        "price": "Free tier · $0.111/hour paid"
-      },
-      {
-        "id": "groq/whisper-large-v3-turbo",
-        "apiProvider": "groq",
-        "apiModel": "whisper-large-v3-turbo",
-        "label": "Whisper V3 Turbo",
-        "price": "Free tier · $0.04/hour paid"
-      }
-    ]
-  }
-}
-```
-
-Once speech is enabled, Telegram voice messages in ordinary non-artifact topics are downloaded, sent through the
-selected model's API provider, and answered as lossless ordinary-message replies in the same topic. OpenRouter uses its
-JSON/base64 STT request, while direct Groq uses Groq's OpenAI-compatible multipart transcription endpoint. Long
-transcripts are split on safe text/newline boundaries into payloads below Telegram's 4,096-character plain-message limit
-after HTML escaping; they are never truncated and do not use Rich Messages. The model/latency footer is present only in
-the final part. They stop before question handling, attachment buffering, and prompt dispatch, so a transcript reaches
-OpenCodez only after the operator copies it and sends it as text. General audio files outside the dedicated speech topic
-keep the normal attachment behavior.
-
-Run `/sounds_here` in a Telegram forum topic when you also want a dedicated voice/audio inbox. The command creates and
-pins a model menu; operators can switch the selected model with inline buttons, and `Refresh` redraws the same menu
-after adding or removing configured models. Voice messages, general audio files, and supported audio documents in that
-topic are transcribed. Every transcript part is wrapped in Telegram Mono formatting so it can be selected/copied without
-also copying model or timing metadata; the footer exists only outside the last part. Text in the dedicated speech topic
-is not forwarded to OpenCodez sessions. `/sounds_off` clears only this dedicated inbox; ordinary-topic voice
-transcription remains active while `speech.enabled` is true.
-
-`models[].id` is the stable selection key stored by the bot. `apiProvider` chooses `openrouter` or `groq`; `apiModel` is
-the provider's raw model id. `upstreamProvider` is needed only for provider-specific OpenRouter request options and is
-not the label shown in Telegram. The menu label comes from `apiProvider`, which keeps direct Groq visibly distinct from
-OpenRouter.
-
-The prompt is deliberately short and configurable. Leave it blank if generic transcription is better for your group, or
-replace it with a small vocabulary hint. Do not put secrets in it.
-
-`speech.language` defaults to automatic detection in new installations. Set it to an ISO-639-1 code such as `"ru"` or
-`"en"` when the speech topic is mostly one language. Set it to `null` or `"auto"` to omit the `language` field and
-let the selected provider auto-detect the audio language. A model entry may override `language`, `prompt`,
-`temperature`, or `responseFormat`.
-
-```json
-{
-  "speech": {
-    "language": "auto"
-  }
-}
-```
-
-## Final Voice
-
-`finalVoice` is the optional outbound counterpart to inbound speech transcription. It summarizes a completed OpenCode
-answer, synthesizes the summary through an OpenAI-compatible `/v1/audio/speech` provider, and sends the result as a
-Telegram voice reply. It is disabled by default and keeps one global settings object in the existing state rather than a
-second database. Commands issued in any topic update the same automatic gate, prompt, TTS profile, voice, minimum length,
-and intro for every topic.
-
-Keep summary and TTS credentials in `token.env`, never in JSON. Provider endpoints, models, voice allowlists, size limits,
-and timeouts remain operator-controlled in config and cannot be changed from Telegram. See
-[Final Voice](final-voice.md) for the complete configuration, commands, runtime behavior, and deployment sequence.
-
-## Interface Language
-
-`ui.defaultLanguage` selects the fallback global interface language for state that has no saved `/lang` choice. Commands
-remain English in both languages. `/lang eng` and `/lang ru` persist one global override under `ui.language` in state and
-refresh Telegram command-menu descriptions without restarting the bot. See [Interface Language](interface-language.md)
-for scope, catalog structure, exclusions, and operations.
+Keys entered through `/setup` live in owner-only `provider-secrets.json` beside state. They override the corresponding provider credential and are filtered before inbox receipt. Include this file in private backups. [First run](first-run.md#audio) explains the Telegram input boundary.
 
 ## OpenCodez
 
-`opencode.baseUrl` is the local/default API origin used when a server-specific URL is not involved.
-`opencode.passwordEnvNames` lists env var names that may contain the OpenCodez password.
-
-The bot separates mirroring from Telegram-created session placement. `opencode.mirrorScope` controls what the bot
-watches on configured OpenCodez servers: `global` mirrors new sessions from any workspace on that host, while
-`serverHome` keeps the older host-home scope. `opencode.newSessionDefaultDirectory` controls where `/new` creates
-sessions when the operator does not pass `dir:<path>`; the normal value is `serverHome`, which uses the selected
-server's `home` from `servers.json`. `global` uses one aggregate OpenCodez `/global/event` SSE connection per server;
-`serverHome` uses `/event?directory=<server.home>`. It does not create one long-lived connection per workspace.
-Server-home mirroring requires every configured server to have an explicit `home`; startup reports a missing home rather
-than silently expanding discovery to all projects.
-
-Each server in `servers.json` needs a non-empty unique `id` and an absolute HTTP(S) `url`. The optional `home` field
-gives `/new` a default directory and lets `~/trash` expand naturally for artifact uploads. `uploadRoot` gives large
-Telegram prompt attachments a server-local destination. If `uploadRoot` is omitted and `home` is present, the bot
-derives the conventional prompt upload root from `home`. `artifactUploadRoot` overrides the global artifact file dropbox
-root for one server. `pathStyle`, when present, must be `posix` or `windows`; `offline_ok`, when present, must be a JSON
-boolean.
-
-`transfer` stays simple. Omit it to use local transfer, or set `type` explicitly to `local` or `ssh`. SSH transfer also
-requires a non-empty `host`; an optional `port` must be an integer from 1 to 65535. The bot validates the whole server
-list before startup and reports all malformed entries and duplicate ids in one error block. It never drops a bad server
-silently or turns an unknown transfer type into `local`.
+Each inventory entry needs a unique non-empty `id` and an absolute HTTP(S) `url`. Startup validates the complete list and reports malformed entries together.
 
 ```json
 {
-  "id": "workstation",
-  "url": "http://workstation.local:4098",
-  "home": "/home/operator",
-  "uploadRoot": "/home/operator/.opencodebot/uploads",
-  "pathStyle": "posix",
-  "transfer": { "type": "ssh", "host": "workstation.local" }
+  "servers": [{
+    "id": "workstation",
+    "url": "http://workstation.local:4096",
+    "home": "/home/operator",
+    "uploadRoot": "/home/operator/.opencodebot/uploads",
+    "artifactUploadRoot": "/home/operator/trash",
+    "transfer": { "type": "ssh", "host": "workstation.local" }
+  }]
 }
 ```
 
-## Prompt Profiles
+| Setting | Meaning |
+| --- | --- |
+| `opencode.mirrorScope` | `global` watches all workspaces through one `/global/event` stream per server; `serverHome` watches `/event` in `home` |
+| `opencode.newSessionDefaultDirectory` | `serverHome` uses the chosen server's home; `none` leaves directory selection to OpenCodez |
+| `home` | Default session directory and base for `~/trash`; required for `serverHome` mirroring |
+| `uploadRoot` | Final server-local location for large prompt attachments; derived from `home` when omitted |
+| `artifactUploadRoot` | Per-server override for the incoming FILES dropbox |
+| `pathStyle` | Optional `posix` or `windows`; drive and UNC paths are recognized |
+| `offline_ok` | Boolean; an optional server does not block deployment health verification |
+| `transfer.type` | `local` or `ssh`; omitting transfer means local filesystem access |
+| `transfer.host`, `user`, `port`, `identityFile` | SSH destination and optional connection details; port is 1–65535 |
 
-`defaultPrompt` is the fallback profile for Telegram-created sessions. It chooses the default OpenCodez server and the
-prompt metadata the bot can know before the first prompt: agent and model.
+The OpenCodez URL and file-transfer destination are separate. A Linux container can reach a Windows API while still needing SSH to write Windows paths. See [Docker path rules](docker.md#artifact-dropbox-paths). `opencode.baseUrl` is the fallback API origin; inventory entries provide the actual server URLs.
 
-`promptProfiles` seed named launch profiles for `/new` and `/reset [profile] [server]`. New installations start with `d4flash`, `sol`, `solm` and `solx`. The first start imports them and explicit configuration into `state.json` preferences. Existing installations also import their former built-ins once. After import, General's profile editor owns the effective collection; deleting a profile does not re-add it from configuration on restart. See [General menu](control-menu.md).
+## Prompt profiles
 
-`/reset` without arguments inherits profile/server/directory and can use the retained topic snapshot if a profile was deleted. One argument may select a profile or server; two arguments are profile then
-server. Same-server reset preserves the current directory, while cross-server reset preflights the target and uses its
-`newSessionDefaultDirectory` policy. On lazy session creation the bot applies the profile twice by design: it switches
-the OpenCodez session's next model so the web composer stays in sync, and it keeps sending the same model in prompt
-payloads so Telegram-origin prompts do not depend on browser-local state.
+`promptProfiles` and `defaultPrompt` seed the initial launch preferences. A new installation gets `sol`, `solm`, `solx` and `d4flash`. Existing installations import their former built-ins and explicit profiles once. Deleted profiles stay deleted after restart. General owns the effective collection and default profile thereafter.
 
-`d4flash` selects DeepSeek V4.1 Flash through `deepseek-flash`. Change an imported profile's model, variant and System in Telegram. Configuration overrides apply to the initial import, not as a second live profile catalog.
-
-General's Profiles view supports creation, copy, edit, default selection, deletion and restore. Models, families and reasoning choices come from the selected OpenCodez server. New profiles can inherit System and reasoning defaults. Without a profile argument, `/new` uses the saved default; `/reset` keeps the topic's current launch selection.
-
-| Profile | Model | Reasoning |
+| Profile | Provider/model | Reasoning |
 | --- | --- | --- |
-| `sol` | GPT-6.1 Sol | high |
-| `solm` | GPT-6.1 Sol | medium |
-| `solx` | GPT-6.1 Sol | xhigh |
-| `d4flash` | DeepSeek V4.1 Flash | max |
+| `sol` | `openai/gpt-6.1-sol` | `high` |
+| `solm` | `openai/gpt-6.1-sol` | `medium` |
+| `solx` | `openai/gpt-6.1-sol` | `xhigh` |
+| `d4flash` | `deepseek/deepseek-flash` | `max` |
 
-The GPT-6.1 Sol System requires OpenCodez `1.18.33+opencodez.1` or newer on
-each server where a Sol profile can run.
-Saved profiles survive upgrades. Use the Telegram editor to update their model, variant and System together. Keep `sol` at `high` and use `solx` for `xhigh`. The import does not rewrite private prompt sources or OpenCodez session history. The bot updater never upgrades or restarts OpenCodez.
+A profile contains `agent`, `model.providerID`, `model.modelID`, optional `model.variant` and optional `opencodezSystem`. Sol's built-in System requires OpenCodez `1.18.33+opencodez.1` or newer. Provider availability and supported variants come from the selected server's catalog; a catalog entry does not prove quota or paid access.
 
-When two or more servers are configured, Telegram topic names are rendered as `<base title> (<serverID>)`; single-server
-installations retain plain names. The base title is stored separately from the managed suffix so `/reset solh workstation` can
-rename `trash (local)` to `trash (workstation)` without suffix accumulation or changing the user-owned base. `/new`, web
-autocreation, backend title synchronization, and manual Telegram renames use the same formatter, which recognizes every
-configured server suffix and reserves space inside the 128-character Telegram title limit.
+The wizard saves the displayed launch snapshot, including a topic-only reasoning override. The first prompt and a retry of unfinished setup use that snapshot even if someone edits the named profile meanwhile. Model selection updates both the OpenCodez composer and Telegram prompt payload. `/reset` resolves the current named profile, or uses the retained snapshot if that profile was deleted. To change a failed launch's settings, edit/select a profile and explicitly reset the topic.
 
-Each profile can define:
+## Attachments
 
-- `agent`: OpenCodez agent name.
-- `model.providerID`: provider id.
-- `model.modelID`: model id.
-- `model.variant`: optional model effort/variant.
-- `opencodezSystem`: OpenCodez System prompt name selected after the session model switch and before the first prompt.
-
-Example:
+`attachments` is a top-level block. `enabled`, `maxInlineBytes`, `maxFileBytes` and `maxTotalBytes` control acceptance and embedding. Normal defaults accept ten files, 20,000,000 bytes per file and 60,000,000 bytes per batch; small files become data URLs, larger ones are copied to `uploadRoot`.
 
 ```json
-{
-  "promptProfiles": {
-    "sol": {
-      "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-6.1-sol", "variant": "high" },
-      "opencodezSystem": "codex_gpt_6_1_sol"
-    },
-    "solmax": {
-      "agent": "build",
-      "model": { "providerID": "openai", "modelID": "gpt-6.1-sol", "variant": "max" },
-      "opencodezSystem": "codex_gpt_6_1_sol"
-    }
-  }
-}
+{ "attachments": { "enabled": true, "maxInlineBytes": 20000000,
+  "maxFileBytes": 20000000, "maxTotalBytes": 60000000 } }
 ```
 
-Then start a topic with:
+Known counts and sizes are checked before download. Actual downloads share the remaining batch budget, including captionless files already waiting for text. Waiting/queued files retain paths rather than base64 copies in memory; inline encoding happens just before dispatch, while queue admission still reserves its encoded-content budget. Successful or failed prompt delivery removes staging files; transferred server files remain available to the agent and history. Hourly cleanup removes expired loose staging files. Final upload roots and FILES have no automatic retention policy: their owner decides when old files are no longer needed.
 
-```text
-/new sol work on the upload flow
-```
+Cloud Bot API downloads are clamped to its conservative per-file limit. Local mode permits larger configured files. Raising a limit increases staging disk use and, for inline content, memory and request size. [Artifact delivery](artifact-gateway.md) covers the separate streamed outbound path.
 
-## Mirror Modes
+## Speech transcription
 
-Economy is the default on first startup and when the saved mode is missing or invalid. A saved `full` or `economy` choice survives restarts and updates. Use `/mode` to check the current mode, or `/mode full` to enable compact tool status globally; the mode is stored in state rather than configuration JSON.
-
-The bot has two persistent global mirror modes controlled by `/mode full` and `/mode economy`. Both modes emit one short
-robot notice with the web-visible task title when a task/subagent is spawned. Full mode mirrors user-facing OpenCodez
-activity and compacts tool status into expandable quotes. Economy mode keeps each unique assistant progress message,
-final answer, and failure while suppressing ordinary Telegram tool sends and edits across every topic. Both modes hide
-internal helper tools such as `todo`/`todowrite`, child-session logs/results, and reasoning summaries, and use fixed
-Telegram-safe message limits. Web-origin user prompts that exceed the ordinary message limit switch to escaped Rich
-Message HTML up to a conservative 32,000-character limit; larger prompts are numbered and split only at that rich
-boundary, and rich rejection falls back to the complete ordinary-message split.
-
-User prompts are always pinned. Telegram-origin runs pin the original user message after OpenCodez accepts the prompt;
-web-origin runs pin the mirrored user-prompt message. Telegram pin service messages are cleaned up when possible. Final
-assistant answers are marked with `🏁` but are not pinned.
-
-Long Telegram prompts and bounded missed-event recovery are always on with conservative internal limits. Telegram
-attachments are always part of the product model, with size limits controlled by top-level `attachments` and clamped by
-Bot API mode.
-
-## Final Notifications
-
-`finalNotifications` controls private DM notifications for final mirrored answers. When `userIds` is empty, allowed operator IDs become recipients. Opening the private bot chat with Start or completing setup enables delivery after checking that the bot can DM the user. An explicit off choice is retained in `preferences.notificationChoices`. Personal settings offers the normal toggle; typed `/notify_on` and `/notify_off` remain shortcuts.
-
-Debug diagnostics require final-answer DMs and use one global persistent toggle for the bot. `/debug_on` adds the block
-to every future final DM regardless of source topic, `/debug_off` removes it globally, and `/debug_status` reports the
-current global setting. When enabled, the final DM ends with one expandable diagnostics block containing agent-step
-count and p50/p95/max durations, effective TPS average/p50/p95, aggregate completed/error `Tools/MCP` timing and
-failures, and the three slowest tool names. Overall duration stays only in the notification header instead of being
-repeated inside debug. TPS uses output plus reasoning tokens divided by assistant-step time minus the union of known
-tool intervals. It is intentionally end-to-end and therefore includes prefill/cache, provider/network, and model stalls;
-it is not a burst streaming benchmark. Tool timing comes from OpenCodez ToolPart `state.time.start/end`; cumulative tool
-time may exceed overall duration for overlapping calls.
-
-The final DM is intentionally short and mode-neutral: it includes a source `Topic:` line from the topic's current
-canonical Telegram metadata rather than a finishing session's retained binding snapshot, with the Telegram topic name
-and topic custom emoji when Telegram provides it. The next line uses the compact form
-`⏱️ 2h 18m 14s · 🤖 gpt-5.6-sol-fast (max)`: duration is wall-clock time from the logical turn's originating external user message to the
-completed final assistant message, while model and variant come from that main turn's message metadata rather than
-current binding or browser state. A second compact line uses `🪙 Tokens: 60.6M · in 24.0M · out 120.5K · cache 36.5M`.
-It sums normalized token usage from every assistant model call in that logical turn, including work before a responsive
-compaction/replay boundary; `out` includes reasoning and `cache` includes reads plus writes. Missing metadata is omitted cleanly.
-Child/subagent sessions and their models or token usage are not included. The DM also provides an `Open topic` button,
-quotes the original user prompt in an expandable block for orientation, includes a compact quoted `📋 Tasks [n/n]:`
-checklist when the agent closed one, and adds a separate quoted `Tools:` / `Patched:` block with compact tool counts and
-file names from successful structured file mutations. It does not include the final answer text. The `Open topic` button
-targets the exact mirrored final answer. Durable dedupe markers are capped and keyed per recipient plus final assistant
-message. Notifications without a concrete Telegram `message_id` are rejected, so restart reconciliation cannot backfill
-historical DMs or link only to a topic root. Legacy message-id-based markers remain accepted so rollout does not resend
-already delivered DMs. In-process delivery is additionally single-flight per server, session, and final assistant
-message. Idle outcome verification shares the binding operation lane with ordinary reconcile, preventing concurrent
-recovery paths from mirroring the same final twice before either path can persist its durable marker.
-
-The same configured `userIds` receive blocking OpenCodez question alerts with a direct link to the topic message. These
-alerts do not follow the per-user final-notification toggle because a pending question stops the active run. No
-additional recipient setting is required.
-
-The same configured `userIds` receive private operational alerts for explicit run errors, failed assistant steps, and
-unexpected interrupted or empty-terminal runs. Operational alerts also ignore the per-user final-answer toggle. Expected
-user-initiated stops remain silent. `state.runAlerts` retains only bounded recipient/run dedupe keys and never stores
-the error detail, prompt, progress, tool output, or answer text.
-
-Question recovery uses the existing `reconcile.intervalMs` cadence; there is no separate question polling knob or
-scheduler. Live `question.asked` remains immediate through SSE. Periodic and post-reconnect recovery query pending
-questions for unique active bound directories with the shared backend backoff, so a missed ephemeral event is normally
-recovered within one reconcile interval without duplicate Telegram messages.
-
-## Artifacts
-
-`artifacts.enabled` starts the optional LAN artifact gateway. The gateway is for agent-created screenshots, logs, text
-snippets, and files that should be delivered to one Telegram artifacts topic. It is not a mirror-session router and it
-does not try to infer the current OpenCodez topic.
-
-`artifacts.listenHost` and `artifacts.port` control the local HTTP listener. Docker Compose publishes the same port with
-`OPENCODEBOT_ARTIFACT_PORT`, defaulting to `8788`. Expose it only on trusted networks and keep bearer-token auth
-enabled.
-
-`artifacts.tokenEnvNames` lists environment variable names that may contain the artifact token. The default is
-`OPENCODEBOT_ARTIFACT_TOKEN`. This token is shared with the OpenCodez plugin. It is not the Telegram bot token, and the
-plugin should never receive the Telegram bot token.
-
-Artifact JSON payload, text, and caption limits are fixed safety defaults in code. File limits depend on Bot API mode:
-cloud mode keeps the conservative 50 MiB file limit, while local mode allows Telegram's 2 GB local Bot API limit through
-the streaming `/artifacts/send-file` path. Cloud-mode spool uploads also have an internal in-memory cap so oversized
-files fail fast instead of being read into RAM. Text artifacts are sent as expandable quotes. Suitable JPEG, PNG, and
-WebP files are sent with `sendPhoto` only when Telegram accepts their original size; oversized or rejected requested
-photos automatically retry as lossless `sendDocument` files.
-
-The active target is chosen from Telegram with `/artifacts_here`. Running that command in another topic replaces the
-previous target. The target is stored in `state.json`, not config.
-
-The same Telegram artifacts topic can receive files from users. A dropped file is saved on the configured default server
-when its caption is empty. When the caption starts with a server id, that server is used instead. Unknown server ids are
-rejected before the bot downloads the file. Comma-separated values after the server optionally rename files by position.
-A value with no extension inherits the source filename's complete suffix beginning with its first dot, so compound
-extensions such as `.tar.gz` remain intact; a value containing a dot is used as the exact filename. Missing or empty
-positions keep the corresponding source names, and extra values are ignored. Saved files go under
-`artifactUploads.root`, then an optional `YYYY-MM-DD` folder, then a sanitized filename. The default root is `~/trash`,
-expanded from the target server's `home`; on Windows this can become `C:\Users\name\trash` when that is the server home.
-
-Docker deployments must expose local artifact roots as writable bind mounts. If the local server uses
-`home: /home/alice` and `artifactUploads.root: ~/trash`, set both `OPENCODEBOT_ARTIFACT_UPLOAD_SOURCE=/home/alice/trash`
-and `OPENCODEBOT_ARTIFACT_UPLOAD_ROOT=/home/alice/trash` in Compose's ignored `.env` file. Without that mount, the bot
-can build the correct host path but still fail to create it from inside the container.
-
-For Windows servers, keep the server path and the Docker mount path conceptually separate.
-`artifactUploadRoot: C:\Users\Alice\trash` is the path OpenCodez and the user should see on a Windows host. A Linux
-Docker container cannot automatically write a drive-letter path unless that folder is deliberately mounted to a writable
-container path and the server config uses that writable path. For Windows final paths, SSH transfer or running
-opencodebot directly on Windows is usually clearer. See [Docker](docker.md#artifact-dropbox-paths) for the deployment
-matrix.
-
-Cloud Bot API deployments are still limited by Telegram's cloud file download limit. Local Bot API deployments can
-accept larger files if `attachments` is raised and the local Bot API sidecar has access to the downloaded file root.
+`speech.enabled` is off by default. Enable it and provide either provider key to use OpenRouter or direct Groq. The model menu hides only models whose provider has no key. `/setup` can store a Groq key and enable direct `groq/whisper-large-v3-turbo` without editing read-only config.
 
 ```json
-{
-  "artifactUploads": {
-    "enabled": true,
-    "root": "~/trash",
-    "dateFolders": true
-  }
-}
+{ "speech": { "enabled": true, "defaultModel": "groq/whisper-large-v3-turbo",
+  "maxFileBytes": 25000000, "queueConcurrency": 1, "language": "auto" } }
 ```
 
-Per-server roots belong in `servers.json` when one host needs a different dropbox path.
+`language` accepts an ISO-639-1 code or `auto`/`null`; automatic mode omits it from the provider request. `prompt`, `temperature` and `responseFormat` are provider hints. `openrouter` and `groq` hold endpoint/key-environment settings. Custom `models[]` entries use `id` as the stored selection key, `apiProvider` as the API transport and `apiModel` as the provider model name; optional `label`, `upstreamProvider`, `price` and per-model hints complete the menu.
 
-```json
-{
-  "id": "winbox",
-  "url": "http://winbox.local:4096",
-  "home": "C:\\Users\\winbox",
-  "pathStyle": "windows",
-  "artifactUploadRoot": "D:\\Inbox\\opencodebot"
-}
-```
+Voice notes in ordinary topics and audio in AUDIO produce copyable transcripts, never automatic agent prompts. Twenty recordings may wait behind active transcription. Excess recordings receive a resend notice. Provider errors report HTTP status without copying response bodies into Telegram or logs.
 
-## Web And WireGuard
+## Optional features and global choices
 
-`web.publicBaseUrl`, `web.privateBaseUrl`, and `web.preferHttp` are used when the bot builds links to OpenCodez web UI.
-`preferHttp` is mostly for private LAN links where HTTPS is not the useful default.
+| Setting or command | Owner |
+| --- | --- |
+| `telegram.botApi` | Cloud by default; local endpoint, shared file root and app credentials are described in [Docker](docker.md#local-telegram-bot-api) |
+| `artifacts`, `artifactUploads` | Gateway listener/authentication and incoming dropbox; [API and plugin](artifact-gateway.md) |
+| `finalVoice` | Deployment access to summary/TTS providers; [configuration and commands](final-voice.md) |
+| `finalNotifications.userIds` | DM recipients; an empty list uses allowed operators |
+| `ui.defaultLanguage` | Initial UI language; `/lang eng` or `/lang ru` overrides it globally in state |
+| `ui.timeZone` | Daily answer counter; falls back to `updates.timeZone`, then the system zone |
+| `updates` | Explicit repository/branch and optional `checkAt`/`timeZone`; [self-update](self-update.md) |
+| `web.publicBaseUrl`, `privateBaseUrl`, `preferHttp` | OpenCodez web links; private links need a reachable LAN/VPN route |
+| `wireguard` | Optional host helper only; [private browser access](wireguard.md) |
 
-`wireguard` exists for the optional helper script only. It can expose a private LAN web UI from outside the LAN, but the
-Telegram bot, OpenCodez API mirroring, long polling, and LAN web UI do not depend on WireGuard.
+Mirror detail (`/mode`), mirror on/off, random names, reminders, context depth, notification choices and voice preferences live in state. Prompt pinning, event recovery windows and multipart buffering use internal conservative defaults rather than a second public tuning surface.
 
-## Paths And State
+## Paths and state
 
-`state.json` preferences own the imported profile collection, deleted profiles, default launch choice, recent profile order and connection preferences. Provider keys entered through setup live in owner-only `provider-secrets.json` beside state, not in the profile collection or inbox. Include that file in private stopped-bot backups. `/setup` accepts Groq keys in the same topic, filters the key before durable inbox receipt, validates it and enables direct Whisper Large V3 Turbo without changing read-only config.
+Back up a stopped bot. Copy the private configuration and environment, all state files below, provider secrets when present, and the local Bot API volume. Preserve ownership and permissions. A running file-by-file copy can combine incompatible points in time.
 
-`paths.statePath` points to durable bot state. `state.json` stores topic/session bindings, pending topics waiting for
-their first prompt, the singleton General control-menu chat/message reference, the current artifacts topic, the current
-sounds topic, the global full/economy mirror mode, mirror
-enabled state, pending Telegram-origin prompt ids, known sessions, per-session mirror markers, bounded reconcile
-windows, final-notification opt-ins/dedupe markers, a bounded incomplete-run handling ledger, a bounded list of
-OpenCodez question/message bindings, and bounded reply-to-rewind links. The incomplete-run ledger contains only
-server/session/user-message identifiers, the observed assistant identifier and finish metadata, source, and handling
-time; it never stores prompt or answer text. Each rewind link contains only Telegram chat/topic/message ids plus
-OpenCodez server/session/user-message ids and status; it deliberately excludes prompt text and attachment contents.
-Topic title/icon metadata is synchronized across every retained binding for the same Telegram topic and its pending
-reset record. `/reset` writes its
-old-disabled-binding and same-topic-pending transition in one state update, including the current visible topic title
-with user-owned title semantics, so a service restart cannot leave only half of that transition persisted or return
-title ownership to the new session. Question records contain request and session ids, Telegram message location, displayed
-options, status, and notified recipients. All mirrored message ids are retained inside each retained session bucket so
-reconcile cannot replay forgotten history; only old whole-session buckets are pruned. It should not contain full prompt
-queue text. The `/q` queue, multipart prompt buffer, attachment buffer, and active run trackers are memory-only and are
-cleared or disappear on service restart by design; idle and recent reconcile checks recover from losing an active
-tracker.
+| Durable file | Contents |
+| --- | --- |
+| `state.json` | Bindings and disabled history, pending launches, profiles/preferences, topic names/icons, panel location, destinations, bounded origin/question/notification/reminder records and answer statistics |
+| `state.json.mirror-markers.ndjson` | Append-only user/assistant delivery IDs, compacted on startup and session removal |
+| `state.json.telegram-inbox.ndjson` | Telegram receipt cursor and unfinished updates, including private incoming text and file references |
+| `provider-secrets.json` | Setup-entered credentials; owner-only |
+| `state.json.health.json` | Replaceable process/progress/queue snapshot, with no conversation text |
+| `updates/` | Request/status protocol for the fixed host updater |
 
-A session-level OpenCodez `404` has different semantics from `/reset`: the backend session no longer exists, so retaining
-its bot-side identity would be misleading. OpenCodeBot deletes that binding plus every state record keyed to the missing
-server/session and compacts the mirror-marker journal. It preserves only topic launch metadata in `pendingTopics`, letting
-the next prompt create a fresh session in place. A named profile is re-resolved from current configuration so its complete
-launch settings survive the replacement. Startup also migrates older bindings already marked as stale or missing through
-this same destructive cleanup. Intentionally preserved `/reset` history and bindings disabled because a Telegram topic was
-closed remain untouched.
+State retains delivery IDs within at most 250 whole session buckets; it does not trim individual messages from a retained bucket. In-memory Set indexes make repeated delivery checks independent of that session's history length. The seen-session list is capped at 5,000; retained disabled bindings still prevent rediscovery from reviving a stopped topic.
 
-`telegram.contextTurnsByUser` is runtime-managed state for `/set_context`; it maps an allowed Telegram user id to a
-numeric default from 1 to 10. `/context` assembles completed or interruption-ledger-marked turns on demand from OpenCodez,
-including visible progress notes for interrupted turns, and never stores prompt, progress, or final answer text in
-`state.json`. Its Rich Message chunk size, 240,000-character total ceiling, and default of three turns are fixed
-conservative behavior rather than runtime config knobs.
+Delivery journals accept only complete newline-terminated records. Startup drops an incomplete final append; malformed complete records stop startup. Preserve a corrupt journal for repair. Deleting the inbox can lose already acknowledged work. Failed receipt/completion writes stop the bot; repair storage before restarting.
 
-`<statePath>.telegram-inbox.ndjson` owns the Telegram receipt cursor and unfinished input events. The poller syncs one
-receipt record per non-empty fetch before acknowledging Telegram, then processes topics independently of later fetches.
-Completion records retire individual events without rewriting `state.json`; compaction replaces the journal atomically
-when obsolete data exceeds its size threshold, whenever the inbox becomes empty, and at startup. No database service,
-new dependency, or periodic queue scan is needed. See [Telegram update isolation](telegram-workflow.md#telegram-update-isolation)
-for topic ordering, concurrency limits, overload behavior, and retry semantics.
+Activity leases and reconcile cursors share a deferred atomic save within one minute, flushed on shutdown. Immediate state writes persist other mutations too. A failed state save reports the error; deferred saves retry after five seconds. A crash loses mutations that never reached disk. See [recovery guarantees](architecture.md#recovery-and-limits).
 
-The first startup creates the journal from the legacy `runtime.telegramUpdateOffset`. After that, the journal is
-authoritative and the legacy field is no longer advanced. Keep it in the same durable state volume and include it in
-stopped-bot backups. Unlike the main state file, this private journal temporarily contains received message text and
-Telegram file references (not downloaded media bytes). New journal and replacement files use owner-only permissions.
-Completed payloads are removed during compaction; an empty inbox retains only its cursor. Do not publish the journal,
-include it in diagnostic uploads, or delete it as a way to clear a stuck operation: Telegram may already have acknowledged
-its pending events.
+The prompt queue, multipart/media buffers, personal drafts and unfinished voice jobs are memory-only. Prompt queues allow 20 items per session, 100 overall and 64 MiB of text/inline-file content. Queued files also occupy staging disk. Restarts drop these buffers; inbox receipt does not make them durable.
 
-A torn final append is discarded at startup: an incomplete receipt was not acknowledged, while an incomplete completion
-leaves its event pending for replay. Malformed complete records stop startup
-instead of silently resetting the cursor. Disk-write failures stop the bot for Compose recovery, preserving unfinished
-events. Repair storage availability first; preserve a corrupt journal for deliberate recovery rather than replacing it
-with an empty file. Rolling back to code from before durable inbox support requires draining the inbox, stopping the bot,
-and copying its final checkpoint cursor into the legacy state offset before starting that older code. An old version
-cannot recover pending inbox events.
+A confirmed session-specific `404` removes its binding and session-keyed records, then keeps a pending launch in the same topic. `/reset` preserves old session history instead. Do not edit live state through a second `StateStore.load`: loading can migrate, compact and save.
 
-An unfinished new-session profile is stored on its binding as `setupProfile` until model and System selection both
-succeed. A resend retries that setup before sending a prompt. Named profiles are resolved again from current config,
-so repairing a profile and restarting the bot is enough to retry without creating another OpenCodez session.
-
-`<statePath>.health.json` is a small replaceable operational snapshot, separate from conversation state. It contains only
-the main process PID, image revision, shutdown state, last progress times of polling/recovery, and inbox count/bytes/capacity
-status (never input text). Existing loops refresh
-it at most once per 30 seconds after their first report; there is no heartbeat service or extra listener. `health:live`
-waits up to one minute for initialization, rejects missing/stopping/dead or stale processes, and checks Telegram plus
-the discovery API of required backends. `offline_ok` hosts are not required for this deployment gate. The progress
-allowance is 20 minutes to accommodate bounded large-file handlers; stopped recovery triggers process shutdown immediately.
-
-The mirror-marker references above are one logical part of durable state but are physically stored in the sibling append
-journal `<statePath>.mirror-markers.ndjson`; marker maps are not written to `state.json`. Startup loads the compact journal
-before reconciliation. New markers append tens of bytes and duplicate updates are no-ops; historical assistant markers
-skipped during catch-up are appended in one binding-level batch instead of rewriting the complete state file per message.
-`state.json` also keeps a bounded set of delivered compaction notices, keyed by the OpenCodez compaction
-message ID. Keep it when backing up or restarting the bot; losing it can repeat a previously sent topic marker.
-
-Automatic prompt reminders default to enabled and are controlled by `/reminder on|off`, not configuration JSON.
-`telegram.reminderEnabled` stores the global choice. The bounded `compactionReminders` records contain only server,
-session, compaction, original-turn and admitted-message identifiers, delivery timestamps, and status/notification flags.
-An uncertain send checks saved reminder metadata before retrying; confirmation and retries use existing reconciliation.
-The full original prompt and attachment data remain in OpenCodez. See [Telegram workflow](telegram-workflow.md).
-
-Reconcile avoids repeated full-history reads by paging backward to its durable high-water cursor or window boundary. The
-common path requests five messages first; only a burst that does not reach the cursor continues with 20-message fallback
-pages. Cursor checkpoints and high-frequency activity leases mutate the live state immediately but share one deferred
-atomic save bounded to one minute; graceful shutdown flushes it, and a crash can only require a short conservative
-rescan. Session discovery uses the OpenCodez `start` high-water with a five-minute overlap and runs different hosts
-concurrently. Unchanged bindings are gated by `time.updated`; the watchdog verifies a small session object before
-requesting message pages, and exact-message recovery always retains pagination as fallback. These are fixed internal
-behavior-preserving optimizations rather than runtime tuning knobs.
-
-If one immediate state write fails, that operation reports the error, but later state updates remain usable. Deferred
-activity/cursor checkpoints log a failure and retry after five seconds; any later successful immediate update also
-persists their current in-memory values. After repairing the underlying storage problem, the next successful update
-persists the current in-memory state. A restart still loses any mutations that never reached disk.
-
-If OpenCodez reports a terminal run failure, the bot announces the failure, clears queued prompts for that session, and
-lists the cleared items by number plus the same first-words summary used by `/q status`. The queue releases the next
-prompt only after OpenCodez reports the session idle and the terminal assistant answer is mirrored to Telegram. Idle
-loads the current logical-turn history when the terminal event has not arrived yet and directly mirrors its exact
-unmirrored final, including after compaction, without a second general reconcile request. Repeated idle events cannot
-release more than one prompt.
-
-Every bound-session idle starts a short grace check; a user `message.updated` event also records the start early but is
-not required. If status and current message history still show no terminal visible answer, the bot sends one warning
-with an OpenCodez session button and uses that warning as the terminal queue signal. A non-terminal ending uses
-`OpenCodez run was interrupted`; a `finish=stop` assistant with no visible non-synthetic text uses
-`OpenCodez stopped without a final response`. Recent periodic reconcile repeats the check to recover missed idle events
-or restarts and may mirror a genuinely missing final answer, but it never emits a standalone final DM for already
-mirrored history. Once an outcome has been classified, the bounded handling ledger keeps its warning or expected-stop
-suppression idempotent; active trackers and queued prompt text remain memory-only. This behavior has no runtime config
-surface.
-
-`paths.uploadsDir` stores downloaded Telegram files as local staging. Uploaded files are runtime material and should
-stay out of git. Small files are inlined into OpenCodez prompts as data URLs. Larger accepted files are copied to the
-selected server's `uploadRoot`, and the prompt describes the server-local path, size, and MIME metadata. This keeps
-multihost and Windows setups usable because the path shown to the model belongs to the selected OpenCodez host, not to
-the bot container.
-
-```text
-Linux:   /home/operator/.opencodebot/uploads/...
-Windows: C:\Users\Alice\.opencodebot\uploads\...
-```
-
-WireGuard private keys and peer configs live under the configured runtime state path and `/etc/wireguard` on Linux
-hosts, not in the repo.
-
-## Useful Changes
-
-Use the runtime config for local behavior on Linux/macOS:
-
-```bash
-npm run init-config
-$EDITOR config.local.json
-$EDITOR servers.json
-npm start
-```
-
-Use the same files from PowerShell on Windows:
-
-```powershell
-npm run init-config
-notepad .\config.local.json
-notepad .\servers.json
-npm start
-```
-
-Before sharing the bot with a friend, the important knobs are usually `telegram.chatId`, `telegram.allowedUserIds`,
-`telegram.allowChatBootstrap`, `defaultPrompt.serverID`, `promptProfiles`, `attachments`, `artifactUploads`,
-final-notification recipients, artifact gateway address/token env, and web base URLs.
-
-When changing the config shape, update `config.example.json`, `src/config.mjs`, and the relevant docs together. Keep
-defaults reasonable and boring.
+Rolling back to pre-inbox code requires draining the inbox, stopping the bot, and copying its final checkpoint `offset` into `runtime.telegramUpdateOffset` in the stopped state file. Older code cannot recover pending inbox records. For other migrations, restore the matching stopped-bot backup and previous image together; [self-update](self-update.md) describes automatic rollback limits.

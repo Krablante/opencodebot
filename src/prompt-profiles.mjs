@@ -2,7 +2,7 @@ export function parseNewTopicArgs(args, { servers, defaultServerID, promptProfil
   const parts = tokenizeNewTopicArgs(args)
   const profiles = promptProfiles || {}
   const serverID = parts[0] && servers.has(parts[0]) ? parts.shift() : defaultServerID
-  const promptProfileName = parts[0] && profiles[parts[0]] ? parts.shift() : ""
+  const promptProfileName = parts[0] && Object.hasOwn(profiles, parts[0]) ? parts.shift() : ""
   let directory = ""
   const titleParts = []
   for (const part of parts) {
@@ -26,7 +26,7 @@ export function parseResetProfileArg(args, { promptProfiles }) {
   if (parts.length !== 1) throw new Error(t("profiles.resetUsageOne"))
   const profile = parts[0]
   const profiles = promptProfiles || {}
-  if (!profiles[profile]) {
+  if (!Object.hasOwn(profiles, profile)) {
     const available = Object.keys(profiles).sort().join(", ") || "none"
     throw new Error(t("profiles.unknown", { profile, available }))
   }
@@ -42,7 +42,7 @@ export function parseResetArgs(args, { promptProfiles, servers }) {
 
   if (tokens.length === 1) {
     const [token] = tokens
-    const profileMatch = Boolean(profiles[token])
+    const profileMatch = Object.hasOwn(profiles, token)
     const serverMatch = serverIds.has(token)
     if (profileMatch && serverMatch) throw new Error(t("profiles.ambiguous", { token }))
     if (profileMatch) return { promptProfileName: token, promptProfile: profiles[token], serverID: null }
@@ -51,7 +51,7 @@ export function parseResetArgs(args, { promptProfiles, servers }) {
   }
 
   const [profileName, serverID] = tokens
-  if (!profiles[profileName]) throw new Error(t("profiles.unknown", { profile: profileName, available: Object.keys(profiles).sort().join(", ") || "none" }))
+  if (!Object.hasOwn(profiles, profileName)) throw new Error(t("profiles.unknown", { profile: profileName, available: Object.keys(profiles).sort().join(", ") || "none" }))
   if (!serverIds.has(serverID)) throw new Error(t("profiles.unknownServer", { server: serverID }))
   return { promptProfileName: profileName, promptProfile: profiles[profileName], serverID }
 }

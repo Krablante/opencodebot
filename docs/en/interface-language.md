@@ -4,7 +4,7 @@
 
 OpenCodeBot has one global interface language for all chats, topics, recipients, command menus, buttons, status messages, and asynchronous notifications.
 
-Commands always remain in English. The preferred switch is `General → System`; the direct command remains available
+Commands always remain in English. The preferred switch is `General → Settings → Language and advanced settings`; the direct command remains available
 without restarting the bot:
 
 ```text
@@ -61,13 +61,15 @@ src/i18n/ru.mjs
 
 Catalogs must contain exactly the same keys and matching value types. Validation runs when the i18n module loads, so an incomplete translation fails checks and startup instead of silently producing a mixed-language interface.
 
+Personal screens also use paired inline strings through `localText`. Adding an application language requires extending those callers as well as catalog registration. Documentation languages are independent: add `docs/<language-code>/` and [navigation](../README.md) without changing the application.
+
 Dynamic provider errors may remain in their original language inside a localized error wrapper. This preserves accurate diagnostics without attempting unreliable runtime machine translation.
 
 ## Operations
 
 Useful smoke sequence:
 
-1. Select Russian in `General → System` and inspect the panel plus Telegram command menu.
+1. Select Russian in `General → Settings → Language and advanced settings` and inspect the panel plus Telegram command menu.
 2. Open Help, run `/session`, `/tts`, and one harmless status/error flow.
 3. Trigger one asynchronous notification or question and verify it uses Russian.
 4. Select English in the panel and repeat the checks.

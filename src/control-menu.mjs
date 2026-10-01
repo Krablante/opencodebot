@@ -399,10 +399,11 @@ export class ControlMenu {
   async render(page, actor, snapshot, { forceTopicCheck = false } = {}) {
     // Only explicit navigation checks Telegram. SSE refreshes use their snapshot.
     if (page === "sessions" && !snapshot && this.topicExists) {
-      let visible = 0
+      let visible = 0, checked = 0
       for (const binding of this.activeBindings()) {
+        if (++checked > MAX_VISIBLE_SESSIONS * 3) break
         try {
-          if (!await this.topicExists(binding, { force: forceTopicCheck })) continue
+          if (!await this.topicExists(binding, { force: forceTopicCheck, receiverUserId: actor?.id })) continue
         } catch (error) {
           // Transport and permission errors do not prove deletion. Keep the topic.
           logWarn("control_menu.topic_check.failed", { error: error.message })

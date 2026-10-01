@@ -1,194 +1,65 @@
 # Final Voice
 
-[English](final-voice.md) · [Русский](../ru/final-voice.md)
+[English](final-voice.md) · [Русский](../ru/final-voice.md) · [All languages](../README.md)
 
-Final Voice turns a completed OpenCode answer into a short spoken Telegram reply without delaying or weakening the normal text flow.
-
-The feature is optional and disabled by default. OpenCodeBot performs orchestration and Telegram delivery; model inference stays in a separate OpenAI-compatible TTS service.
-
-## Architecture
+Final Voice adds a short spoken summary after a delivered text answer. It never delays the text. The bot owns the queue and Telegram reply; external OpenAI-compatible services own summarization and synthesis.
 
 ```text
-OpenCode final answer
-  -> bounded OpenCodeBot background queue
-  -> OpenAI-compatible /chat/completions summary
-  -> OpenAI-compatible /v1/audio/speech synthesis
-  -> Telegram Bot API sendVoice reply to the exact final message
+delivered final → bounded memory queue → chat/completions → audio/speech → sendVoice
 ```
-
-OpenCodeBot owns:
-
-- global settings and commands;
-- summary prompt and provider credentials;
-- bounded background work and deduplication;
-- the Telegram bot token and final-message reply routing.
-
-The TTS provider owns only text-to-audio conversion. It must not receive Telegram credentials, session data, or DeepSeek credentials. Python, PyTorch, models, and FFmpeg do not belong in the OpenCodeBot image.
 
 ## Configuration
 
-`config.example.json` leaves Final Voice disabled. Supply `finalVoice.summary` and at least one `finalVoice.tts.profiles` entry in your private runtime config before enabling it; an absent TTS profile is not usable. No summary endpoint, model, key variable, TTS host, or provider-specific request body is inferred for a new installation.
-
-For a generic OpenAI-compatible summary API and speech service, the operator-owned config looks like this:
+It is disabled in the public example. Set `finalVoice.enabled`, a summary provider and at least one TTS profile in private config. Endpoints, models and credentials are not inferred.
 
 ```json
-{
-  "finalVoice": {
-    "enabled": true,
-    "summary": { "baseURL": "https://api.example.com", "model": "summary-model", "apiKeyEnv": "SUMMARY_API_KEY" },
-    "tts": {
-      "defaultProfile": "voice",
-      "profiles": {
-        "voice": {
-          "baseURL": "http://tts-host:8000/v1",
-          "apiKeyEnv": "TTS_API_KEY",
-          "model": "speech-model",
-          "voices": ["speaker"],
-          "defaultVoice": "speaker",
-          "responseFormat": "opus"
-        }
-      }
-    }
-  }
-}
+{ "finalVoice": {
+  "enabled": true,
+  "summary": { "baseURL": "https://api.example.com", "model": "summary-model", "apiKeyEnv": "SUMMARY_API_KEY" },
+  "tts": { "defaultProfile": "voice", "profiles": { "voice": {
+    "baseURL": "http://tts-host:8000/v1", "apiKeyEnv": "TTS_API_KEY", "model": "speech-model",
+    "voices": ["speaker"], "defaultVoice": "speaker", "responseFormat": "opus"
+  } } }
+} }
 ```
 
-If you use DeepSeek, one provider-specific setup can use:
+Keep `SUMMARY_API_KEY` and optional `TTS_API_KEY` in private environment. Summary authentication is required; TTS omits its Authorization header when no key is configured. `summary.requestBody` accepts provider-specific options, while the bot always owns `model`, `messages` and `stream`. Limits/timeouts and permitted voices are operator-controlled.
 
-- `https://api.deepseek.com/chat/completions`;
-- `deepseek-flash` (DeepSeek V4.1 Flash);
-- thinking enabled;
-- `reasoning_effort: max`;
-- `max_tokens: 393216`;
-- no temperature override.
+The default summary prompt/intro are Russian. Set `summary.defaultPrompt`, `defaults.introTemplate` and a suitable TTS profile for another speech language. `/lang` changes UI only. There is no Python, PyTorch, FFmpeg or model runtime in the bot image; deploy those independently when your TTS provider needs them.
 
-`summary.requestBody` is passed through for OpenAI-compatible provider options, but OpenCodeBot always owns and overwrites `model`, `messages`, and `stream`. This permits provider-specific reasoning options without provider-specific code.
+## Commands and settings
 
-The built-in summary prompt and spoken intro are written for Russian speech. For another language, set `summary.defaultPrompt` and `defaults.introTemplate` explicitly in the private config and choose a TTS profile that speaks that language. Switching the Telegram UI with `/lang` does not change voice output.
-
-TTS is configured as named profiles. Each profile fixes the operator-controlled endpoint, model, output format, timeout, and available Telegram-selectable voices. The bot never discovers models or endpoints dynamically.
-
-Secrets stay in `token.env`:
-
-```dotenv
-SUMMARY_API_KEY=replace-me
-TTS_API_KEY=optional-provider-token
-```
-
-The configured summary API key is required when Final Voice is enabled. TTS bearer authentication is optional: if the configured environment variable is empty, OpenCodeBot sends no Authorization header.
-
-When `finalVoice.enabled` is false:
-
-- provider clients perform no requests;
-- no worker or timer is kept alive;
-- missing keys do not block startup;
-- topic commands report that deployment access is disabled.
-
-## Commands And Topic State
-
-The compact interface is:
+Use **General → Settings → Spoken answers**, or typed shortcuts:
 
 ```text
-/tts                         show readiness and effective global settings
-/tts on|off                  explicitly enable or disable it
-/tts status                  show readiness and effective settings
-/tts prompt                  show the effective prompt
-/tts prompt <text>           set the global prompt
-/tts prompt reset            restore the deployment default
-/tts voice [name]            list or select a configured voice
-/tts engine [profile]        list or select a configured TTS profile
-/tts minlength [number]      set the automatic-final threshold
-/tts intro [text|off|reset]  configure the spoken intro
-/tts help                    show the complete command help
-/speak                       reply to text, a Rich Message, or quoted text for one manual voice
+/tts                         readiness and global settings
+/tts on|off                  automatic finals on/off
+/tts status                  status without provider probes
+/tts prompt [text|reset]     show/change summary prompt
+/tts voice [name]            list/select a permitted voice
+/tts engine [profile]        list/select a TTS profile
+/tts minlength [number]      automatic answer-length threshold
+/tts intro [text|off|reset]  spoken intro
+/tts help                    complete help
+/speak                       reply to text for one manual voice
 ```
 
-Telegram Bot API command-menu names permit only lowercase English letters, digits, and underscores. The compact visible
-menu advertises `/speak`; Final Voice configuration lives in the General control panel and `/tts` remains available as a
-typed accelerator.
+Settings persist globally in `state.json`. A topic reset does not reset voice preferences. Bare `/tts` is status-only; panel buttons set explicit values. Deployment configuration fixes provider access, while Telegram controls automatic use, summary prompt, profile/voice, threshold and intro.
 
-All Final Voice settings are global and stored once in the existing atomic `state.json`: automatic on/off, prompt, TTS profile, voice, minimum final length, and intro. The preferred UI is `General → Voice`; commands remain available as direct accelerators. Changing any setting from the panel or one topic immediately affects every topic. Telegram topic data is used only to route the resulting voice reply. A session `/reset` does not reset Final Voice settings.
+## Delivery
 
-Panel buttons set explicit on/off values and never perform a blind toggle. Bare `/tts` is likewise status-only so that
-checking state cannot accidentally disable automatic voice.
+Automatic jobs require a delivered final with an exact Telegram message ID, global automatic voice enabled, a configured provider and sufficient text length. Existing queued/sent IDs are deduplicated. The bounded queue drops excess automatic work; manual requests get feedback when full.
 
-## Runtime Behavior
+`/speak` accepts ordinary/Rich reply text, captions and quoted text. It bypasses automatic on/off and the length threshold, while still requiring deployment access/providers. If the source cannot be replied to in this chat, the result replies to the command.
 
-The renderer calls Final Voice only after the final RichMessage has been successfully sent or updated. The callback passes the unformatted final answer and exact Telegram message ID, then returns after a synchronous queue operation. Summary and TTS requests never delay the final text.
+`{topicname}` and `{server}` in the intro are rendered after summary generation, never sent to the summary provider. Topic metadata uses the canonical active title, removing a managed server suffix before speaking it separately. Latin intro identifiers receive deterministic Russian pronunciation; user/model text is unchanged. A blank line separates intro and summary.
 
-Automatic jobs are skipped when:
+Restart drops unfinished voice work. Successful deliveries retain bounded IDs; a crash between a send and its marker can still leave an uncertain result. Provider failures leave text untouched; manual progress becomes a concise retry notice. Logs contain operational metadata only, without prompts, summaries, response bodies or audio bytes.
 
-- the deployment gate is off;
-- global automatic voice is off;
-- final text is below `minFinalChars`;
-- a provider is unconfigured;
-- the same assistant message has already been queued or sent;
-- the bounded queue is full.
+## Audio contract
 
-Manual `/speak` jobs accept ordinary reply text, captions, Telegram Rich Message text, and `quote.text` from external
-replies. They ignore the global automatic gate and minimum length, but still require the deployment gate and configured
-providers. When the original message cannot be replied to in the current chat, the voice reply targets the `/speak`
-command message instead.
-
-The configured intro template is rendered only after summary generation and prepended to the TTS input. `{topicname}`
-and `{server}` come from the exact automatic-final binding or the current active binding for manual `/speak`; they are
-never sent to the summary provider. Disabled historical bindings are not used for intro metadata.
-
-The rendered intro and summary are separated by a blank line. The Silero bridge preserves this paragraph boundary as a
-hard synthesis-chunk boundary, ensuring the topic/server announcement is spoken before the response body.
-
-The topic value comes from the canonical Telegram title. Its managed `(server)` suffix is removed because the template
-speaks `{server}` separately. Latin acronyms and identifiers inside `{topicname}` and `{server}` are converted locally to
-deterministic Cyrillic pronunciation before TTS (for example, an English acronym in the topic name becomes a speakable Russian rendering). Only intro metadata is normalized; the summary and user/model content are unchanged.
-
-The queue is intentionally in-memory. A restart drops incomplete voice work, while existing renderer markers prevent old finals from being replayed. Successful Telegram deliveries are recorded in a bounded persistent marker list. This provides clean at-most-once behavior without a second job database.
-
-Provider failures never alter the final text. Automatic failures are logged structurally. Manual failures replace the temporary progress message with a concise retry notice.
-
-Logs include identifiers, durations, character counts, status codes, and byte sizes. They do not include API keys, final text, prompts, summaries, provider response bodies, or audio bytes.
-
-## Audio Contract
-
-OpenCodeBot sends the standard JSON fields:
-
-```json
-{
-  "model": "silero-ru-v5.5",
-  "input": "spoken summary",
-  "voice": "xenia",
-  "response_format": "opus",
-  "speed": 1
-}
-```
-
-OGG/Opus is preferred. MP3 and M4A responses are also supported when their configured format, response Content-Type, and file signature agree. Responses are streamed into a bounded buffer and aborted immediately when `maxResponseBytes` is exceeded.
-
-For Opus, OpenCodeBot requires both `OggS` and `OpusHead` signatures before calling Telegram `sendVoice`. WAV or PCM are never transcoded in the bot.
+The bot sends standard `model`, `input`, `voice`, `response_format` and `speed` fields to `/audio/speech`. OGG/Opus is preferred and requires `OggS` plus `OpusHead` signatures. MP3/M4A also require agreement between requested format, Content-Type and signature. Responses are read into a bounded buffer; oversized audio is aborted. WAV/PCM is not transcoded in the bot.
 
 ## Operations
 
-Recommended deployment order:
-
-1. Deploy OpenCodeBot code with `finalVoice.enabled: false`.
-2. Deploy and verify the private TTS endpoint.
-3. Add runtime secrets and provider URLs.
-4. Set the deployment gate to true.
-5. Disable the previous Telegram/MTProto sender before enabling `/tts on` globally.
-6. Test one final answer and verify exactly one voice reply.
-7. Verify final answers from more than one topic use the same settings.
-
-Do not run the old automatic sender and Final Voice simultaneously: both can react to the same final answer and produce duplicates.
-
-Useful checks:
-
-```bash
-docker compose logs --since=10m opencodebot
-curl -fsS http://TTS_HOST:8000/healthz
-```
-
-`/tts status` deliberately does not probe providers. It reports configuration readiness and queue state without introducing health-polling traffic or startup coupling.
-
-## Disable
-
-Turn off voice globally with `/tts off`, or set the deployment gate to false and restart OpenCodeBot. Text behavior is
-unaffected.
+Deploy/verify the TTS endpoint first, add private config/secrets, then enable automatic voice. Disable any old sender reacting to the same finals before `/tts on`, or both will send. Check one final and a manual `/speak`, then finals from two topics using the same global preferences. `/tts status` reports readiness and queue without probing providers. `/tts off` disables automatic use; `finalVoice.enabled=false` followed by restart disables all voice access.

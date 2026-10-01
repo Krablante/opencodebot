@@ -63,12 +63,13 @@ try {
   }
   const compose = { OPENCODEBOT_CONFIG_FILE: configPath, OPENCODEBOT_SERVERS_FILE: serversPath,
     OPENCODEBOT_TOKEN_ENV_FILE: tokenPath, OPENCODEBOT_STATE_DIR: stateDir,
+    ...(process.getuid ? { OPENCODEBOT_UID: String(process.getuid()), OPENCODEBOT_GID: String(process.getgid()) } : {}),
     ...(local && serverPath !== path.win32 ? { OPENCODEBOT_UPLOAD_ROOT: uploadRoot, OPENCODEBOT_ARTIFACT_UPLOAD_SOURCE: artifactRoot, OPENCODEBOT_ARTIFACT_UPLOAD_ROOT: artifactRoot } : {}),
     ...composeEnv }
   const existingComposeText = await fs.readFile(composeEnvPath, "utf8").catch((error) => { if (error.code === "ENOENT") return ""; throw error })
   const additions = Object.entries(compose).filter(([key]) => !Object.hasOwn(composeEnv, key)).map(([k, v]) => `${k}="${String(v).replaceAll("\\", "/").replaceAll('"', '\\"').replaceAll("$", "$$")}"`).join("\n")
   if (additions) await write(composeEnvPath, `${existingComposeText}${existingComposeText && !existingComposeText.endsWith("\n") ? "\n" : ""}${additions}\n`)
-  console.log("Configuration ready. Start with npm run deploy:bot (Docker) or npm start (Node), then add the bot as an administrator to a forum group and run /setup.")
+  console.log("Configuration ready. Start with npm run deploy:bot (Docker), or npm ci then npm start (Node). Add the bot as an administrator to a forum group and run /setup.")
   if (serverPath === path.win32 && local) console.log("Windows server paths: use npm start on Windows, or configure SSH transfer before using a Linux Docker container.")
 } finally { io.close() }
 

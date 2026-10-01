@@ -50,15 +50,16 @@ async function createPeer(name) {
   const peerPublic = await publicKey(peerPrivate)
   const address = nextPeerAddress(peers, wg.subnet, wg.serverAddress)
   const endpoint = await endpointValue()
-  peers.push({ name, publicKey: peerPublic, address, createdAt: new Date().toISOString() })
-  await writePeers(peers)
-  await writeConfig()
-  await installConfig()
   const peerConfig = `[Interface]\nPrivateKey = ${peerPrivate}\nAddress = ${address}/32\nDNS = ${wg.dns}\n\n[Peer]\nPublicKey = ${serverPublic}\nEndpoint = ${endpoint}:${wg.listenPort}\nAllowedIPs = ${wg.subnet}, ${wg.lanSubnet}\nPersistentKeepalive = 25\n`
   const peerPath = path.join(wg.stateDir, "peers", `${name}.conf`)
   await fs.writeFile(peerPath, peerConfig, { mode: 0o600 })
   await maybeQr(peerPath, path.join(wg.stateDir, "peers", `${name}.png`))
-  await reloadInterface()
+  // Save the client key before registering the peer or changing the live host.
+  // If installation fails, init can retry using the retained client config.
+  peers.push({ name, publicKey: peerPublic, address, createdAt: new Date().toISOString() })
+  await writePeers(peers)
+  await writeConfig()
+  await installConfig()
   console.log(`Peer created: ${name}`)
   console.log(`Config file: ${peerPath}`)
   console.log("Private key was written to the config file and was not printed.")
@@ -86,10 +87,6 @@ async function installConfig() {
   await execFile("sudo", ["install", "-d", "-m", "700", "-o", "root", "-g", "root", "/etc/wireguard"])
   await execFile("sudo", ["install", "-m", "600", "-o", "root", "-g", "root", path.join(wg.stateDir, `${wg.interface}.conf`), `/etc/wireguard/${wg.interface}.conf`])
   await execFile("sudo", ["systemctl", "enable", `wg-quick@${wg.interface}`])
-  await execFile("sudo", ["systemctl", "restart", `wg-quick@${wg.interface}`])
-}
-
-async function reloadInterface() {
   await execFile("sudo", ["systemctl", "restart", `wg-quick@${wg.interface}`])
 }
 

@@ -71,6 +71,7 @@ export async function handleArtifactUploadMessage({ telegram, config, opencode, 
     })
   } catch (error) {
     await replyHTML(telegram, message, t("artifacts.saveFailed", { errorHtml: escapeHtml(error.message || String(error)) }))
+    if (error.savedPaths?.length) await replyHTML(telegram, message, formatSavedPaths({ server: target.server, paths: error.savedPaths }))
     return { status: "failed", error }
   }
 
@@ -144,7 +145,7 @@ export function artifactUploadFilename({ originalFilename, requestedFilename }) 
 }
 
 export function formatArtifactUploadHelp({ defaultServerId = "", availableServerIds = [] } = {}) {
-  const exampleServer = defaultServerId || availableServerIds[0] || "nuc"
+  const exampleServer = defaultServerId || availableServerIds[0] || "local"
   const serverList = availableServerIds.length
     ? `\n${t("artifacts.available", { serversHtml: escapeHtml(availableServerIds.join(", ")) }).trim()}`
     : ""
@@ -169,16 +170,19 @@ async function saveArtifactFiles({ telegram, config, server, files, requestedFil
   if (!files?.length) return []
   const scratchDir = path.join(config.paths.uploadsDir || path.join(os.tmpdir(), "opencodebot-uploads"), "artifact-inbox", randomUUID())
   let downloads = []
+  const saved = []
   try {
     const namedFiles = applyArtifactUploadFilenames(files, requestedFilenames)
     downloads = await downloadTelegramFiles(telegram, uniquedFiles(namedFiles), scratchDir, config.attachments, { inline: false })
-    const saved = []
     for (const file of downloads) {
       const targetPath = artifactTargetPath({ config, server, filename: file.filename })
-      await transferFile({ localPath: file.localPath, targetPath, server, signal })
+      await transferFile({ localPath: file.localPath, targetPath, server, signal, overwrite: false })
       saved.push({ ...file, targetPath })
     }
     return saved
+  } catch (error) {
+    error.savedPaths = saved.map((file) => file.targetPath)
+    throw error
   } finally {
     await fs.rm(scratchDir, { recursive: true, force: true }).catch(() => {})
   }
@@ -218,11 +222,13 @@ function uniquedFiles(files) {
 }
 
 function uniqueFilename(filename, seen) {
-  const count = (seen.get(filename) || 0) + 1
-  seen.set(filename, count)
-  if (count === 1) return filename
+  if (!seen.has(filename)) { seen.set(filename, 1); return filename }
   const parsed = path.parse(filename)
-  return `${parsed.name}-${count}${parsed.ext}`
+  let count = seen.get(filename), candidate
+  do { candidate = `${parsed.name}-${++count}${parsed.ext}` } while (seen.has(candidate))
+  seen.set(filename, count)
+  seen.set(candidate, 1)
+  return candidate
 }
 
 function expandHomeForServer(value, server, style) {

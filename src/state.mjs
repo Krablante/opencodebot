@@ -5,6 +5,8 @@ import { isIgnoredSessionTitle } from "./internal-sessions.mjs"
 
 const MIRRORED_SESSION_BUCKET_LIMIT = 250
 const MAX_PROMPT_ORIGINS = 5_000
+// Arrays remain the storage format; indexes follow each retained array's lifetime.
+const mirrorIndexes = new WeakMap()
 const TOPIC_TITLE_FIELDS = [
   "titleSource",
   "topicBaseTitle",
@@ -91,10 +93,13 @@ export class StateStore {
       if (error.code === "ENOENT") return
       throw error
     }
-    for (const line of text.split("\n")) {
+    // Like the inbox, only newline-terminated appends are complete records.
+    // A torn tail is removed by the startup compaction; complete corruption fails.
+    for (const line of text.slice(0, text.lastIndexOf("\n") + 1).split("\n")) {
       if (!line) continue
-      const value = JSON.parse(line)
-      if (!Array.isArray(value) || value.length !== 4 || !["a", "u"].includes(value[0])) throw new Error("Invalid mirror marker record")
+      let value
+      try { value = JSON.parse(line) } catch { throw new Error("Invalid mirror marker journal; preserve it and repair before restarting") }
+      if (!Array.isArray(value) || value.length !== 4 || !["a", "u"].includes(value[0]) || !value.slice(1).every((item) => typeof item === "string" && item)) throw new Error("Invalid mirror marker record")
       const marker = { kind: value[0] === "u" ? "user" : "assistant", serverID: value[1], sessionID: value[2], messageID: value[3] }
       const target = marker.kind === "user" ? this.data.mirroredUserBySession : this.data.mirroredAssistantBySession
       addMirroredMessage(target, marker.serverID, marker.sessionID, marker.messageID)
@@ -466,7 +471,8 @@ export class StateStore {
     return this.update((data) => {
       data.seenSessions ||= []
       const key = sessionKey(serverID, sessionID)
-      if (!data.seenSessions.includes(key)) data.seenSessions.push(key)
+      if (data.seenSessions.includes(key)) return false
+      data.seenSessions.push(key)
       if (data.seenSessions.length > 5000) data.seenSessions = data.seenSessions.slice(-5000)
     })
   }
@@ -645,7 +651,7 @@ export class StateStore {
       const index = data.pendingPrompts.findIndex(
         (item) => item.serverID === serverID && item.sessionID === sessionID && item.hash === hash,
       )
-      if (index === -1) return null
+      if (index === -1) return false
       const [matched] = data.pendingPrompts.slice(index, index + 1)
       data.pendingPrompts.splice(index, 1)
       return matched
@@ -1062,15 +1068,27 @@ function sessionMirrorKey(serverID, sessionID) {
 
 function hasMirroredMessage(bySession, serverID, sessionID, messageID) {
   const key = sessionMirrorKey(serverID, sessionID)
-  return Boolean(bySession?.[key]?.includes(messageID))
+  const messages = bySession?.[key]
+  return Boolean(messages && mirrorIndex(messages).has(messageID))
 }
 
 function addMirroredMessage(bySession, serverID, sessionID, messageID) {
   const key = sessionMirrorKey(serverID, sessionID)
   bySession[key] ||= []
-  if (bySession[key].includes(messageID)) return false
+  const index = mirrorIndex(bySession[key])
+  if (index.has(messageID)) return false
   bySession[key].push(messageID)
+  index.add(messageID)
   return true
+}
+
+function mirrorIndex(messages) {
+  let index = mirrorIndexes.get(messages)
+  if (!index || index.size !== messages.length) {
+    index = new Set(messages)
+    mirrorIndexes.set(messages, index)
+  }
+  return index
 }
 
 function mirrorMarkerLines(bySession, kind) {

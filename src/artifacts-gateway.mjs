@@ -18,9 +18,11 @@ const CLOUD_MULTIPART_MEMORY_LIMIT_BYTES = 32 * 1024 * 1024
 
 export function startArtifactGateway({ config, state, telegram, signal }) {
   if (!config.artifacts?.enabled) return null
+  let activeUploads = 0
   const server = createServer(async (request, response) => {
     const startedAt = Date.now()
     const pathname = requestPathname(request)
+    let admitted = false
     try {
       if (!isAuthorized(request, config.artifacts.token)) {
         sendJson(response, 401, { ok: false, error: "unauthorized" })
@@ -40,6 +42,13 @@ export function startArtifactGateway({ config, state, telegram, signal }) {
         sendJson(response, 409, { ok: false, error: "artifacts_topic_not_configured" })
         return
       }
+      if (activeUploads >= 4) {
+        response.setHeader("retry-after", "5")
+        sendJson(response, 503, { ok: false, error: "gateway_busy", message: "Four artifact deliveries are active. Retry shortly." })
+        return
+      }
+      activeUploads++
+      admitted = true
       const payload = pathname === "/artifacts/send-file"
         ? await readFileStreamBody(request, config)
         : await readJsonBody(request, config.artifacts.maxPayloadBytes)
@@ -63,6 +72,8 @@ export function startArtifactGateway({ config, state, telegram, signal }) {
       if (status >= 500) logErrorEvent("artifacts.request.failed", error, { durationMs: durationMs(startedAt) })
       else logWarn("artifacts.request.rejected", { durationMs: durationMs(startedAt), status, error: error.publicCode || "artifact_send_failed" })
       sendJson(response, status, { ok: false, error: error.publicCode || "artifact_send_failed", message: error.publicMessage || error.message })
+    } finally {
+      if (admitted) activeUploads--
     }
   })
 
@@ -125,7 +136,9 @@ async function sendFileWithAutoFallback({ telegram, target, file, caption, metho
       : await telegram.sendDocument({ chatId: target.chatId, topicId: target.topicId, file, caption, captionFormat: "html" })
     return { method, message }
   } catch (error) {
-    if (method !== "sendPhoto") throw error
+    // A transport failure may follow a successful send. Only a definite photo
+    // rejection permits a second send in another format.
+    if (method !== "sendPhoto" || error.status !== 400 || !/PHOTO_|IMAGE_PROCESS_FAILED|wrong.*(?:photo|image)|photo.*(?:invalid|too big|too large|dimensions)/i.test(error.message)) throw error
     logWarn("artifacts.photo_fallback", { requestedMode: mode, filename: file.filename, bytes: fileSize(file), contentType: file.contentType })
     const message = await telegram.sendDocument({ chatId: target.chatId, topicId: target.topicId, file, caption, captionFormat: "html" })
     return { method: "sendDocument", message }

@@ -11,15 +11,15 @@ const status = (await capture("git", ["status", "--porcelain"])).trim()
 if (!/^[0-9a-f]{40}$/.test(revision)) throw new Error("Could not resolve the current Git revision")
 if (status) throw new Error("Refusing to deploy from a dirty checkout")
 
-await run(npmCommand(), ["ci"])
-await run(npmCommand(), ["run", "check"])
+await runNpm(["ci"])
+await runNpm(["run", "check"])
 await run("docker", ["compose", "build", ...(deployAll ? [] : ["opencodebot"])], {
   env: { ...process.env, OPENCODEBOT_BUILD_SHA: revision },
 })
 await run("docker", deployAll
   ? ["compose", "up", "-d", "--no-build"]
   : ["compose", "up", "-d", "--no-build", "--no-deps", "--force-recreate", "opencodebot"])
-await run(npmCommand(), ["run", "health:live"])
+await runNpm(["run", "health:live"])
 console.log(`Deployed ${deployAll ? "the full Compose project" : "opencodebot"} at ${revision.slice(0, 12)}.`)
 
 async function run(command, args, options = {}) {
@@ -49,6 +49,10 @@ function spawnCommand(command, args, options) {
   })
 }
 
-function npmCommand() {
-  return process.platform === "win32" ? "npm.cmd" : "npm"
+function runNpm(args) {
+  // Windows cannot spawn a .cmd launcher directly. npm run supplies its real JS
+  // entrypoint; direct invocation falls back to the standard Node installation.
+  const cli = process.env.npm_execpath || (process.platform === "win32"
+    ? path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js") : null)
+  return cli ? run(process.execPath, [cli, ...args]) : run("npm", args)
 }

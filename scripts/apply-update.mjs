@@ -2,11 +2,11 @@
 
 import { spawn } from "node:child_process"
 import fs from "node:fs/promises"
-import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { classifyChangedPaths, isGitRevision } from "../src/update-shared.mjs"
+import { loadEnvFile } from "../src/config/common.mjs"
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const startedAt = Date.now()
@@ -20,7 +20,8 @@ if (isMain(import.meta.url)) {
 
 async function main() {
   if (process.platform !== "linux") throw new Error("The unattended host update runner requires Linux and systemd")
-  const runtimeDir = path.resolve(process.env.OPENCODEBOT_UPDATE_RUNTIME_DIR || path.join(os.homedir(), "politia", "state", "projects", "tg", "opencodebot", "updates"))
+  const stateDir = process.env.OPENCODEBOT_STATE_DIR || loadEnvFile(path.join(projectRoot, ".env")).OPENCODEBOT_STATE_DIR || "state"
+  const runtimeDir = path.resolve(projectRoot, process.env.OPENCODEBOT_UPDATE_RUNTIME_DIR || path.join(stateDir, "updates"))
   const repository = process.env.OPENCODEBOT_UPDATE_REPOSITORY || "Krablante/opencodebot"
   const branch = process.env.OPENCODEBOT_UPDATE_BRANCH || "main"
   const requestPath = path.join(runtimeDir, "request.json")

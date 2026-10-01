@@ -6,7 +6,7 @@ export const defaultArtifacts = {
   listenHost: "0.0.0.0",
   port: 8788,
   tokenEnvNames: ["OPENCODEBOT_ARTIFACT_TOKEN"],
-  maxPayloadBytes: 75 * 1024 * 1024,
+  maxPayloadBytes: 64 * 1024,
   maxFileBytes: 50 * 1024 * 1024,
   maxTextChars: 3400,
   maxCaptionChars: 900,

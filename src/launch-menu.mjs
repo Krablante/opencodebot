@@ -21,7 +21,7 @@ export class LaunchMenu {
 
   open(query, page = "new") {
     const key = `actor:${query.from.id}`
-    const run = (this.lanes.get(key) || Promise.resolve()).then(() => this.openCurrent(query, page))
+    const run = (this.lanes.get(key) || Promise.resolve()).catch(() => {}).then(() => this.openCurrent(query, page))
       .finally(() => { if (this.lanes.get(key) === run) this.lanes.delete(key) })
     this.lanes.set(key, run)
     return run
@@ -53,7 +53,7 @@ export class LaunchMenu {
     const [, id, rev, ...parts] = query.data.split(":")
     const action = parts.join(":")
     const prior = this.lanes.get(id) || Promise.resolve()
-    const run = prior.then(async () => {
+    const run = prior.catch(() => {}).then(async () => {
       const d = this.drafts.get(id)
       if (!d || d.expires < Date.now() || d.userId !== query.from.id || String(d.chatId) !== String(query.message?.chat?.id)
         || Number(query.message?.ephemeral_message_id) !== d.messageId || Number(rev) !== d.rev || !d.allowedActions?.has(action)) {

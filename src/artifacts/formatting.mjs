@@ -2,12 +2,17 @@ import path from "node:path"
 
 import { escapeHtml } from "../telegram.mjs"
 import { t } from "../i18n/index.mjs"
+import { safeFilename as boundedFilename } from "../upload-transfer.mjs"
 
 export function artifactFileCaptionHtml(caption, captionPaths) {
-  const lines = [escapeHtml(caption)]
-  const pathLines = artifactPathLines(captionPaths)
-  if (pathLines.length) lines.push("", `<blockquote>${pathLines.map((line) => escapeHtml(line)).join("\n")}</blockquote>`)
-  return clampTelegramCaptionHtml(lines.join("\n"))
+  const paths = artifactPathLines(captionPaths).join("\n")
+  const render = (label, source) => escapeHtml(label) + (source ? `\n\n<blockquote>${escapeHtml(source)}</blockquote>` : "")
+  const full = render(caption, paths)
+  if (full.length <= 950) return full
+  const captionBudget = paths ? Math.min(escapeHtml(caption).length, 440) : 950
+  const label = shortenCaptionText(String(caption), captionBudget)
+  const source = paths && shortenCaptionText(paths, 950 - escapeHtml(label).length - "\n\n<blockquote></blockquote>".length)
+  return render(label, source)
 }
 
 export function artifactPathLines(captionPaths) {
@@ -21,8 +26,7 @@ export function artifactPathLines(captionPaths) {
 }
 
 export function safeFilename(value) {
-  const name = displayPathInfo(value || "artifact.bin").basename.replace(/[\u0000-\u001f]/g, "").trim()
-  return name || "artifact.bin"
+  return boundedFilename(displayPathInfo(value || "artifact.bin").basename)
 }
 
 export function safeContentType(value) {
@@ -88,8 +92,16 @@ function cleanDirectoryDisplay(directory, flavor) {
   return directory
 }
 
-function clampTelegramCaptionHtml(value, maxChars = 950) {
-  const text = String(value || "")
-  if (text.length <= maxChars) return text
-  return `${text.slice(0, Math.max(0, maxChars - 34)).trimEnd()}\n${t("artifacts.trimmedCaption")}`
+function shortenCaptionText(text, maxEscapedChars) {
+  if (escapeHtml(text).length <= maxEscapedChars) return text
+  const suffix = `\n${t("artifacts.trimmedCaption")}`
+  const budget = maxEscapedChars - escapeHtml(suffix).length
+  let result = "", used = 0
+  for (const character of text) {
+    const width = escapeHtml(character).length
+    if (used + width > budget) break
+    result += character
+    used += width
+  }
+  return result.trimEnd() + suffix
 }

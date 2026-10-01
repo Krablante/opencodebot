@@ -48,6 +48,10 @@ export class SpeechModule {
   async enqueueAudioMessage(message) {
     const files = audioDescriptors(message)
     if (!files.length) return false
+    if (this.queue.length >= 20) {
+      await this.telegram.replyMessage({ message, text: t("speech.queueFull") })
+      return true
+    }
     const job = { message, descriptors: files }
     this.queue.push(job)
     this.drain()

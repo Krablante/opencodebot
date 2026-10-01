@@ -51,6 +51,7 @@ export class TelegramClient {
     }
     if (!response.ok || data.ok !== true) {
       const error = new Error(`Telegram ${method} failed: ${data.description || response.status}`)
+      error.status = response.status
       error.retryAfter = retryAfter
       if (!options.suppressFailureLog) logErrorEvent("telegram.request.failed", error, { method, attempt, status: response.status, durationMs: elapsedMs, ...telegramPayloadSummary(payload) })
       throw error
@@ -69,17 +70,22 @@ export class TelegramClient {
     return me
   }
 
-  async forumTopicExists({ chatId, topicId, name }) {
-    if (!name || !topicId) throw new Error("Topic availability requires its tracked title and thread id")
+  async forumTopicExists({ chatId, topicId, receiverUserId }) {
+    if (!receiverUserId || !topicId) throw new Error("Topic availability requires an operator and thread id")
     if (Date.now() < (this.topicCheckRetryAt || 0)) throw new Error("Telegram topic checks are temporarily rate limited")
-    // An empty edit skips Telegram's topic lookup, including for deleted topics.
-    // Reapplying our tracked title performs that lookup without posting a message.
+    // A personal, silent probe verifies the thread without overwriting a missed
+    // rename. Empty edits and sendChatAction also succeed for deleted topics.
     try {
-      await this.request("editForumTopic", { chat_id: chatId, message_thread_id: topicId, name: safeTopicName(name) }, 0,
+      const probe = await this.request("sendRichMessage", { chat_id: chatId, message_thread_id: topicId,
+        rich_message: { html: "<p>…</p>" }, disable_notification: true,
+        ephemeral_message_parameters: { receiver_user_id: receiverUserId } }, 0,
         { suppressFailureLog: true, timeoutMs: 10_000, retryRateLimit: false })
+      if (!probe?.ephemeral_message_id) throw new Error("Topic check requires Bot API 10.3 ephemeral messages")
+      await this.request("deleteEphemeralMessage", { chat_id: chatId, receiver_user_id: receiverUserId,
+        ephemeral_message_id: probe.ephemeral_message_id }, 0,
+        { suppressFailureLog: true, timeoutMs: 10_000, retryRateLimit: false }).catch(() => {})
       return true
     } catch (error) {
-      if (/TOPIC_NOT_MODIFIED/i.test(error.message)) return true
       if (isDeletedTopicError(error)) return false
       if (Number.isFinite(error.retryAfter)) this.topicCheckRetryAt = Date.now() + (error.retryAfter + 1) * 1000
       throw error
@@ -114,7 +120,13 @@ export class TelegramClient {
     await fsp.mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
     if (this.local && path.isAbsolute(file.file_path)) {
       const sourcePath = this.safeLocalPath(file.file_path)
-      await copyLocalFileWithLimit({ sourcePath, destination, maxBytes })
+      try { await copyLocalFileWithLimit({ sourcePath, destination, maxBytes }) }
+      catch (error) {
+        await fsp.rm(destination, { force: true }).catch(() => {})
+        // OS errors include the Bot API's token-bearing directory names.
+        if (error.code) throw new Error(`Telegram local file copy failed (${error.code})`)
+        throw error
+      }
       return { file: { ...file, source_path: sourcePath }, destination }
     }
     const response = await fetch(`${this.fileBaseURL}/${file.file_path}`, { signal })
@@ -291,6 +303,7 @@ export class TelegramClient {
     }
     if (!response.ok || data.ok !== true) {
       const error = new Error(`Telegram ${method} failed: ${data.description || response.status}`)
+      error.status = response.status
       logErrorEvent("telegram.request.failed", error, { method, attempt, status: response.status, durationMs: elapsedMs, ...summary })
       throw error
     }

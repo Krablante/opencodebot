@@ -1,169 +1,67 @@
-# Self-Update
+# Updates
 
-[English](self-update.md) · [Русский](../ru/self-update.md)
+[English](self-update.md) · [Русский](../ru/self-update.md) · [All languages](../README.md)
 
-The public example has scheduled checks disabled. If you enable them in private config, choose both
-`updates.checkAt` and `updates.timeZone`. When a newer commit exists, the bot
-posts one concise update card in the Telegram General topic. `/update` performs an immediate check and reports in the
-topic where the command was used even when scheduled checks are disabled. A manual check does not move or enable the
-daily schedule.
-
-The feature deliberately owns only opencodebot. It never deploys bundled OpenCodez plugin or skill copies and never restarts OpenCodez. If the exact Git range includes
-`plugins/opencodebot-artifacts/` or `skills/telegram-artifact-send/`, the offer and final success card identify those
-source changes and tell the operator to apply the installed copies manually when convenient.
-
-## Telegram UX
-
-The update card shows the deployed and target short revisions, commit count, grouped user-facing notes, a GitHub compare
-link, and two actions:
-
-- `Update & restart` queues the exact displayed target revision.
-- `Not now` removes the buttons and suppresses the same revision until the next London calendar day.
-
-When scheduled checks are disabled, `Not now` only closes the current manual offer; `/update` can show it again whenever
-the operator asks.
-
-One-click update is deliberately unavailable when the range changes `docker-compose*.yml`,
-`scripts/apply-update.mjs`, or `scripts/install-update-runner.mjs`. Those files define the deployment control plane;
-using their new contents to roll back an old image would not restore the old runtime contract. The card shows the exact
-paths and one host command using `deploy:bot` or `deploy:all` instead.
-
-The release introducing the durable Telegram inbox changes the host runner and therefore takes this manual deployment
-path too. The runner also refuses a revision pair that adds or removes inbox support: an automatic image rollback must
-not strand events already acknowledged into a journal the older image cannot read. First deployment creates the inbox
-automatically; deliberate rollback to pre-inbox code requires the draining/cursor procedure in
-[Paths And State](config-runtime.md#paths-and-state).
-
-Notes come from the exact GitHub compare range. `feat:`, `fix:`, and `perf:` commit subjects become New, Fixed, and
-Performance sections. Documentation, test, refactor, build, and chore commits collapse into one technical-maintenance
-count. At most eight user-facing entries are shown; GitHub remains the full record. Keep commit subjects concise and
-human-readable so update cards stay useful without a second manually synchronized changelog.
-
-During an approved update, the same Telegram message moves through queue, repository verification, dependency install,
-checks, image build, restart, and live verification. The active run and message identity are durable. After Compose
-restarts the bot, the new process reads the host result and edits the original card to success or failure.
-If the host runner stops reporting progress, the bot marks the run interrupted after 35 minutes, removes stale request
-files, and releases the update lock so `/update` can retry. The systemd service timeout remains 30 minutes, leaving a
-five-minute recovery margin.
-
-Startup migrations are part of the bot process, so one-click updates need no manual state editing. In particular,
-legacy bindings already marked as stale/missing are physically removed with their session-scoped markers, and an active
-binding omitted from the backend session list is removed only after an exact lookup confirms `404`. Its Telegram topic
-remains available as a pending fresh session.
-
-## Architecture
-
-The bot container has no Docker socket and no source checkout. Approval is passed through two atomic JSON files in the
-already mounted state directory:
-
-```text
-bot: /app/state/updates/request.json
-                 |
-                 v
-user systemd.path -> scripts/apply-update.mjs
-                 |
-                 v
-bot: /app/state/updates/status.json
-```
-
-There is no HTTP listener, privileged sidecar, or long-running updater daemon. The host runner accepts only a UUID plus
-two full Git revisions. It validates origin, branch ancestry, a clean checkout, and fast-forward safety before executing
-fixed argument arrays; Telegram callback data is never interpreted as a shell command.
-
-The runner then:
-
-1. fetches the configured branch and fast-forwards the checkout to the approved target;
-2. runs `npm ci` and `npm run check`;
-3. preserves the running image as `opencodebot:rollback`;
-4. builds `opencodebot:current` with the target Git revision in its environment and OCI image label;
-5. force-recreates only the `opencodebot` Compose service with `--no-deps`;
-6. runs `npm run health:live` against the actual process and required backend APIs;
-7. restores and health-checks the previous image if replacement or live verification fails.
-
-Source may remain fast-forwarded after a failed build. That is intentional: the running image revision remains the
-deployment source of truth, `/update` offers the same target again, and retry does not require a destructive Git reset.
+The ordinary update path is `git pull --ff-only` and `npm run deploy:bot`. Optional Telegram approval automates the same bot-only rollout through a fixed Linux host runner. It never deploys or restarts OpenCodez, installed plugins or skills.
 
 ## Configuration
 
-Shareable configuration example:
+Scheduled checks are disabled by default. `/update` checks immediately without enabling or moving a schedule. Automatic checks require an explicit time and IANA zone:
 
 ```json
-{
-  "updates": {
-    "enabled": true,
-    "repository": "Krablante/opencodebot",
-    "branch": "main",
-    "checkAt": "07:00",
-    "timeZone": "Europe/London"
-  }
-}
+{ "updates": { "enabled": true, "repository": "Krablante/opencodebot",
+  "branch": "main", "checkAt": "07:00", "timeZone": "Europe/London" } }
 ```
 
-Use an IANA time zone. `Europe/London` tracks GMT and British Summer Time automatically. The scheduler checks London
-calendar time once per minute and persists the last completed calendar date, so a restart after 07:00 performs the
-missed check instead of waiting until the next day.
+The scheduler checks once per minute and persists the last calendar date in the chosen zone. Restart after the scheduled time performs a missed check. There is no source-code schedule fallback. The deployed revision comes only from image `OPENCODEBOT_BUILD_SHA`; missing/malformed metadata disables update checks until a correctly labelled deployment.
 
-There is no code-level schedule fallback. `updates.enabled` must be `true`, and both `updates.checkAt` and
-`updates.timeZone` must be present, to run automatic checks. When `updates.enabled` is false or the block is omitted,
-the explicit `/update` command still works but no scheduled check runs. This keeps the operating schedule visible in the
-private runtime config instead of hiding it in source constants.
+## Telegram UX
 
-The running Git revision comes from `OPENCODEBOT_BUILD_SHA`. Do not set it by hand in runtime config. `npm run deploy:bot`
-derives it from the clean checkout and supplies it to Docker. An image with missing or malformed revision metadata can
-run normally, but automatic and manual update checks stay disabled until one correctly labelled rebuild.
+An offer shows deployed/target revisions, grouped notes and GitHub comparison. **Update & restart** approves that exact target. **Not now** suppresses it until the next scheduled calendar day; with scheduling off it closes only the manual offer.
 
-## Install The Linux Host Runner
+Notes come from the exact Git range: `feat:`, `fix:` and `perf:` become user-facing groups, other subjects collapse into maintenance. Eight entries are shown at most. GitHub releases remain the full published record; there is no duplicate hand-maintained changelog.
 
-The Telegram checker and `/update` work on every supported client and do not depend on the OpenCodez target server OS.
-The unattended apply runner is intentionally Linux/systemd-only because it operates the host running the canonical
-Compose service. Windows OpenCodez servers and Windows Telegram users require no updater installation or special paths.
+The same card advances through verification, dependency installation, syntax, image build, restart and live health. Saved run/message identity lets the new bot finish the original card. A host run stops after 30 minutes; the bot marks stale progress interrupted after 35 minutes and releases its lock for retry.
 
-On the Linux Compose host:
+Compose files and `scripts/apply-update.mjs`/`scripts/install-update-runner.mjs` require manual deployment. The offer lists paths and the appropriate `deploy:bot`/`deploy:all` plus runner installation when needed. Plugin/skill changes report the separate installed-copy follow-up.
+
+## Host boundary
+
+The bot container has neither a Docker socket nor source checkout. Approval writes a UUID and two full Git revisions into atomic files on its state mount:
+
+```text
+state/updates/request.json → user systemd.path → scripts/apply-update.mjs
+state/updates/status.json  ← fixed host runner ← bot deployment/health
+```
+
+The runner checks clean source, origin, branch ancestry and fast-forward safety. Commands use fixed argument arrays; callback data is never shell input. It installs dependencies, checks syntax, tags the existing image for rollback, builds the approved revision, recreates only the bot and runs live health.
+
+If replacement/health fails, it restores the previous image and checks it. Source may remain fast-forwarded; image revision remains authoritative, and retry needs no destructive Git reset. Image rollback does not undo state migrations or external effects. Journal-incompatible revisions, including adding/removing inbox support, need a matching stopped-state backup and manual deployment. [State compatibility](config-runtime.md#paths-and-state) explains rollback to pre-inbox code.
+
+## Install the runner
+
+The checker works on all supported clients; unattended apply requires Linux/systemd on the Compose host. Install once:
 
 ```bash
 npm run update-runner:install
 systemctl --user status opencodebot-update.path
 ```
 
-The installer reads `OPENCODEBOT_STATE_DIR` from the process environment or the ignored Compose `.env` file; otherwise it uses `./state` in the checkout. You can name the host bind-mount source explicitly:
+State is selected by `--state-dir`, process `OPENCODEBOT_STATE_DIR`, Compose `.env`, or `./state`. It must be the host source mounted as `/app/state`. The installer creates user units under `~/.config/systemd/user` and a non-secret `updates/runner.json` readiness marker.
 
 ```bash
 npm run update-runner:install -- --state-dir /absolute/host/state
+npm run update-runner:uninstall
 ```
 
-The selected host state directory must be the source mounted at `/app/state`. The installer writes only user units under
-`~/.config/systemd/user/`, enables `opencodebot-update.path`, and leaves a non-secret `updates/runner.json` readiness
-marker for the container. Remove it with `npm run update-runner:uninstall`.
+Reinstall after changing repository, branch, checkout or state path. Direct runner execution uses the same state convention, or `OPENCODEBOT_UPDATE_RUNTIME_DIR`; it has no installation-specific path fallback.
 
-Re-run the installer after changing the configured repository, branch, project location, or host state path so the fixed
-host runner contract stays aligned with the container checker.
-
-## Manual Deployment And Verification
-
-Use the cross-platform deployment wrapper instead of rebuilding an unlabelled image manually:
+## Verify a rollout
 
 ```bash
 npm run deploy:bot
-```
-
-It refuses a dirty checkout, runs local checks, builds with the exact Git revision, recreates only opencodebot, and runs
-the production health check. That check requires progress from Telegram polling and session recovery, not just a running
-container or a separately launched smoke process. It performs no Telegram sends or dropbox writes. The same npm command
-can be launched from PowerShell when Docker Desktop is the deployment host; only the
-unattended systemd runner remains Linux-specific.
-
-Operational checks:
-
-```bash
-npm run check
-npm test
-npm run smoke
-systemctl --user status opencodebot-update.path
-docker compose ps
+npm run health:live
 docker compose logs --since=2m opencodebot
-npm run smoke:live
 ```
 
-In Telegram, `/update` should report the current labelled revision when GitHub has no newer commit. Do not manufacture a
-remote update on the production branch merely to test the button. Runner validation and callback/file protocol are
-covered by local smoke invariants; the next real approved commit exercises the complete apply path.
+Health inspects the deployed process and required APIs without sending messages. Confirm its image revision matches the committed target. `/update` should report up to date after publication. Do not manufacture a production commit solely to test a button; validation/protocol checks use isolated smoke, and the next real approved update exercises apply.

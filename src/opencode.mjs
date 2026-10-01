@@ -213,8 +213,8 @@ export class OpenCodeClient {
         signal,
       })
       if (!response.ok) {
-        const text = await response.text().catch(() => "")
-        throw new OpenCodeHttpError({ serverID: server.id, pathname, status: response.status, detail: text.slice(0, 200) })
+        await response.body?.cancel()
+        throw new OpenCodeHttpError({ serverID: server.id, pathname, status: response.status })
       }
       if (response.status === 204) return options.includeHeaders ? { data: null, headers: response.headers } : null
       const contentType = response.headers.get("content-type") || ""
@@ -466,9 +466,9 @@ async function readSse(body, onEvent, connection) {
     if (done) break
     buffer += decoder.decode(value, { stream: true })
     let boundary
-    while ((boundary = buffer.indexOf("\n\n")) !== -1) {
-      const packet = buffer.slice(0, boundary)
-      buffer = buffer.slice(boundary + 2)
+    while ((boundary = /\r?\n\r?\n/.exec(buffer))) {
+      const packet = buffer.slice(0, boundary.index)
+      buffer = buffer.slice(boundary.index + boundary[0].length)
       const data = packet
         .split(/\r?\n/)
         .filter((line) => line.startsWith("data:"))
