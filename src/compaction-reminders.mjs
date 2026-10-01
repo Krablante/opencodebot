@@ -17,7 +17,7 @@ export function createCompactionReminders({ state, opencode, telegram, backendRe
         sessionID: binding.sessionID,
         compactionID: info.parentID,
         completedAt: info.time.completed,
-        status: state.reminderEnabled() && part?.auto === true && part.phase !== "pre-turn" ? "pending" : "skipped",
+        status: state.reminderEnabled() && part?.auto === true ? "pending" : "skipped",
       })
     }
     if (record.status === "sent" || record.status === "skipped") return
@@ -33,7 +33,7 @@ export function createCompactionReminders({ state, opencode, telegram, backendRe
 
   async function observePart(binding, part) {
     const reference = reminderReference({ parts: [part] })
-    if (reference) scheduleReconcile(binding, 1000)
+    if (reference || (part?.type === "compaction" && part.auto === true && part.replay_id)) scheduleReconcile(binding, 1000)
   }
 
   async function confirm(binding, reference, messageID) {
@@ -44,7 +44,7 @@ export function createCompactionReminders({ state, opencode, telegram, backendRe
       await state.updateCompactionReminder({ ...record, turnID: reference.turnID, messageID, status: "sent" })
     }
     const current = state.compactionReminder(binding.serverID, binding.sessionID, reference.compactionID)
-    if (current.notified || !activeBinding(binding)) return
+    if (current.notified || !activeBinding(binding) || !state.reminderEnabled()) return
     await telegram.sendMessage({ chatId: binding.chatId, topicId: binding.topicId, text: t("reminder.sent"), format: "plain" })
     await state.updateCompactionReminder({ ...current, notified: true })
     logInfo("reminder.confirmed", { serverID: binding.serverID, sessionID: binding.sessionID, compactionID: reference.compactionID, messageID })
@@ -142,7 +142,24 @@ export function createCompactionReminders({ state, opencode, telegram, backendRe
         if (marker === skippedBackendRequest) return scheduleReconcile(binding, 5000)
       }
       const part = marker.parts?.find((item) => item.type === "compaction")
-      if (part?.auto !== true || part.phase === "pre-turn") {
+      if (part?.auto !== true) {
+        await state.updateCompactionReminder({ ...record, status: "skipped" })
+        return
+      }
+      // OpenCodez writes replay_id after persisting the repeated input and its parts.
+      // Confirm that replay instead of injecting a second copy of the same request.
+      if (part.replay_id || part.phase === "pre-turn") {
+        if (part.replay_id && part.turn_id) {
+          const replay = messages.find((message) => message.info?.id === part.replay_id)
+            || await backendRequest(binding.serverID, "compaction replay", () => opencode.message(binding.serverID, binding.sessionID, part.replay_id, { directory: binding.directory }))
+          if (replay === skippedBackendRequest) return scheduleReconcile(binding, 5000)
+          if (replay?.info?.role === "user" && replay.parts?.some((item) => item.type === "text" || item.type === "file")) {
+            await confirm(binding, { compactionID: record.compactionID, turnID: part.turn_id }, replay.info.id)
+            return
+          }
+        }
+        const status = await backendRequest(binding.serverID, "compaction replay status", () => opencode.sessionStatus(binding.serverID, binding.sessionID, { directory: binding.directory }))
+        if (status === skippedBackendRequest || status?.type === "busy" || status?.type === "retry") return scheduleReconcile(binding, 1000)
         await state.updateCompactionReminder({ ...record, status: "skipped" })
         return
       }

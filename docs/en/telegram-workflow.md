@@ -29,7 +29,7 @@ Common actions appear in Telegram's slash menu. Setup and advanced commands stil
 | `/compact` | Condense an existing idle session using native OpenCodez compaction |
 | `/reset [profile] [server]` | Start fresh in the same topic and preserve the old session |
 | `/context [N]`, `/set_context N` | Export recent turns; save a personal default, 1–10 |
-| `/reminder [on\|off]` | Show/change automatic mid-run prompt reminders |
+| `/reminder [on\|off]` | Show/change automatic prompt reminders after compaction |
 | `/speak` | Reply to text for one spoken summary |
 | `/help`, `/start`, `/setup` | Guide, General or connection setup |
 
@@ -78,7 +78,9 @@ Limits are 20 waiting prompts per session, 100 overall and 64 MiB of text/inline
 
 `/compact` requires an idle existing session with history and a known model. It runs in the background and accepts later prompts into the queue. Kill/reset/rewind cancel the bot's in-flight operation. Completion posts one `🗜️ session compacted`; internal summaries remain private. The same marker appears for automatic or web-initiated compaction.
 
-Reminders are initially on. Automatic compaction during active work rebuilds the original request and attachments from OpenCodez and adds an English `REMINDER:` asking the agent to preserve progress and later corrections. Admission must succeed before `🔁 Original prompt added as a reminder.` appears. The repeated payload is not mirrored as another human prompt. Manual/pre-turn compaction, finished/stopped runs and disabled topics receive no reminder. Repeated compactions follow the original request rather than nesting reminders. Retained large-file paths must still exist.
+Reminders are initially on. Automatic compaction during active work rebuilds the original request and attachments from OpenCodez and adds an English `REMINDER:` asking the agent to preserve progress and later corrections. Admission must succeed before `🔁 Original prompt added as a reminder.` appears. When OpenCodez itself repeats the request, including after pre-turn compaction, the bot confirms the persisted replay and shows the same notice without submitting another copy. A completed summary alone does not prove that the request was repeated.
+
+The repeated payload is not mirrored as another human prompt, and the notice is tracked to avoid repeating it during normal recovery or restart. Manual compaction, stopped runs and disabled topics receive no bot-injected reminder; an already confirmed server replay can still be acknowledged after the run finishes. Repeated compactions follow the original request rather than nesting reminders. Retained large-file paths must still exist.
 
 `/context` exports three recent main-session turns, or the selected 1–10. Completed turns contain the original request and final answer. Interrupted or superseded turns contain the request and numbered visible progress notes; active unfinished turns are omitted. Compaction/replay/reminder records stay inside the original logical turn. Reasoning, tools and internal summaries are excluded.
 
