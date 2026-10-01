@@ -58,6 +58,8 @@ Input belongs to the actor, chat, topic and active card. Telegram can omit `repl
 
 ## Settings and guide
 
+How to use opens the guide from General. `/help` still opens it when typed manually, but is omitted from Telegram's suggested command list. The Files and audio page explains the optional local Bot API's 2 GB file support and links to its installation instructions; API credentials alone do not start that service.
+
 Settings separates inbound AUDIO transcription from spoken final answers. Personal settings control final-answer notifications and `/context` depth. Language, mirror visibility and tool detail remain global. Economy is the initial mirror mode; the detailed mode is an advanced choice.
 
 The built-in guide has eight Rich Message pages: getting started, the creation wizard, all `/new` forms, profiles, everyday work, reset/rewind, files/audio, and settings. Quick commands explain server, profile, directory and title selection, defaults, quoting and matching names. English/Russian PDFs are downloadable with additional sections expanded. Text lives in `src/user-guide.mjs`; `scripts/preview-ui.mjs` produces each page and document preview from the same menu renderers. Published PDFs live in `assets/` and are included in the image. Review regenerated PDFs visually before replacing them.

@@ -43,7 +43,17 @@ Keys entered through `/setup` live in owner-only `provider-secrets.json` beside 
 
 ## OpenCodez
 
-Each inventory entry needs a unique non-empty `id` and an absolute HTTP(S) `url`. Startup validates the complete list and reports malformed entries together.
+At least one OpenCodez connection is required, with an absolute HTTP(S) `url`. For a single connection, omit `id` or leave it blank: the bot assigns the internal ID `local`. An existing ID is preserved. That connection is selected automatically for new topics, including when `defaultPrompt.serverID` is missing or refers to a previous server.
+
+With several connections, each needs a unique non-empty `id`. `defaultPrompt.serverID` selects the initial server; omitting it uses the first entry. The wizard lets you choose another. Startup validates the complete list and reports malformed entries together.
+
+A single local connection can be as short as:
+
+```json
+{ "servers": [{ "url": "http://127.0.0.1:4096" }] }
+```
+
+For Docker, use an address reachable from the container. Add `home` for server-home directories or file transfer; remote files need SSH settings. A complete remote entry looks like this:
 
 ```json
 {

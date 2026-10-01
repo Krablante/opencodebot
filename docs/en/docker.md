@@ -75,6 +75,8 @@ Update with `git pull --ff-only` then `npm run deploy:bot`. Use `deploy:all` for
 
 ## Local Telegram Bot API
 
+This optional service sends files up to 2000 MB, removes the cloud API's 20 MB download limit and lets the bot share files by local path. The cloud API sends new files up to 50 MB. OpenCodeBot caps its local file transport at 2,000,000,000 bytes; configured attachment limits and model/provider limits still apply. Large files use disk and streams rather than being loaded whole into memory. Rich menus need Bot API 10.3+ in either mode.
+
 The optional `telegram-local` profile runs the pinned `aiogram/telegram-bot-api:10.3` image. It stores state in `state/telegram-bot-api`, shared with the bot at `/var/lib/telegram-bot-api`. The sidecar port is internal to Compose by default. Get `TELEGRAM_API_ID` and `TELEGRAM_API_HASH` from https://my.telegram.org/apps and add them to `token.env`.
 
 ```json

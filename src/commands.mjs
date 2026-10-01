@@ -15,7 +15,7 @@ import {
   parseContextTurnCount,
 } from "./context-export.mjs"
 
-const commandDefinitions = ["menu", "new", "session", "q", "compact", "reminder", "context", "speak", "reset", "kill", "help", "setup"]
+const commandDefinitions = ["menu", "new", "session", "q", "compact", "reminder", "context", "speak", "reset", "kill", "setup"]
 
 export function telegramBotCommands() {
   return commandDefinitions.map((command) => ({

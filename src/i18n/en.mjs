@@ -257,7 +257,7 @@ export const en = {
   "polling.soundsReserved": "This topic is reserved for voice transcription. Use another topic for OpenCodez sessions.",
   "polling.soundsHelp": "This topic is reserved for voice transcription. Send voice or audio messages here.",
   "polling.richUnreadable": "⚠️ I couldn't read this Rich Message yet.\nPlease resend it as plain text or attach the images separately.",
-  "polling.unknownCommand": "Unknown command. Send /help for available commands.",
+  "polling.unknownCommand": "Unknown command. Open /menu → How to use for help.",
   "polling.topicNotBound": "🔴 Topic is not bound\n🧭 Use /new, then send the prompt in the new topic",
   "finalVoice.helpSummary": [
     "Final Voice:",

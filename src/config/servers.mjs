@@ -2,7 +2,11 @@ import fs from "node:fs"
 
 export function readServers(filePath) {
   const raw = readServerConfig(filePath)
-  const servers = Array.isArray(raw) ? raw : raw?.servers
+  let servers = Array.isArray(raw) ? raw : raw?.servers
+  if (Array.isArray(servers) && servers.length === 1 && isRecord(servers[0])
+    && (servers[0].id === undefined || (typeof servers[0].id === "string" && !servers[0].id.trim()))) {
+    servers = [{ ...servers[0], id: "local" }]
+  }
   const errors = validateServers(servers)
   if (errors.length) throw new Error(`Invalid servers config: ${filePath}\n${errors.map((error) => `- ${error}`).join("\n")}`)
   return servers.map(normalizeServer)

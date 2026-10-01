@@ -40,6 +40,8 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
   const artifactToken = pickValue(mergedEnv, config.artifacts?.tokenEnvNames || defaultArtifacts.tokenEnvNames) || config.artifacts?.token
   const chatId = config.telegram?.chatId ?? readFirstNumber(mergedEnv, ["OPENCODEBOT_CHAT_ID", "TELEGRAM_CHAT_ID"])
   const servers = readServers(serversJsonPath)
+  const defaultPrompt = { ...config.defaultPrompt,
+    serverID: servers.length === 1 ? servers[0].id : config.defaultPrompt?.serverID || servers[0].id }
   const telegramBotApi = normalizeTelegramBotApi(config.telegram?.botApi, mergedEnv, projectRoot)
   const attachmentConfig = config.attachments
   const timeZone = String(config.ui?.timeZone || "").trim() || String(config.updates?.timeZone || "").trim()
@@ -79,14 +81,14 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
       password: openCodePassword,
       servers,
     },
-    defaultPrompt: config.defaultPrompt || {},
+    defaultPrompt,
     mirror: { ...defaultMirror },
     multipartPrompts: { ...defaultMultipartPrompts },
     reconcile: { ...defaultReconcile },
     promptFeedback: { ...defaultPromptFeedback },
     finalNotifications: normalizeFinalNotifications(config.finalNotifications),
     artifacts: normalizeArtifacts(config.artifacts, artifactToken, telegramBotApi),
-    artifactUploads: normalizeArtifactUploads(config.artifactUploads, config.opencode?.defaultServerId || config.defaultPrompt?.serverID),
+    artifactUploads: normalizeArtifactUploads(config.artifactUploads, servers.length === 1 ? servers[0].id : config.opencode?.defaultServerId || defaultPrompt.serverID),
     attachments: normalizeAttachments(attachmentConfig, telegramBotApi),
     speech: normalizeSpeechConfig(config.speech, mergedEnv),
     finalVoice: normalizeFinalVoiceConfig(config.finalVoice, mergedEnv),
