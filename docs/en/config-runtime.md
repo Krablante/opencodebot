@@ -26,7 +26,7 @@ Compose mounts the private files at `/app/config.local.json`, `/app/servers.json
 
 ## Secrets and access
 
-The Telegram token source is explicit: `telegram.token.env`. Operator IDs come from a literal `telegram.allowedUserIds` array or its `.env` reference. OpenCodez credentials use `opencode.passwordEnvNames`. The loader does not search unrelated environment variables for Telegram-looking values.
+The Telegram token source is explicit: `telegram.token.env`. Operator IDs come from a literal `telegram.allowedUserIds` array or its `.env` reference. OpenCodez credentials use `opencode.passwordEnvNames`; Basic Auth defaults to username `opencode`. Set `opencode.username` if your backend uses a custom `OPENCODE_SERVER_USERNAME`. HTTP and SSE use the same credentials. The loader does not search unrelated environment variables for Telegram-looking values.
 
 ```env
 OPENCODEBOT_TOKEN=123456:bot-token

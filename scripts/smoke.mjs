@@ -64,6 +64,7 @@ async function smokeLocalInvariants() {
   await smokeI18n()
   await smokeWorkspacePreferences()
   await smokeDeliveryBounds()
+  await smokeAuthenticatedBackend()
   smokeConfigExample()
   smokeWireguardAddresses()
   smokeUpdateSubsystem()
@@ -393,6 +394,37 @@ async function smokeDeliveryBounds() {
     assert.equal(state.finalNotificationsEnabledFor(43), true)
     console.log("delivery: launch snapshot, queue/download/gateway bounds, provider privacy, collision protection, marker recovery and non-mutating topic checks verified")
   } finally { await rm(root, { recursive: true, force: true }) }
+}
+
+async function smokeAuthenticatedBackend() {
+  for (const username of [undefined, "operator"]) {
+    const required = `Basic ${Buffer.from(`${username ?? "opencode"}:test-password`).toString("base64")}`
+    let admitted = 0, observed = false
+    const server = createServer((request, response) => {
+      if (request.headers.authorization !== required) { response.writeHead(401); response.end(); return }
+      admitted++
+      if (request.url === "/global/event") {
+        response.writeHead(200, { "content-type": "text/event-stream" })
+        response.write('data: {"type":"audit.connected"}\r\n\r\n')
+      } else { response.writeHead(200, { "content-type": "application/json" }); response.end("[]") }
+    })
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const signal = new AbortController()
+    const timer = setTimeout(() => signal.abort(), 3000)
+    try {
+      const client = new OpenCodeClient({ opencode: { username, password: "test-password", mirrorScope: "global",
+        servers: [{ id: "local", url: `http://127.0.0.1:${server.address().port}` }] } })
+      assert.deepEqual(await client.listSessions("local"), [])
+      await client.subscribeEvents("local", async (_server, event) => {
+        assert.equal(event.type, "audit.connected")
+        observed = true
+        signal.abort()
+      }, signal.signal)
+      assert.equal(observed, true)
+      assert.equal(admitted, 2)
+    } finally { clearTimeout(timer); signal.abort(); server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)) }
+  }
+  console.log("backend: default/custom Basic Auth and CRLF SSE verified over real local HTTP")
 }
 
 async function smokeI18n() {

@@ -26,7 +26,7 @@ Compose монтирует приватные файлы в `/app/config.local.j
 
 ## Ключи и доступ
 
-Источник токена Telegram задаётся явно: `telegram.token.env`. ID операторов берутся из массива `telegram.allowedUserIds` либо указанной в нём env-переменной. Пароль OpenCodez ищется по `opencode.passwordEnvNames`. Бот не перебирает посторонние переменные в поисках похожих значений.
+Источник токена Telegram задаётся явно: `telegram.token.env`. ID операторов берутся из массива `telegram.allowedUserIds` либо указанной в нём env-переменной. Пароль OpenCodez ищется по `opencode.passwordEnvNames`; имя Basic Auth по умолчанию — `opencode`. Если backend использует другой `OPENCODE_SERVER_USERNAME`, задай `opencode.username`. HTTP и SSE используют одинаковые данные. Бот не перебирает посторонние переменные в поисках похожих значений.
 
 ```env
 OPENCODEBOT_TOKEN=123456:bot-token

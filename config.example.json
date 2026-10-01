@@ -61,6 +61,7 @@
     "dateFolders": true
   },
   "opencode": {
+    "username": "opencode",
     "mirrorScope": "global",
     "newSessionDefaultDirectory": "serverHome",
     "passwordEnvNames": ["OPENCODE_SERVER_PASSWORD", "OPENCODEZ_SERVER_PASSWORD"]
