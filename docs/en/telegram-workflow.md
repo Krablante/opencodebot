@@ -76,6 +76,8 @@ Limits are 20 waiting prompts per session, 100 overall and 64 MiB of text/inline
 
 ## Compaction and context
 
+If a backend restart or lost event leaves a run idle without a final answer, the bot posts an interruption warning in its working topic. Reconnection and the existing one-minute watchdog cover that case without rescanning completed histories on every tick. The backend must be reachable to confirm the outcome. `/session` labels an idle backend **Not running**; this reports activity, while the task's result or interruption appears in the conversation.
+
 `/compact` requires an idle existing session with history and a known model. It runs in the background and accepts later prompts into the queue. Kill/reset/rewind cancel the bot's in-flight operation. Completion posts one `🗜️ session compacted`; internal summaries remain private. The same marker appears for automatic or web-initiated compaction.
 
 Reminders are initially on. Automatic compaction during active work rebuilds the original request and attachments from OpenCodez and adds an English `REMINDER:` asking the agent to preserve progress and later corrections. Admission must succeed before `🔁 Original prompt added as a reminder.` appears. When OpenCodez itself repeats the request, including after pre-turn compaction, the bot confirms the persisted replay and shows the same notice without submitting another copy. A completed summary alone does not prove that the request was repeated.

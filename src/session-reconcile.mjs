@@ -695,6 +695,14 @@ export function createSessionReconciler({
       clearRunCheck(binding)
       return
     }
+    // History loading can overlap a new prompt. Keep its queue gates and do not warn.
+    const currentStatuses = await backendRequest(server.id, "incomplete-run-confirm-idle", () => opencode.request(server, "/session/status", { directory: binding.directory }))
+    if (currentStatuses === skippedBackendRequest) {
+      scheduleIncompleteRunCheck(server, binding, { source, delayMs: backendRetryMs(server.id) })
+      return
+    }
+    if (currentStatuses?.[binding.sessionID]?.type && currentStatuses[binding.sessionID].type !== "idle") return
+    if (questionManager?.hasPending(server.id, binding.sessionID) || !activeBinding(binding)) return
     if (outcome.complete) {
       let mirrored = state.isAssistantMirrored(server.id, binding.sessionID, outcome.assistantMessageID)
       if (!mirrored && outcome.finalAnswer) {
@@ -717,14 +725,14 @@ export function createSessionReconciler({
       }
       if (!mirrored) return
       clearRunCheck(binding)
-      await promptQueue.markTerminalMirrored(binding)
+      await promptQueue.markTerminalMirrored(binding, { backendIdle: true })
       return
     }
 
     const warningKey = incompleteWarningKey(binding, outcome)
     if (state.incompleteRunHandled(warningKey)) {
       clearRunCheck(binding)
-      await promptQueue.markTerminalMirrored(binding)
+      await promptQueue.markTerminalMirrored(binding, { backendIdle: true })
       return
     }
     if (incompleteNotifications.has(warningKey)) return
@@ -764,7 +772,7 @@ export function createSessionReconciler({
         source,
       })
       clearRunCheck(binding)
-      await promptQueue.markTerminalMirrored(binding)
+      await promptQueue.markTerminalMirrored(binding, { backendIdle: true })
     } finally {
       incompleteNotifications.delete(warningKey)
     }
@@ -975,7 +983,13 @@ export function createSessionReconciler({
     let failed = 0
     for (const binding of bindings) {
       try {
-        await reconcileBinding(binding, { force: true })
+        const messages = await reconcileBinding(binding, { force: true })
+        const last = messages?.at(-1)
+        const info = last?.info || last
+        const unfinished = (info?.role === "user" && !isInternalUserMessage(last))
+          || (info?.role === "assistant" && info.summary !== true && info.finish !== "stop")
+        const server = config.opencode.servers.find((item) => item.id === serverID)
+        if (server && (unfinished || promptQueue.isBusy?.(binding))) await verifyRunOutcome(server, binding, { expectedStop: promptQueue.hasExpectedStop(binding), messages, source: "reconnect" })
       } catch (error) {
         failed += 1
         await handleMirrorError(binding, error).catch(logError)
@@ -1356,6 +1370,10 @@ export function createSessionReconciler({
       return false
     }
     lastWatchdogAt.set(key, Date.now())
+    if (promptQueue.isBusy?.(binding)) {
+      const server = config.opencode.servers.find((item) => item.id === binding.serverID)
+      if (server) scheduleIncompleteRunCheck(server, binding, { expectedStop: promptQueue.hasExpectedStop(binding), source: "watchdog" })
+    }
     return true
   }
 

@@ -150,8 +150,9 @@ export class PromptQueue {
     return this.drainIfReady(binding, state)
   }
 
-  async markTerminalMirrored(binding) {
+  async markTerminalMirrored(binding, { backendIdle = false } = {}) {
     const state = this.state(binding)
+    if (backendIdle) state.idle = true
     state.terminalMirrored = true
     return this.drainIfReady(binding, state)
   }

@@ -963,7 +963,7 @@ export function createTelegramCommandHandlers({
       if (activeBinding) {
         status = sessionError && isOpenCodeSessionNotFound(sessionError, storedBinding.sessionID) ? L("Сессия удалена на сервере", "Session deleted on the server")
           : sessionError || live.status === "rejected" ? L("Не удалось проверить сессию", "Could not check the session")
-          : live.value?.type === "idle" ? L("Готова", "Ready") : L("В работе", "Running")
+          : live.value?.type === "idle" ? L("Не выполняется", "Not running") : L("В работе", "Running")
       } else status = L("Связь с темой отключена", "Topic connection disabled")
     }
     const launch = pending?.promptProfile || storedBinding?.promptProfile || {}
