@@ -60,7 +60,7 @@ Input belongs to the actor, chat, topic and active card. Telegram can omit `repl
 
 Settings separates inbound AUDIO transcription from spoken final answers. Personal settings control final-answer notifications and `/context` depth. Language, mirror visibility and tool detail remain global. Economy is the initial mirror mode; the detailed mode is an advanced choice.
 
-The built-in guide has six illustrated Rich Message pages and a downloadable PDF in English and Russian. Its text lives in `src/user-guide.mjs`; `scripts/preview-ui.mjs` produces HTML previews from the same menu renderers. Published PDFs live in `assets/` and are included in the image. Review regenerated PDFs visually before replacing them.
+The built-in guide has eight Rich Message pages: getting started, the creation wizard, all `/new` forms, profiles, everyday work, reset/rewind, files/audio, and settings. Quick commands explain server, profile, directory and title selection, defaults, quoting and matching names. English/Russian PDFs are downloadable with additional sections expanded. Text lives in `src/user-guide.mjs`; `scripts/preview-ui.mjs` produces each page and document preview from the same menu renderers. Published PDFs live in `assets/` and are included in the image. Review regenerated PDFs visually before replacing them.
 
 ## Ownership and checks
 

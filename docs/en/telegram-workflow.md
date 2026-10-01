@@ -200,8 +200,12 @@ pending binding.
 
 `/new` parses arguments from left to right. If the first argument matches a configured server id, that server is used.
 If the next argument, or the first argument when no server was given, matches a profile in `promptProfiles`, that profile
-is used. A `dir:<path>` argument sets the OpenCodez session directory for this topic; otherwise `/new` uses the selected
-server's configured home directory when present. Everything left becomes the user-owned topic title.
+is used. A `dir:<path>` or `directory:<path>` argument sets the OpenCodez session directory for this topic; otherwise
+the configured new-session directory policy chooses the server home when available or leaves the OpenCodez default.
+Quote the whole directory argument when it contains spaces, for example `/new local sol "dir:/workspace/My Project" My topic`.
+Everything left becomes the user-owned topic title, including unknown server/profile tokens; a typo does not select that
+server or profile. For a title matching a configured name, specify server and profile first: `/new local sol sol` names
+the topic `sol`. The built-in guide shows all combinations and explains wizard versus direct creation.
 
 Telegram topic titles include a managed ` (<serverID>)` suffix only when two or more OpenCodez servers are configured.
 The suffix is applied to `/new`, web-created topics, backend title synchronization, manual topic renames, and `/reset`;
