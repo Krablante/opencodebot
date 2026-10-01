@@ -52,6 +52,13 @@ export function createTopicLifecycle({ config, state, telegram, opencode, settin
   async function handleTopicLifecycleMessage(message) {
     if (message.forum_topic_edited) {
       const metadata = { title: message.forum_topic_edited.name }
+      // Service topics keep their Telegram names, without a session's server suffix.
+      if (state.isArtifactsTopic(message.chat.id, topicId(message)) || state.isSoundsTopic(message.chat.id, topicId(message))) {
+        if (metadata.title) await state.updateTopicMetadata(message.chat.id, topicId(message), {
+          ...metadata, topicBaseTitle: metadata.title, topicTitle: metadata.title, topicServerSuffixManaged: false,
+        })
+        return true
+      }
       const binding = state.findBindingByTopic(message.chat.id, topicId(message))
       const pending = binding ? null : state.pendingTopic(topicId(message))
       const record = state.topicRecord(message.chat.id, topicId(message)) || binding || pending
@@ -80,7 +87,7 @@ export function createTopicLifecycle({ config, state, telegram, opencode, settin
         metadata.topicIconCustomEmojiId = topicIcon?.customEmojiId || message.forum_topic_edited.icon_custom_emoji_id
         metadata.topicIconEmoji = topicIcon?.emoji
       }
-      if (binding || pending) await state.updateTopicMetadata(message.chat.id, topicId(message), metadata)
+      if (record) await state.updateTopicMetadata(message.chat.id, topicId(message), metadata)
       return true
     }
     if (message.forum_topic_closed) {

@@ -64,7 +64,9 @@ export class SpeechModule {
     return this.state.setSoundsTopic({
       chatId: message.chat.id,
       topicId: nextTopicId,
-      title: message.forum_topic_created?.name || message.chat.title || t("speech.soundsTopic"),
+      title: message.forum_topic_created?.name || message.reply_to_message?.forum_topic_created?.name
+        || (this.state.isSoundsTopic(message.chat.id, nextTopicId) ? previous.title : null)
+        || this.state.topicRecord(message.chat.id, nextTopicId)?.topicTitle || null,
       setBy: message.from?.id,
     })
   }

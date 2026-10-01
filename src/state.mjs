@@ -263,7 +263,7 @@ export class StateStore {
       data.telegram.artifactsTopic = {
         chatId,
         topicId,
-        title: title || `Topic ${topicId}`,
+        title: title || null,
         setBy,
         setAt: now,
       }
@@ -332,7 +332,7 @@ export class StateStore {
       data.telegram.soundsTopic = {
         chatId,
         topicId,
-        title: title || `Topic ${topicId}`,
+        title: title || null,
         setBy,
         setAt: now,
       }
@@ -526,7 +526,8 @@ export class StateStore {
 
   async updateTopicMetadata(chatId, targetTopicId, metadata = {}) {
     return this.update((data) => {
-      const records = topicRecords(data, chatId, targetTopicId)
+      const records = [...topicRecords(data, chatId, targetTopicId),
+        ...[data.telegram.artifactsTopic, data.telegram.soundsTopic].filter((topic) => topic && topicMatches(topic, chatId, targetTopicId))]
       if (!records.length) return false
       return applyTopicMetadata(records, metadata, { includeTitle: true })
     })

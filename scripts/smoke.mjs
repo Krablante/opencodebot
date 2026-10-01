@@ -2608,7 +2608,7 @@ async function smokeResetCommand() {
       { name: "session", args: "" },
       "123:456",
     )
-    assert.match(sent.at(-1).text, /profile: <code>gpt<\/code>/)
+    assert.match(sent.at(-1).text, /<td>Profile<\/td><td>gpt<\/td>/)
 
     steps.length = 0
     await handlers.handle(

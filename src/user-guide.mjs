@@ -43,7 +43,7 @@ const pages = {
     ["💬 Ежедневная работа", `
       <p>Первую задачу отправь обычным сообщением в новой теме. Изображения и файлы можно приложить к тексту. Файлы без подписи ждут следующего текстового сообщения.</p>
       <table striped compact><tr><th>Команда</th><th>Действие</th></tr>
-      <tr><td><code>/session</code></td><td>Модель, состояние и ссылка на OpenCodez</td></tr>
+      <tr><td><code>/session</code></td><td>ID сессии с копированием, сервер, модель и состояние; в подробностях — тема этой команды и получатели файлов/аудио</td></tr>
       <tr><td><code>/q задача</code></td><td>Отправить задачу или добавить в очередь уже созданной сессии</td></tr>
       <tr><td><code>/q</code> или <code>/q status</code></td><td>Посмотреть очередь</td></tr>
       <tr><td><code>/q delete N</code></td><td>Убрать элемент очереди по номеру</td></tr>
@@ -111,7 +111,7 @@ const pages = {
     ["💬 Everyday work", `
       <p>Send the first task as an ordinary message in the new topic. Attach images or files to the text. Files without captions wait for your next text message.</p>
       <table striped compact><tr><th>Command</th><th>Action</th></tr>
-      <tr><td><code>/session</code></td><td>Model, status and OpenCodez link</td></tr>
+      <tr><td><code>/session</code></td><td>Tap-to-copy session ID, server, model and status; details identify this command's topic and file/audio destinations</td></tr>
       <tr><td><code>/q prompt</code></td><td>Send or queue a task in an existing session</td></tr>
       <tr><td><code>/q</code> or <code>/q status</code></td><td>View the queue</td></tr>
       <tr><td><code>/q delete N</code></td><td>Remove a queue item by number</td></tr>

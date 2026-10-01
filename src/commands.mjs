@@ -1,12 +1,12 @@
 import { summarizeWords } from "./prompt-queue.mjs"
-import { escapeHtml, topicId } from "./telegram.mjs"
+import { escapeHtml, telegramMessageLink, topicId } from "./telegram.mjs"
 import { parseResetArgs } from "./prompt-profiles.mjs"
 import { managedTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
 import { formatArtifactUploadHelp } from "./artifact-uploads.mjs"
 import { logErrorEvent, logInfo, logWarn } from "./logger.mjs"
 import { getLanguage, normalizeLanguage, setLanguage, t } from "./i18n/index.mjs"
-import { resolveSessionProfile } from "./opencode.mjs"
-import { buttonRows, menuTable, localText } from "./menu-format.mjs"
+import { isOpenCodeSessionNotFound, resolveSessionProfile } from "./opencode.mjs"
+import { buttonRows, menuTable, localText, richButton } from "./menu-format.mjs"
 import {
   buildCollapsedContextMessages,
   DEFAULT_CONTEXT_TURNS,
@@ -895,11 +895,13 @@ export function createTelegramCommandHandlers({
       await telegram.sendMessage({ chatId: message.chat.id, text: t("commands.artifacts.topicRequired") })
       return
     }
-    const existing = state.findBindingByTopic(message.chat.id, currentTopicId)
+    const existing = state.topicRecord(message.chat.id, currentTopicId)
     const target = await state.setArtifactsTopic({
       chatId: message.chat.id,
       topicId: currentTopicId,
-      title: existing?.title || `Topic ${currentTopicId}`,
+      title: message.forum_topic_created?.name || message.reply_to_message?.forum_topic_created?.name
+        || (state.isArtifactsTopic(message.chat.id, currentTopicId) ? state.artifactsTopic().title : null)
+        || existing?.topicTitle || null,
       setBy: message.from?.id,
     })
     await telegram.sendMessage({
@@ -916,104 +918,106 @@ export function createTelegramCommandHandlers({
   }
 
   async function handleSessionInfo(message) {
+    const L = (ru, en) => localText(ru, en, getLanguage())
+    const value = (text) => escapeHtml(String(text || "—"))
+    const code = (text) => `<code>${value(text)}</code>`
+    const copyId = (id) => richButton({ text: id, copy_text: { text: id } })
     const currentTopicId = topicId(message)
-    const activeBinding = state.findBindingByTopic(message.chat.id, currentTopicId)
-    const pending = activeBinding ? null : state.pendingTopic(currentTopicId)
-    const previousBinding = state.findAnyBindingByTopic(message.chat.id, currentTopicId)
+    const thisIsArtifactsTopic = state.isArtifactsTopic(message.chat.id, currentTopicId)
+    const thisIsSoundsTopic = state.isSoundsTopic(message.chat.id, currentTopicId)
+    const serviceTopic = thisIsArtifactsTopic || thisIsSoundsTopic
+    const activeBinding = serviceTopic ? null : state.findBindingByTopic(message.chat.id, currentTopicId)
+    const candidate = !serviceTopic && !activeBinding ? state.pendingTopic(currentTopicId) : null
+    const pending = candidate && String(candidate.chatId) === String(message.chat.id) ? candidate : null
+    const previousBinding = serviceTopic ? null : state.findAnyBindingByTopic(message.chat.id, currentTopicId)
     const storedBinding = activeBinding || (!pending ? previousBinding : null)
     const serverID = storedBinding?.serverID || pending?.serverID
     const server = serverID ? config.opencode.servers.find((item) => item.id === serverID) : null
     const artifactsTopic = state.artifactsTopic()
-    const thisIsArtifactsTopic = state.isArtifactsTopic(message.chat.id, currentTopicId)
     const soundsTopic = state.soundsTopic()
-    const thisIsSoundsTopic = state.isSoundsTopic(message.chat.id, currentTopicId)
     let session = null
-    let sessionError = ""
-    if (storedBinding?.serverID && storedBinding?.sessionID && opencode?.getSession) {
-      try {
-        session = await opencode.getSession(storedBinding.serverID, storedBinding.sessionID, { directory: storedBinding.directory })
-      } catch (error) {
-        sessionError = error.message
-      }
-    }
-    const sessionUrl = sessionWebUrl(server, storedBinding?.sessionID, session)
-    const lines = [
-      t("commands.session.title"),
-      "",
-      t("commands.session.telegram"),
-      `chat_id: <code>${escapeHtml(String(message.chat.id))}</code>`,
-      `topic_id: <code>${escapeHtml(String(currentTopicId || 0))}</code>`,
-      `message_id: <code>${escapeHtml(String(message.message_id))}</code>`,
-      "",
-    ]
-    if (pending) {
-      lines.push(
-        t("commands.session.binding"),
-        t("commands.session.waiting"),
-        t("commands.session.server", { valueHtml: escapeHtml(pending.serverID || "") }),
-        pending.promptProfileName ? t("commands.session.profile", { valueHtml: escapeHtml(pending.promptProfileName) }) : t("commands.session.profileDefault"),
-        previousBinding?.sessionID
-          ? t("commands.session.previous", { valueHtml: escapeHtml(previousBinding.sessionID) })
-          : null,
-        pending.title ? t("commands.session.titleLine", { valueHtml: escapeHtml(pending.title) }) : null,
-        "",
-      )
-    } else if (storedBinding) {
-      lines.push(
-        t("commands.session.binding"),
-        t(activeBinding ? "commands.session.statusActive" : "commands.session.statusDisabled"),
-        t("commands.session.server", { valueHtml: escapeHtml(storedBinding.serverID || "") }),
-        t("commands.session.session", { valueHtml: escapeHtml(storedBinding.sessionID || "") }),
-        storedBinding.disabledReason ? t("commands.session.reason", { valueHtml: escapeHtml(storedBinding.disabledReason) }) : null,
-        storedBinding.title ? t("commands.session.titleLine", { valueHtml: escapeHtml(storedBinding.title) }) : null,
-        "",
-      )
-    } else {
-      lines.push(t("commands.session.binding"), t("commands.session.statusNone"), "")
-    }
-    if (storedBinding) {
-      const directory = session?.directory || storedBinding.directory
-      lines.push(
-        t("commands.session.opencode"),
-        server?.url ? t("commands.session.serverUrl", { valueHtml: escapeHtml(server.url) }) : t("commands.session.serverUrlUnavailable"),
-        directory ? t("commands.session.directory", { valueHtml: escapeHtml(directory) }) : null,
-        session?.agent || storedBinding.agent ? t("commands.session.agent", { valueHtml: escapeHtml(session?.agent || storedBinding.agent) }) : null,
-        modelLine(session?.model || storedBinding.model),
-        sessionUrl ? t("commands.session.url", { valueHtml: escapeHtml(sessionUrl) }) : t("commands.session.urlUnavailable"),
-        sessionError ? t("commands.session.lookupError", { valueHtml: escapeHtml(sessionError) }) : null,
-        "",
-      )
-    }
-    lines.push(
-      t("commands.session.artifacts"),
-      t("commands.session.thisTopic", { yes: thisIsArtifactsTopic }),
-      t("commands.session.currentTopic", { valueHtml: artifactsTopic ? `<code>${escapeHtml(String(artifactsTopic.topicId || 0))}</code>` : null }),
-      artifactsTopic?.title ? t("commands.session.currentTitle", { valueHtml: escapeHtml(artifactsTopic.title) }) : null,
-      "",
-      t("commands.session.sounds"),
-      t("commands.session.thisTopic", { yes: thisIsSoundsTopic }),
-      t("commands.session.currentTopic", { valueHtml: soundsTopic ? `<code>${escapeHtml(String(soundsTopic.topicId || 0))}</code>` : null }),
-      soundsTopic?.title ? t("commands.session.currentTitle", { valueHtml: escapeHtml(soundsTopic.title) }) : null,
-    )
-    const L = (ru, en) => localText(ru, en, getLanguage())
+    let sessionError = null
     let status = pending ? L("Ожидает первого запроса", "Waiting for the first prompt") : L("Нет активной сессии", "No active session")
-    if (activeBinding) {
-      try { const live = await opencode.sessionStatus(activeBinding.serverID, activeBinding.sessionID, { directory: activeBinding.directory, timeoutMs: 5000 }); status = live.type === "idle" ? L("Готова", "Ready") : L("В работе", "Running") }
-      catch { status = L("Нет связи с сервером", "Server unavailable") }
+    if (storedBinding?.sessionID) {
+      const options = { directory: storedBinding.directory, timeoutMs: 5000 }
+      const [info, live] = await Promise.allSettled([
+        opencode.getSession(serverID, storedBinding.sessionID, options),
+        activeBinding ? opencode.sessionStatus(serverID, storedBinding.sessionID, options) : Promise.resolve(null),
+      ])
+      if (info.status === "fulfilled") session = info.value
+      else sessionError = info.reason
+      if (activeBinding) {
+        status = sessionError && isOpenCodeSessionNotFound(sessionError, storedBinding.sessionID) ? L("Сессия удалена на сервере", "Session deleted on the server")
+          : sessionError || live.status === "rejected" ? L("Не удалось проверить сессию", "Could not check the session")
+          : live.value?.type === "idle" ? L("Готова", "Ready") : L("В работе", "Running")
+      } else status = L("Связь с темой отключена", "Topic connection disabled")
     }
     const launch = pending?.promptProfile || storedBinding?.promptProfile || {}
     const model = session?.model || storedBinding?.model || launch.model || {}
-    const summary = `<h2>💬 ${L("Сессия", "Session")}</h2>` + menuTable([
-      [L("Состояние", "Status"), escapeHtml(thisIsArtifactsTopic ? "FILES" : thisIsSoundsTopic ? "AUDIO" : status)],
-      [L("Профиль", "Profile"), escapeHtml(pending?.promptProfileName || storedBinding?.promptProfileName || L("Автовыбор", "Automatic"))],
-      [L("Модель", "Model"), `<b>${escapeHtml(model.modelID || model.id || L("Автовыбор OpenCodez", "OpenCodez automatic"))}</b>`],
-      ["Reasoning", escapeHtml(model.variant || "default")],
-      [L("Очередь", "Queue"), String(activeBinding ? promptQueue.status(activeBinding).length : 0)],
+    const directory = session?.directory || storedBinding?.directory || pending?.directory
+    const sessionUrl = isOpenCodeSessionNotFound(sessionError, storedBinding?.sessionID) ? "" : sessionWebUrl(server, storedBinding?.sessionID, { directory })
+    const role = [thisIsArtifactsTopic ? L("Приём и отправка файлов", "Incoming files and agent artifacts") : null,
+      thisIsSoundsTopic ? L("Расшифровка аудио", "Audio transcription") : null].filter(Boolean).join(" · ")
+    const rows = [[serviceTopic ? L("Назначение", "Purpose") : L("Состояние", "Status"), value(role || status)]]
+    if (serverID) rows.push([L("Сервер", "Server"), value(serverID)])
+    rows.push([storedBinding && !activeBinding ? L("Последняя сессия", "Last session") : L("ID сессии", "Session ID"),
+      storedBinding?.sessionID ? copyId(storedBinding.sessionID) : value(pending ? L("Создастся с первым запросом", "Created on the first prompt") : L("Нет", "None"))])
+    if (pending || storedBinding) rows.push(
+      [L("Профиль", "Profile"), value(pending?.promptProfileName || storedBinding?.promptProfileName || L("Автовыбор", "Automatic"))],
+      [L("Модель", "Model"), `<b>${value(model.modelID || model.id || L("Автовыбор OpenCodez", "OpenCodez automatic"))}</b>`],
+      ["Reasoning", value(model.variant || L("По умолчанию", "Default"))],
+    )
+    if (activeBinding) rows.push([L("Запросов в очереди", "Queued prompts"), String(promptQueue.status(activeBinding).length)])
+    const topic = state.topicRecord(message.chat.id, currentTopicId)
+    const topicName = serviceTopic ? (thisIsArtifactsTopic ? artifactsTopic?.title : soundsTopic?.title)
+      : topic?.topicTitle || topic?.title || (!currentTopicId ? "General" : null)
+    let details = `<h3>${L("Тема, где вызвана /session", "Topic where /session was called")}</h3>` + menuTable([
+      [L("Название темы", "Topic name"), value(topicName || L("Название ещё неизвестно боту", "Name not yet known to the bot"))],
+      [L("Назначение", "Purpose"), value(role || (pending || storedBinding ? L("Работа с агентом", "Agent conversation") : L("Сессия не назначена", "No session assigned")))],
+      [L("ID этой темы", "This topic's ID"), code(String(currentTopicId || 0))],
+      [L("ID группы", "Group ID"), code(message.chat.id)],
     ])
+    if (pending || storedBinding) {
+      const connection = pending ? L("Новая сессия ещё не создана. Отправь запрос в эту тему, чтобы начать.", "The new session has not been created yet. Send a prompt in this topic to start.")
+        : activeBinding ? L("Сообщения этой темы связаны с указанной выше сессией.", "Messages in this topic are connected to the session above.")
+        : L("Указана последняя сессия этой темы. Новые сообщения ей не отправляются.", "The last session of this topic is shown. New messages are not sent to it.")
+      const settingsRows = [
+        [L("Папка проекта", "Project directory"), code(directory)],
+        [L("Агент", "Agent"), value(session?.agent || storedBinding?.agent || launch.agent || L("Автовыбор OpenCodez", "OpenCodez automatic"))],
+        [L("Провайдер модели", "Model provider"), value(model.providerID || L("Автовыбор OpenCodez", "OpenCodez automatic"))],
+      ]
+      if (session?.title) settingsRows.push([L("Название в OpenCodez", "OpenCodez title"), value(session.title)])
+      if (server?.url) settingsRows.push([L("Адрес OpenCodez", "OpenCodez address"), `<a href="${value(server.url)}">${value(server.url)}</a>`])
+      if (pending && previousBinding?.sessionID) settingsRows.push([L("Предыдущая сессия", "Previous session"), copyId(previousBinding.sessionID)])
+      if (!activeBinding && storedBinding?.disabledReason) {
+        const reasons = {
+          "topic-reset": L("Сессия сброшена через /reset", "Session reset with /reset"),
+          "Telegram topic closed": L("Тема закрыта в Telegram", "Telegram topic closed"),
+          "Telegram topic deleted": L("Тема удалена в Telegram", "Telegram topic deleted"),
+          "internal session": L("Внутренняя сессия OpenCodez", "Internal OpenCodez session"),
+        }
+        settingsRows.push([L("Причина отключения", "Disconnection reason"), value(reasons[storedBinding.disabledReason] || storedBinding.disabledReason)])
+      }
+      details += `<h3>OpenCodez</h3><p>${connection}</p>` + menuTable(settingsRows)
+      if (sessionError) details += `<p>${isOpenCodeSessionNotFound(sessionError, storedBinding.sessionID)
+        ? L("Сессия больше не существует в OpenCodez. Показаны сохранённые настройки.", "This session no longer exists in OpenCodez. Saved settings are shown.")
+        : L("Сведения с сервера недоступны. Показаны сохранённые настройки; ссылка использует сохранённую папку проекта.", "Server information is unavailable. Saved settings are shown; the link uses the saved project directory.")}</p>`
+      else details += `<p>${pending ? L("Это настройки запуска будущей сессии.", "These are the launch settings for the next session.")
+        : L("Модель и профиль — сохранённые настройки запуска этой сессии, если сервер не сообщил другие значения.", "Model and profile are the saved launch settings for this session unless the server reported other values.")}</p>`
+    }
+    const destination = (target) => !target ? value(L("Не назначена", "Not assigned"))
+      : `<a href="${telegramMessageLink(target.chatId, target.topicId)}">${value(target.title || L("Открыть назначенную тему", "Open the assigned topic"))} ↗</a><br>${code(target.topicId)}`
+    details += `<h3>${L("Куда поступают файлы и аудио", "File and audio destinations")}</h3><p>${L("Назначенные служебные темы. Название и ID в каждой строке относятся к получателю файлов или аудио.", "Assigned service topics. The name and ID in each row identify the file or audio destination.")}</p>` + menuTable([
+      [L("Файлы и артефакты", "Files and artifacts"), destination(artifactsTopic)],
+      [L("Голос и аудио", "Voice and audio"), destination(soundsTopic)],
+    ])
+    const summary = `<h2>💬 ${L("Сессия", "Session")}</h2>` + menuTable(rows)
+      + (storedBinding?.sessionID ? `<p>${L("Нажми ID сессии, чтобы скопировать его.", "Tap the session ID to copy it.")}</p>` : "")
     await telegram.sendRichMessage({
       chatId: message.chat.id,
       topicId: currentTopicId,
-      html: summary + (sessionUrl ? buttonRows([[{ text: t("commands.session.openButton"), url: sessionUrl, style: "primary" }]]) : "") + `<details><summary>${L("Технические сведения", "Technical details")}</summary><p>${lines.filter(Boolean).join("<br>")}</p></details>`,
+      html: summary + (sessionUrl ? buttonRows([[{ text: t("commands.session.openButton"), url: sessionUrl, style: "primary" }]]) : "")
+        + `<details><summary>${L("О теме и подключениях", "Topic and connections")}</summary>${details}</details>`,
     })
   }
 
@@ -1052,15 +1056,6 @@ function sessionWebUrl(server, sessionID, session) {
   if (!baseUrl || !sessionID || !directory) return ""
   const encodedDirectory = Buffer.from(String(directory)).toString("base64").replace(/=+$/, "")
   return `${baseUrl}/${encodeURIComponent(encodedDirectory)}/session/${encodeURIComponent(sessionID)}`
-}
-
-function modelLine(model) {
-  if (!model) return null
-  const provider = model.providerID ? `${model.providerID}/` : ""
-  const id = model.modelID || model.id || ""
-  const variant = model.variant ? ` ${model.variant}` : ""
-  const value = `${provider}${id}${variant}`.trim()
-  return value ? t("commands.session.model", { valueHtml: escapeHtml(value) }) : null
 }
 
 function contextExportErrorText(error, count) {

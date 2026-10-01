@@ -113,11 +113,18 @@ audio files, and supported audio documents are transcribed. `/sounds_off` clears
 ordinary-topic voice transcription remains active. `/sounds_status` shows provider readiness, the selected model,
 dedicated topic, and queue activity.
 
-`/session` is a small operator command for the current topic. It shows Telegram chat/topic/message ids, the active or
-last stored binding, OpenCodez server/session details, a web session URL when the backend session can be read, and
-artifact/sounds target status. Between `/reset` and the next prompt it reports that the topic is pending, shows the
-selected pending profile, and identifies the preserved previous session. It works in normal mirror topics and special
-topics, and it does not print secrets or runtime tokens.
+`/session` shows the server and a native tap-to-copy session ID in the main table, alongside status, launch profile,
+model, reasoning and queued prompts. Expanded details distinguish the topic where the command was called from the
+assigned file and audio destinations; destination names link to those topics. Session links can use the stored project
+directory when the server is unavailable. Server lookups run concurrently with a five-second timeout, and unavailable
+or deleted sessions are not reported as ready. Launch settings are identified as saved settings rather than a live model reading.
+
+Between `/reset` and the first prompt, the new session has no ID yet; the preserved previous ID appears only in details.
+An inactive binding is labelled as the last session. FILES/AUDIO show their service purpose and no obsolete agent
+session settings. Telegram rename updates synchronize service-topic names without adding a server suffix. If the bot
+has never received a topic name, it shows that the name is unknown instead of inventing one or using the group name.
+Bot API has no read method for an existing topic's current name, so missed historical renames require a verified state
+correction. `/session` does not print secrets or runtime tokens.
 
 `/kill` is a topic-scoped stop command. It calls OpenCodez `POST /session/:sessionID/abort` for the bound session, then
 clears that topic's in-memory queued prompts so a stopped run does not immediately advance into the next queued prompt.

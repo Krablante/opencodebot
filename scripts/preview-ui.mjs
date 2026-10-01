@@ -3,7 +3,8 @@ import path from "node:path"
 import { loadConfig } from "../src/config.mjs"
 import { StateStore } from "../src/state.mjs"
 import { UserSettings } from "../src/user-settings.mjs"
-import { OpenCodeClient } from "../src/opencode.mjs"
+import { OpenCodeClient, OpenCodeHttpError } from "../src/opencode.mjs"
+import { createTelegramCommandHandlers } from "../src/commands.mjs"
 import { ControlMenu } from "../src/control-menu.mjs"
 import { LaunchMenu } from "../src/launch-menu.mjs"
 import { FinalVoiceModule } from "../src/final-voice.mjs"
@@ -60,6 +61,38 @@ for (const language of ["ru", "en"]) {
   }
   const guide = guideDocument(language).replace(/<h1>[^\p{L}]+/gu, "<h1>").replace(/🎙/g, "").replace(/<details>/g, "<details open>").replace("</section>", `<div class="illustration"><main>${topic.replace(/🎲 /g, "")}</main><div class="annotation">${language === "ru" ? "Пример создания темы: модель видна целиком, основные действия расположены рядом. Рабочий топик после создания остаётся чистым чатом." : "Topic creation example: the full model ID is visible and actions stay close together. The working topic remains a clean conversation."}</div></div></section>`)
   await fs.writeFile(path.join(output, `guide-${language}.html`), shell(guide))
+  // Render the real /session handler for its distinct user-facing states.
+  const snapshot = structuredClone(state.data)
+  state.data.telegram.artifactsTopic = { chatId: state.chatId, topicId: 200, title: "FILES" }
+  state.data.telegram.soundsTopic = { chatId: state.chatId, topicId: 201, title: "AUDIO" }
+  const binding = { ...state.data.bindings[0], topicTitle: language === "ru" ? "Обновление проекта (local)" : "Project update (local)",
+    sessionID: "ses_0123456789abcdefghijklmnopq", directory: "/home/operator/project", promptProfileName: "sol", promptProfile: config.promptProfiles.sol }
+  for (const scenario of ["active", "pending", "disabled", "offline", "deleted", "files", "audio", "empty", "unknown-name"]) {
+    state.data.bindings = [{ ...binding, disabled: ["pending", "disabled", "files", "audio"].includes(scenario),
+      disabledReason: scenario === "disabled" ? "Telegram topic closed" : "topic-reset", topicId: scenario === "files" ? 200 : scenario === "audio" ? 201 : 100 }]
+    if (!state.data.bindings[0].disabled) delete state.data.bindings[0].disabledReason
+    state.data.pendingTopics = scenario === "pending" ? { 100: { ...binding, sessionID: undefined } } : {}
+    const targetTopicId = scenario === "files" ? 200 : scenario === "audio" ? 201 : scenario === "empty" ? 0 : 100
+    const knownFilesName = state.data.telegram.artifactsTopic.title
+    if (scenario === "unknown-name") state.data.telegram.artifactsTopic.title = null
+    const handlers = createTelegramCommandHandlers({ config, state, promptQueue: queue, multipartPrompts: { flushKey: async () => {} },
+      opencode: {
+        getSession: async () => {
+          if (scenario === "offline") throw new Error("Server unavailable")
+          if (scenario === "deleted") throw new OpenCodeHttpError({ serverID: "local", pathname: `/session/${binding.sessionID}`, status: 404 })
+          return { directory: binding.directory, title: language === "ru" ? "Обновить проект" : "Update the project" }
+        },
+        sessionStatus: async () => { if (scenario === "offline") throw new Error("Server unavailable"); return { type: "idle" } },
+      },
+      telegram: { sendRichMessage: async ({ html }) => {
+        await fs.writeFile(path.join(output, `session-${scenario}-${language}.html`), shell(`<main>${html}</main>`))
+        await fs.writeFile(path.join(output, `session-${scenario}-expanded-${language}.html`), shell(`<main>${html.replace("<details>", "<details open>")}</main>`))
+      } },
+    })
+    await handlers.handle({ chat: { id: state.chatId }, message_thread_id: targetTopicId, message_id: 42 }, { name: "session", args: "" })
+    state.data.telegram.artifactsTopic.title = knownFilesName
+  }
+  state.data = snapshot
 }
 console.log(`UI previews generated in ${output}`)
 function shell(body) { return `<!doctype html><html><head><meta charset="utf-8"><title>OpenCodeBot · Guide</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}${fontCss}</style></head><body>${body}</body></html>` }
