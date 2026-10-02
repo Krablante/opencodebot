@@ -153,10 +153,20 @@ async function smokeWorkspacePreferences() {
     assert.equal(state.data.preferences.notificationChoices[42], false)
     const messages = []
     let cardMessageId = 9
+    const forceReplyCards = new Set()
     let acceptedKey = ""
     const telegram = {
-      sendRichMessage: async (payload) => { assert.equal(payload.ephemeral, undefined); messages.push(payload); return { message_id: ++cardMessageId } },
-      editRichMessage: async (payload) => { messages.push(payload) },
+      sendRichMessage: async (payload) => {
+        assert.equal(payload.ephemeral, undefined)
+        messages.push(payload)
+        const message_id = ++cardMessageId
+        if (payload.replyMarkup?.force_reply) forceReplyCards.add(message_id)
+        return { message_id }
+      },
+      editRichMessage: async (payload) => {
+        if (forceReplyCards.has(payload.messageId)) throw new Error("Telegram editMessageText failed: Bad Request: message can't be edited")
+        messages.push(payload)
+      },
       sendMessage: async (payload) => { messages.push(payload); return { message_id: 11 } },
       answerCallbackQuery: async (payload) => { messages.push(payload) },
       deleteMessage: async () => {}, request: async () => {},
@@ -183,6 +193,7 @@ async function smokeWorkspacePreferences() {
     const answer = { from: { id: 42 }, chat: { id: -1001 }, message_id: 500, text: "First title", reply_to_message: { message_id: personal.messageId } }
     assert.equal(await launch.handleMessage(answer), true)
     assert.equal(personal.name, "First title")
+    assert.equal(launch.inputs.has(42), false, "Accepted input replaces the uneditable Force Reply card and completes the field")
     const oldCardId = personal.messageId
     await launch.ask(personal, "title", "Topic title")
     await launch.draw(personal)

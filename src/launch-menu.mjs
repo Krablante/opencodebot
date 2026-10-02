@@ -334,7 +334,8 @@ export class LaunchMenu {
 
   async sendCard(d) {
     const oldMessageId = d.messageId
-    const input = d.inputRequest
+    const activeInput = this.inputs.get(d.userId)
+    const input = d.inputRequest || (activeInput?.draftId === d.id ? activeInput : null)
     // Telegram cannot toggle Force Reply through an edit. A fresh card
     // activates each input request; retire the previous card only after success.
     const sent = await this.telegram.sendRichMessage({ chatId: d.chatId, topicId: d.topicId, html: await this.render(d), disableNotification: true,
@@ -342,6 +343,7 @@ export class LaunchMenu {
     })
     if (!sent?.message_id) throw new Error("Telegram did not return the card message ID")
     d.messageId = sent.message_id
+    d.forceReply = Boolean(input)
     await this.rememberCard(d)
     if (input) this.inputs.set(d.userId, { ...input, draftId: d.id, messageId: d.messageId })
     delete d.inputRequest
@@ -396,7 +398,8 @@ export class LaunchMenu {
   }
 
   async draw(d) {
-    if (d.inputRequest) return this.sendCard(d)
+    // Ordinary messages sent with Force Reply cannot be edited by Telegram.
+    if (d.inputRequest || d.forceReply) return this.sendCard(d)
     const html = await this.render(d)
     try { await this.telegram.editRichMessage({ chatId: d.chatId, messageId: d.messageId, html }) }
     catch (error) { if (!/message is not modified/i.test(error.message)) throw error }
