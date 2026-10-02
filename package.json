@@ -1,6 +1,6 @@
 {
   "name": "opencodebot",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "type": "module",
   "description": "Telegram mirror and companion bot for OpenCodez sessions.",
   "license": "MIT",

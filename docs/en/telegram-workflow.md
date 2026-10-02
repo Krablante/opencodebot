@@ -6,7 +6,7 @@ Use General to create topics, choose profiles and change settings. Use a working
 
 ## Topics
 
-`/new` opens the topic wizard in an ordinary chat card. It shows a concrete profile, provider/model, reasoning, server and directory before creation. The default title is a random bundled Old Russian noun; **Another word**, **Title** and **Settings → Random topic names** control naming. The first ordinary prompt creates the backend session. The launch snapshot stays the one shown at creation, even if its named profile changes before that prompt.
+`/new` opens the topic wizard in an ordinary chat card. It shows a concrete profile, provider/model, reasoning, server and directory before creation. The default title is a historical or evocative Russian noun with random capitalization; **Another word**, **Title** and **Settings → Random topic names** control naming. The first ordinary prompt creates the backend session. The launch snapshot stays the one shown at creation, even if its named profile changes before that prompt.
 
 With several servers, titles get a managed ` (<serverID>)` suffix. User-chosen/random names survive backend title changes. A manual Telegram rename becomes topic-owned and updates retained history too. `/reset` preserves that title while changing only the server suffix when needed. Single-server titles have no suffix. Icons are random when Telegram supplies available stickers.
 

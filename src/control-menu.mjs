@@ -471,7 +471,7 @@ export class ControlMenu {
   renderSettings() {
     const L = (ru, en) => localText(ru, en, getLanguage())
     const randomNames = this.state.randomTopicNamesEnabled()
-    return this.view(`<h2>⚙ ${L("Настройки", "Settings")}</h2><p>${L("Подключения и параметры бота", "Connections and bot preferences")}</p><p>${L("Случайные названия — древнерусские слова для новых тем. Своё название можно вписать при создании.", "Random names use Old Russian words for new topics. You can enter your own title when creating a topic.")}</p>`, [
+    return this.view(`<h2>⚙ ${L("Настройки", "Settings")}</h2><p>${L("Подключения и параметры бота", "Connections and bot preferences")}</p><p>${L("Случайные названия — старинные и образные русские слова в разном регистре. Своё название можно вписать при создании.", "Random names use historical and evocative Russian words with varied capitalization. You can enter your own title when creating a topic.")}</p>`, [
       [this.callback(`${L("Случайные названия", "Random topic names")}: ${randomNames ? L("вкл", "on") : L("выкл", "off")}`, `topicnames:${randomNames ? "0" : "1"}`)],
       [this.callback(L("FILES · AUDIO · Setup", "FILES · AUDIO · Setup"), "setup")],
       [this.callback(L("Уведомления и контекст", "Notifications and context"), "personal")],
