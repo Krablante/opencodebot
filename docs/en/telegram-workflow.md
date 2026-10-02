@@ -70,7 +70,11 @@ The bot discards later queue items, aborts if needed, waits for idle, and asks O
 
 ## Queue
 
-`/q` checks backend status when admitted. Idle work starts immediately; busy work waits in memory with its files. Release requires backend idle plus a delivered terminal answer/notice, in either order. History recovery supplies missing final/idle signals. Questions and in-flight manual compaction hold the queue. A failed run clears pending items and lists their summaries; duplicate events cannot release two prompts.
+Put `/q` only at the beginning of a long text prompt. The bot collects continuations from the same user and topic and admits one complete task after two seconds without another part. Even a short first part keeps queue mode for its continuations. A new `/q` starts a separate task; another command ends the current assembly, while kill/reset discard it. Unknown slash-prefixed text, such as a file path, remains part of the pending prompt. Assembly is bounded to 20 parts and 120,000 characters; exceeding either limit rejects the whole task with feedback, without sending a partial prompt.
+
+Rich Messages accept `/q` at the beginning of the first text paragraph or heading, including bold text and `/q@botname`. Subsequent paragraphs, lists, tables, code and supported photos stay together in the queued task. A `/q` inside a code block or quote is prompt content, not a command.
+
+After assembly, `/q` checks backend status when admitted. Idle work starts immediately; busy work waits in memory with its files. Release requires backend idle plus a delivered terminal answer/notice, in either order. History recovery supplies missing final/idle signals. Questions and in-flight manual compaction hold the queue. A failed run clears pending items and lists their summaries; duplicate events cannot release two prompts.
 
 Limits are 20 waiting prompts per session, 100 overall and 64 MiB of text/inline content. Full queues reject with an explicit resend notice; `/q delete N` makes room. Kill, reset, closure/deletion and conversion to FILES/AUDIO discard the whole topic's multipart/attachment buffers, including other operators' pending input. A restart drops queues and downstream buffers. It does not delete backend history. [Storage guarantees](config-runtime.md#paths-and-state) explain why durable input receipt is a different boundary.
 

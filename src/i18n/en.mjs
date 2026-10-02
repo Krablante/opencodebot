@@ -1,6 +1,7 @@
 export const en = {
   "prompt.batchFull": "This attachment batch is full. Send its prompt text before adding more files.",
   "prompt.queueFull": "The prompt queue is full (20 items per session, 100 overall, or 64 MiB of text and inline files). Check /q status, remove an item, or wait for a response before sending again.",
+  "prompt.multipartTooLarge": "The /q prompt exceeds the assembly limit: {maxParts} parts or {maxChars} characters. The whole task was rejected; none of its parts were sent to the agent.",
   "speech.queueFull": "The transcription queue has 20 waiting recordings. Wait for a transcript, then send this recording again.",
   "prompt.setupProfileMissing": "The launch profile is no longer configured. Use /reset with an available profile.",
   "reconcile.sessionFailed": "❌ <b>OpenCodez run failed</b>",

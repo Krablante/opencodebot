@@ -75,12 +75,28 @@ export class PromptQueue {
     const value = String(text || "").trim()
     if (!value) return { status: "empty" }
     const state = this.state(binding)
+    const epoch = state.epoch
+    const generation = state.generation
     if (!state.compacting && this.sessionStatus) {
-      const status = await this.sessionStatus(binding)
-      if (status.type !== "idle") {
-        if (!state.busy) beginRun(state)
-        state.idle = false
-      } else state.idle = true
+      let status
+      try { status = await this.sessionStatus(binding) }
+      catch (error) {
+        await this.onDrop(files)
+        if (state.epoch !== epoch) return { status: "cancelled" }
+        throw error
+      }
+      // Clear/rewind can cancel admission while the status request is pending.
+      if (state.epoch !== epoch) {
+        await this.onDrop(files)
+        return { status: "cancelled" }
+      }
+      // Another admission may have started a run after this lookup began.
+      if (state.generation === generation) {
+        if (status.type !== "idle") {
+          if (!state.busy) beginRun(state)
+          state.idle = false
+        } else state.idle = true
+      }
     }
     if (!state.busy && !state.compacting) {
       await this.sendNow(binding, value, files, metadata)
@@ -96,6 +112,7 @@ export class PromptQueue {
     }
     const position = state.items.push({ text: value, files, bytes, createdAt: Date.now(), sourceMessageId: metadata?.sourceMessageId })
     await this.onQueued?.(binding)
+    if (state.epoch !== epoch) return { status: "cancelled" }
     return { status: "queued", position }
   }
 
@@ -120,6 +137,7 @@ export class PromptQueue {
 
   clear(binding) {
     const state = this.state(binding)
+    state.epoch += 1
     const items = state.items
     const cleared = state.items.map((item, index) => ({
       index: index + 1,
@@ -139,6 +157,7 @@ export class PromptQueue {
 
   discardPending(binding) {
     const state = this.state(binding)
+    state.epoch += 1
     const items = state.items.splice(0)
     items.forEach((item) => this.dropItem(item))
     return items.length
@@ -181,7 +200,7 @@ export class PromptQueue {
     const key = queueKey(binding)
     let state = this.sessions.get(key)
     if (!state) {
-      state = { busy: false, idle: true, terminalMirrored: true, items: [] }
+      state = { busy: false, idle: true, terminalMirrored: true, items: [], epoch: 0, generation: 0 }
       this.sessions.set(key, state)
     }
     return state
@@ -194,6 +213,7 @@ export class PromptQueue {
 }
 
 function beginRun(state) {
+  state.generation += 1
   state.busy = true
   state.idle = false
   state.terminalMirrored = false

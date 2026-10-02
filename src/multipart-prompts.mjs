@@ -15,17 +15,21 @@ export class MultipartPromptBuffer {
     }
 
     const existing = this.pending.get(key)
-    if (!existing && value.length < this.settings.minChars) {
+    if (!existing && value.length < this.settings.minChars && !context?.queued) {
       await this.flushPrompt(context, value)
       return "sent"
     }
 
     const entry = existing || { parts: [], context, timer: null }
-    entry.parts.push(value)
+    if (!entry.overflow) entry.parts.push(value)
+    if (entry.context?.queued && (entry.parts.length > this.settings.maxParts || joinedLength(entry.parts) > this.settings.maxChars)) {
+      entry.parts = []
+      entry.overflow = true
+    }
     if (!existing) this.pending.set(key, entry)
     this.schedule(key, entry)
 
-    if (entry.parts.length >= this.settings.maxParts || joinedLength(entry.parts) >= this.settings.maxChars) {
+    if (!entry.context?.queued && (entry.parts.length >= this.settings.maxParts || joinedLength(entry.parts) >= this.settings.maxChars)) {
       await this.flushKey(key)
       return "flushed"
     }
@@ -37,7 +41,7 @@ export class MultipartPromptBuffer {
     if (!entry) return false
     if (entry.timer) clearTimeout(entry.timer)
     this.pending.delete(key)
-    await this.flushPrompt(entry.context, entry.parts.join("\n\n"))
+    await this.flushPrompt(entry.overflow ? { ...entry.context, multipartOverflow: true } : entry.context, entry.parts.join("\n\n"))
     return true
   }
 

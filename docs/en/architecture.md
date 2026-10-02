@@ -29,6 +29,8 @@ A live text block becomes visible when its completed part arrives; assistant com
 
 Queued prompts require both backend idle and the previous terminal outcome delivered in Telegram. Either signal may arrive first. An idle check reads the current logical turn when needed and mirrors its missing final before releasing the queue. Failed or interrupted runs receive one terminal notice; expected kill/reset/rewind stops stay silent. Questions hold the gate open until answered. Manual compaction has its own in-flight queue hold.
 
+Queue admission rechecks cancellation after a backend-status lookup. Clearing or rewinding the queue cancels older admissions still awaiting that lookup. An idle result obtained before a newer run started cannot release that run's waiting prompts.
+
 `logical-turn.mjs` follows durable compaction `turn_id`/`replay_id` and reminder links. Reconcile, context export, duration/token accounting and reminders agree on the original external request. Internal summaries are handled without being mirrored. Automatic mid-run reminders rebuild payloads from the backend and require admission confirmation before the Telegram notice. An automatic replay already persisted by OpenCodez, including pre-turn, is acknowledged through the same notice without another prompt submission.
 
 ## Recovery and limits

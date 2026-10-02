@@ -50,6 +50,7 @@ const pages = {
       <tr><td><code>/q delete N</code></td><td>Убрать элемент очереди по номеру</td></tr>
       <tr><td><code>/kill</code></td><td>Остановить работу и очистить очередь</td></tr>
       <tr><td><code>/compact</code></td><td>Сжать контекст завершённой сессии</td></tr></table>
+      <p>В длинном промпте достаточно одного <code>/q</code> в начале: части собираются в одну задачу после двух секунд тишины. В Rich Message команда может начинать абзац или заголовок; текст и фотографии идут вместе. Новый <code>/q</code> начинает отдельную задачу.</p>
       <p>Вопросы агента показываются кнопками; работа продолжится после ответа. Бот показывает сообщения агента и результат. Обычные действия инструментов скрыты по умолчанию.</p>
       <p>При сбое проверь <code>/session</code>, прежде чем повторять запрос: сервер мог уже принять его. Если новая тема ещё ждёт первый запуск, восстанови соединение и отправь задачу снова в неё.</p>
       <blockquote>Чтобы остановить агента перед закрытием или удалением топика, сначала выполни <code>/kill</code>. Закрытие выключает зеркало и очередь, но серверная сессия сохраняется.</blockquote>
@@ -119,6 +120,7 @@ const pages = {
       <tr><td><code>/q delete N</code></td><td>Remove a queue item by number</td></tr>
       <tr><td><code>/kill</code></td><td>Stop and clear the queue</td></tr>
       <tr><td><code>/compact</code></td><td>Compact an idle session</td></tr></table>
+      <p>One <code>/q</code> at the start is enough for a long prompt: parts become one task after two seconds of quiet. In a Rich Message, the command can start a paragraph or heading; text and photos stay together. A new <code>/q</code> starts a separate task.</p>
       <p>Agent questions use buttons; work continues after your answer. The bot shows agent text and final answers. Ordinary tool actions are hidden by default.</p>
       <p>After a failure, check <code>/session</code> before retrying: the server may already have accepted the prompt. If a new topic is still waiting for its first launch, restore the connection and submit the task again there.</p>
       <blockquote>To stop the agent before closing or deleting a topic, run <code>/kill</code> first. Closing disables mirroring and clears the queue, while the server session is preserved.</blockquote>

@@ -21,6 +21,7 @@ export function createTelegramPolling({
   extractTelegramFiles,
   hasPendingAttachmentBatch,
   queueTelegramPrompt,
+  hasPendingQueuedPrompt = () => false,
   flushAttachmentText,
   promptContext,
   multipartPromptKey,
@@ -160,8 +161,9 @@ export function createTelegramPolling({
     if (configuredChatId && (await handleTopicLifecycleMessage(message))) return
     if (!isAllowedMessage(message, config)) return
     const richContent = normalizeTelegramRichMessage(message.rich_message)
-    const text = String(messageText(message, richContent)).trim()
-    const caption = String(message.caption || richContent.text || "").trim()
+    const queuedRichText = richContent.queueText !== undefined ? `/q ${richContent.queueText}`.trim() : undefined
+    const text = String(queuedRichText ?? messageText(message, richContent)).trim()
+    const caption = String(queuedRichText ?? (message.caption || richContent.text || "")).trim()
     const files = extractTelegramFiles(message, richContent)
     if (message.rich_message) {
       logInfo("telegram.rich_message.received", {
@@ -254,7 +256,7 @@ export function createTelegramPolling({
     const command = parseCommand(text)
 
     if (await commandHandlers.handle(message, command, promptKey)) return
-    if (text.startsWith("/")) {
+    if (text.startsWith("/") && !hasPendingQueuedPrompt(promptKey)) {
       await flushPromptKey(promptKey)
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("polling.unknownCommand") })
       return

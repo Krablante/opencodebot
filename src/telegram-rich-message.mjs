@@ -6,12 +6,20 @@ export function normalizeTelegramRichMessage(richMessage) {
     media: [],
     unsupportedTypes: new Set(),
   }
-  const text = renderBlocks(richMessage.blocks, context).trim()
+  const rendered = richMessage.blocks.map((block) => renderBlock(block, context))
+  const text = rendered.filter(Boolean).join("\n\n").trim()
+  const firstIndex = rendered.findIndex((value) => value.trim())
+  const first = richMessage.blocks[firstIndex]
+  const queueMatch = ["paragraph", "heading", "section_heading"].includes(first?.type)
+    && renderRichText(first.text).trim().match(/^\/q(?:@[A-Za-z0-9_]+)?(?:\s+([\s\S]*))?$/)
+  const queueText = queueMatch ? [renderBlock({ ...first, text: queueMatch[1] || "" }, context), ...rendered.slice(firstIndex + 1)]
+    .filter(Boolean).join("\n\n").trim() : undefined
   return {
     text,
     media: context.media,
     blockTypes: [...context.blockTypes].sort(),
     unsupportedTypes: [...context.unsupportedTypes].sort(),
+    ...(queueText !== undefined ? { queueText } : {}),
   }
 }
 

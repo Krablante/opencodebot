@@ -4,7 +4,7 @@ import { applyPromptProfile } from "./prompt-profiles.mjs"
 import { logErrorEvent, logInfo } from "./logger.mjs"
 import { MultipartPromptBuffer } from "./multipart-prompts.mjs"
 import { isOpenCodeSessionNotFound, promptPayload, resolveSessionProfile, titleFromText } from "./opencode.mjs"
-import { PromptQueue } from "./prompt-queue.mjs"
+import { PromptQueue, summarizeWords } from "./prompt-queue.mjs"
 import { promptHash } from "./state.mjs"
 import { escapeHtml, topicId } from "./telegram.mjs"
 import { prepareSavedFilesForServer } from "./upload-transfer.mjs"
@@ -73,7 +73,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
   })
 
   async function queueTelegramPrompt(key, text, context) {
-    if (context?.rewindError) {
+    if (context?.rewindError && !hasPendingQueuedPrompt(key)) {
       await sendRewindError(context.message, context.rewindError)
       return
     }
@@ -81,6 +81,15 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
   }
 
   async function flushTelegramPrompt(context, text, files = []) {
+    if (context.multipartOverflow) {
+      await telegram.sendMessage({ chatId: context.message.chat.id, topicId: topicId(context.message),
+        text: t("prompt.multipartTooLarge", { maxParts: multipartPrompts.settings.maxParts, maxChars: multipartPrompts.settings.maxChars }) })
+      return
+    }
+    if (context.queued) {
+      await queueBufferedPrompt(context, text, files)
+      return
+    }
     if (context.rewindError) {
       await cleanupFiles(files)
       await sendRewindError(context.message, context.rewindError)
@@ -94,6 +103,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     if (context.binding) {
       if (promptQueue.isCompacting(context.binding)) {
         const result = await promptQueue.enqueue(context.binding, text, files, { sourceMessageId })
+        if (result.status === "cancelled") return
         await telegram.sendMessage({ chatId: context.binding.chatId, topicId: context.binding.topicId,
           text: result.status === "full" ? t("prompt.queueFull") : t("commands.queue.queued", { position: result.position, summaryHtml: escapeHtml(text.slice(0, 100)) }) })
         return
@@ -119,7 +129,8 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("prompt.attachmentsDisabled") })
       return
     }
-    const context = promptContext(message)
+    const queued = parseQueueCaption(caption)
+    const context = queued ? { message, binding: state.findBindingByTopic(message.chat.id, topicId(message)) } : promptContext(message)
     if (context?.rewindError) {
       await sendRewindError(message, context.rewindError)
       return
@@ -128,7 +139,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("prompt.noBindingFiles") })
       return
     }
-    const queued = parseQueueCaption(caption)
+    if (queued) await multipartPrompts.flushKey(promptKey)
     if (queued && !context.binding) {
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("prompt.queueBeforeBinding") })
       return
@@ -142,11 +153,12 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
       if (remaining.maxFiles <= 0 || remaining.maxTotalBytes <= 0) throw new Error(t("prompt.batchFull"))
       const downloads = await downloadTelegramFiles(telegram, files, config.paths.uploadsDir, { ...config.attachments, ...remaining }, { deferInline: true })
       if (queued) {
-        await attachmentBuffer.addFiles(promptKey, context, downloads, { text: queued.text, mediaGroupID: message.media_group_id || "", flushPrompt: queueAttachmentPrompt })
+        await attachmentBuffer.addFiles(promptKey, context, downloads, { text: queued.text, mediaGroupID: message.media_group_id || "", flushPrompt: queueBufferedPrompt })
         return
       }
       await attachmentBuffer.addFiles(promptKey, context, downloads, { text: caption, mediaGroupID: message.media_group_id || "" })
     } catch (error) {
+      if (error.feedbackReported) return
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: topicId(message),
@@ -185,9 +197,23 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     return { multipart, attachments }
   }
 
-  async function queueAttachmentPrompt(context, text, files = []) {
-    const result = await promptQueue.enqueue(context.binding, text, files, { sourceMessageId: context.message?.message_id })
-    await telegram.sendMessage({ chatId: context.message.chat.id, topicId: topicId(context.message), text: queueAttachmentFeedback(result, files.length) })
+  async function queueBufferedPrompt(context, text, files = []) {
+    let result
+    try { result = await promptQueue.enqueue(context.binding, text, files, { sourceMessageId: context.message?.message_id }) }
+    catch (error) {
+      if (!error.feedbackReported) {
+        await telegram.sendMessage({ chatId: context.message.chat.id, topicId: topicId(context.message), text: t("polling.actionFailed") })
+          .then(() => { error.feedbackReported = true }, logError)
+      }
+      throw error
+    }
+    if (result.status === "cancelled") return
+    if (files.length || result.status === "queued" || result.status === "full") {
+      const feedback = files.length ? queueAttachmentFeedback(result, files.length)
+        : result.status === "full" ? t("prompt.queueFull")
+        : t("commands.queue.queued", { position: result.position, summaryHtml: escapeHtml(summarizeWords(text, 10)) })
+      await telegram.sendMessage({ chatId: context.message.chat.id, topicId: topicId(context.message), text: feedback })
+    }
   }
 
   function promptContext(message) {
@@ -225,6 +251,10 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
 
   function multipartPromptKey(message) {
     return `${message.chat.id}:${topicId(message)}:${message.from?.id || 0}`
+  }
+
+  function hasPendingQueuedPrompt(key) {
+    return multipartPrompts.pending.get(key)?.context?.queued === true
   }
 
   async function sendTelegramPrompt(binding, text, files = [], { sourceMessageId, feedbackMode = "prompt" } = {}) {
@@ -502,6 +532,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     maybeExtendBindingActivity,
     multipartPrompts,
     multipartPromptKey,
+    hasPendingQueuedPrompt,
     promptContext,
     promptQueue,
     queueTelegramPrompt,

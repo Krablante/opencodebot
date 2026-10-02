@@ -1,4 +1,3 @@
-import { summarizeWords } from "./prompt-queue.mjs"
 import { escapeHtml, telegramMessageLink, topicId } from "./telegram.mjs"
 import { parseResetArgs } from "./prompt-profiles.mjs"
 import { managedTopicTitle, topicBaseTitle } from "./topic-titles.mjs"
@@ -301,7 +300,7 @@ export function createTelegramCommandHandlers({
     }
   }
 
-  async function handleQueueCommand(message, args) {
+  async function handleQueueCommand(message, args, promptKey) {
     const binding = state.findBindingByTopic(message.chat.id, topicId(message))
     if (!binding) {
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("commands.queue.noBinding") })
@@ -329,18 +328,7 @@ export function createTelegramCommandHandlers({
       return
     }
 
-    const result = await promptQueue.enqueue(binding, input, { sourceMessageId: message.message_id })
-    if (result.status === "full") {
-      await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("prompt.queueFull") })
-      return
-    }
-    if (result.status === "queued") {
-      await telegram.sendMessage({
-        chatId: message.chat.id,
-        topicId: topicId(message),
-        text: t("commands.queue.queued", { position: result.position, summaryHtml: escapeHtml(summarizeWords(input, 10)) }),
-      })
-    }
+    await multipartPrompts.push(promptKey, input, { message, binding, queued: true })
   }
 
   async function handleKillCommand(message) {
