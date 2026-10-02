@@ -99,7 +99,8 @@ export class Setup {
 
   async handleCallback(query) {
     if (!String(query.data || "").startsWith("setup:")) return false
-    await this.telegram.answerCallbackQuery({ callbackQueryId: query.id })
+    const tokenRequest = query.data === "setup:token" && this.config.artifacts.token
+    if (!tokenRequest) await this.telegram.answerCallbackQuery({ callbackQueryId: query.id })
     const message = { ...query.message, from: query.from }
     if (query.data === "setup:check") await this.open(message)
     if (query.data === "setup:audio") await this.askAudio(message)
@@ -109,9 +110,16 @@ export class Setup {
       const prompt = await this.inputPrompt(message, this.text("Адрес gateway, доступный с сервера OpenCodez, например http://bot-host:8788.", "Gateway address reachable from OpenCodez, for example http://bot-host:8788."))
       await this.state.update((data) => { data.preferences.gatewayInput = { userId: message.from.id, chatId: message.chat.id, topicId: topicId(message), promptId: prompt.message_id, expires: Date.now() + 15 * 60_000 } })
     }
-    if (query.data === "setup:token" && this.config.artifacts.token) {
-      await this.telegram.sendRichMessage({ chatId: message.chat.id, topicId: topicId(message), ephemeral: { receiver_user_id: message.from.id, callback_query_id: query.id },
-        html: `<h2>Artifact token</h2><p>${this.text("Этот экран виден только тебе. Передай ключ своему агенту для настройки транспорта.", "Only you can see this screen. Give this key to your agent to configure transport.")}</p><pre>${escapeHtml(this.config.artifacts.token)}</pre>` })
+    if (tokenRequest) {
+      try {
+        await this.telegram.sendRichMessage({ chatId: message.from.id,
+          html: `<h2>Artifact token</h2><p>${this.text("Передай ключ своему агенту для настройки транспорта.", "Give this key to your agent to configure transport.")}</p><pre>${escapeHtml(this.config.artifacts.token)}</pre>` })
+        await this.telegram.answerCallbackQuery({ callbackQueryId: query.id,
+          text: this.text("Ключ отправлен в личный чат с ботом.", "The key was sent to your private bot chat.") })
+      } catch {
+        await this.telegram.answerCallbackQuery({ callbackQueryId: query.id,
+          text: this.text("Открой личный чат с ботом и нажми Start, затем запроси ключ снова.", "Open a private chat with the bot and press Start, then request the key again."), showAlert: true })
+      }
     }
     return true
   }

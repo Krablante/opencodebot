@@ -6,7 +6,7 @@ FILES has two independent directions. Agents stream local files/text to the bot'
 
 ## Setup
 
-`/setup` prepares FILES, enables the gateway when requested and shows the gateway URL plus a personal artifact-token screen. Install the bundled plugin and full skill on every agent host. A gateway connection and a writable incoming dropbox are different checks: verify both directions.
+`/setup` prepares FILES, enables the gateway when requested and shows the gateway URL. Requesting the artifact token sends it to your private bot chat. Install the bundled plugin and full skill on every agent host. A gateway connection and a writable incoming dropbox are different checks: verify both directions.
 
 Manual configuration:
 

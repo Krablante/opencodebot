@@ -403,7 +403,7 @@ export class ControlMenu {
       for (const binding of this.activeBindings()) {
         if (++checked > MAX_VISIBLE_SESSIONS * 3) break
         try {
-          if (!await this.topicExists(binding, { force: forceTopicCheck, receiverUserId: actor?.id })) continue
+          if (!await this.topicExists(binding, { force: forceTopicCheck })) continue
         } catch (error) {
           // Transport and permission errors do not prove deletion. Keep the topic.
           logWarn("control_menu.topic_check.failed", { error: error.message })
@@ -436,7 +436,7 @@ export class ControlMenu {
       [L("Ответов сегодня", "Answers today"), String(this.state.answersToday())],
     ].map(([label, value]) => [label, `<b>${value}</b>`])) + `<p>${this.serverSummary()}</p>` + this.answerStatsPeriod()
     return this.view(text, [
-      [{ ...this.callback(L("＋ Новая тема", "＋ New topic"), "new"), style: "primary" }],
+      [{ ...this.callback(L("+ Новая тема", "+ New topic"), "new"), style: "primary" }],
       [this.callback(L("Недавние темы", "Recent topics"), "sessions"), this.callback(L("Профили", "Profiles"), "profiles")],
       [this.callback(L("Настройки", "Settings"), "settings"), this.callback(L("Как пользоваться", "How to use"), "help")],
     ])

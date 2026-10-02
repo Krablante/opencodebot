@@ -2,7 +2,7 @@ const pages = {
   ru: [
     ["✦ Добро пожаловать", "<p>General — место для создания тем и настройки бота. Рабочая тема — разговор с агентом OpenCodez.</p><blockquote>Нажми <b>Новая тема</b>, проверь название и модель, создай тему и начни писать.</blockquote><p>Название по умолчанию — случайное древнерусское слово. «Другое слово» выбирает заново, «Название» позволяет вписать своё. Режим отключается в Настройках.</p><p>FILES собирает файлы. AUDIO превращает голосовые и аудиофайлы в текст. Эти подключения можно закончить позже.</p>"],
     ["✦ Создание через мастер", `
-      <p><b>Новая тема</b> в General или <code>/new</code> без аргументов открывает личную карточку. Другие участники её не видят.</p>
+      <p><b>Новая тема</b> в General или <code>/new</code> без аргументов открывает карточку создания в чате. Управлять ей может только открывший её пользователь.</p>
       <table striped compact><tr><th>Поле</th><th>Что выбрать</th></tr>
       <tr><td>Название</td><td>Оставить случайное слово, выбрать «Другое слово» или вписать своё. При отключённом режиме бот сразу спрашивает имя.</td></tr>
       <tr><td>Профиль</td><td>Сохранённые модель, reasoning, System и агент. Начальный выбор берётся из настроек запуска.</td></tr>
@@ -12,13 +12,14 @@ const pages = {
       <p>Если модель, System или сервер недоступны, выбери другой профиль/сервер либо восстанови подключение и провайдер в OpenCodez. Изменённый во время выбора профиль требует повторного подтверждения.</p>
       <blockquote><b>Создать тему</b> сначала создаёт топик Telegram. Сессия OpenCodez появится после первого обычного сообщения с задачей. Тогда можно пользоваться <code>/q</code> и проверить запуск через <code>/session</code>.</blockquote>
       <p>Выбранное имя и параметры сохраняются до создания. «Закрыть» отменяет черновик; <code>/cancel</code> отменяет только ввод поля. Черновик действует 15 минут и исчезает после перезапуска бота.</p>
+      <p>Карточка «Тема готова» удаляется через две минуты. Перезапуск бота сохраняет срок удаления.</p>
     `],
     ["⌨ Быстрое создание: /new", `
       <p>С аргументами команда сразу создаёт тему. Общая форма; квадратные скобки обозначают необязательные части:</p>
       <pre>/new [server] [profile] [dir:&lt;path&gt;] [title]</pre>
       <p><code>local</code> ниже — пример ID из списка серверов, <code>sol</code> — имя сохранённого профиля. Подставь свои значения.</p>
       <table striped compact><tr><th>Команда</th><th>Результат</th></tr>
-      <tr><td><code>/new</code></td><td>Личный мастер</td></tr>
+      <tr><td><code>/new</code></td><td>Мастер создания темы</td></tr>
       <tr><td><code>/new Название</code></td><td>Своё имя, остальные настройки по умолчанию</td></tr>
       <tr><td><code>/new sol</code></td><td>Профиль sol, основной сервер</td></tr>
       <tr><td><code>/new local</code></td><td>Сервер local, настройки запуска по умолчанию</td></tr>
@@ -70,7 +71,7 @@ const pages = {
   en: [
     ["✦ Welcome", "<p>General is for creating topics and configuring the bot. A working topic is a conversation with your OpenCodez agent.</p><blockquote>Press <b>New topic</b>, check the title and model, create the topic, and start writing.</blockquote><p>The default name is a random Old Russian word. Another word draws again; Title lets you enter your own. Disable the mode in Settings.</p><p>FILES collects files. AUDIO turns voice notes and audio files into text. You can finish these connections later.</p>"],
     ["✦ Create with the wizard", `
-      <p><b>New topic</b> in General, or <code>/new</code> without arguments, opens a personal card. Other members cannot see it.</p>
+      <p><b>New topic</b> in General, or <code>/new</code> without arguments, opens a creation card in the chat. Only the user who opened it can operate its controls.</p>
       <table striped compact><tr><th>Field</th><th>What to choose</th></tr>
       <tr><td>Title</td><td>Keep the random word, choose Another word, or enter your own. With random names disabled, the bot asks for a name immediately.</td></tr>
       <tr><td>Profile</td><td>Saved model, reasoning, System and agent. The initial choice comes from your launch preferences.</td></tr>
@@ -80,13 +81,14 @@ const pages = {
       <p>If the model, System or server is unavailable, select another profile/server or restore the connection and provider in OpenCodez. A profile changed while you were choosing requires confirmation again.</p>
       <blockquote><b>Create topic</b> first creates the Telegram topic. The OpenCodez session starts after your first ordinary prompt message. You can then use <code>/q</code> and check the launch with <code>/session</code>.</blockquote>
       <p>The selected name and parameters stay in the draft until creation. Close cancels the draft; <code>/cancel</code> cancels only the current field. Drafts last 15 minutes and disappear when the bot restarts.</p>
+      <p>The Topic ready card is deleted after two minutes. Restarting the bot preserves the deletion deadline.</p>
     `],
     ["⌨ Quick creation: /new", `
       <p>With arguments, the command creates a topic immediately. General form; square brackets mark optional parts:</p>
       <pre>/new [server] [profile] [dir:&lt;path&gt;] [title]</pre>
       <p><code>local</code> below is an example ID from the server list; <code>sol</code> is a saved profile name. Substitute your own values.</p>
       <table striped compact><tr><th>Command</th><th>Result</th></tr>
-      <tr><td><code>/new</code></td><td>Personal wizard</td></tr>
+      <tr><td><code>/new</code></td><td>Topic creation wizard</td></tr>
       <tr><td><code>/new Title</code></td><td>Custom name, other settings use defaults</td></tr>
       <tr><td><code>/new sol</code></td><td>Profile sol, default server</td></tr>
       <tr><td><code>/new local</code></td><td>Server local, default launch preferences</td></tr>

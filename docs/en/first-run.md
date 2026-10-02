@@ -22,7 +22,7 @@ Existing OpenRouter/direct-Groq settings remain usable. Adding a key through Tel
 
 Setup shows gateway readiness separately from confirmed artifact delivery and incoming-file storage. Enable artifact gateway generates a private token if needed and starts the listener. Compose already publishes its configured port; standalone deployments must make it reachable on a trusted network.
 
-Artifact plugin instructions provide a reusable agent prompt, the configured gateway URL, and a personal ephemeral screen for the separate artifact token. Install the bundled plugin and the complete `telegram-artifact-send` skill. Finish by sending a small file to FILES. Successful delivery records bounded host metadata so the bot can show a confirmed connection. No heartbeat or OpenCodez restart is required merely to check an existing transport. Incoming-file storage needs its own writable mount or SSH transfer; plugin delivery alone does not verify it.
+Artifact plugin instructions provide a reusable agent prompt and the configured gateway URL. The separate artifact token is sent to your private bot chat; open that chat and press Start first. Install the bundled plugin and the complete `telegram-artifact-send` skill. Finish by sending a small file to FILES. Successful delivery records bounded host metadata so the bot can show a confirmed connection. No heartbeat or OpenCodez restart is required merely to check an existing transport. Incoming-file storage needs its own writable mount or SSH transfer; plugin delivery alone does not verify it.
 
 ## Existing installations
 

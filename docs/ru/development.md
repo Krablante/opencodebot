@@ -16,7 +16,7 @@ OpenCodeBot запускается как ES-модули Node.js. Компил�
 | Транспорт OpenCodez и восстановление | `opencode.mjs`, `session-reconcile.mjs`, `backend-backoff.mjs`, `single-flight.mjs` |
 | Логические ходы и компакция | `logical-turn.mjs`, `compaction-reminders.mjs`, `context-export.mjs` |
 | Жизненный цикл и названия тем | `topic-lifecycle.mjs`, `topic-titles.mjs` |
-| General, личные карточки и setup | `control-menu.mjs`, `launch-menu.mjs`, `setup.mjs` |
+| General, карточки тем/профилей и setup | `control-menu.mjs`, `launch-menu.mjs`, `setup.mjs` |
 | Предпочтения и постоянное состояние | `user-settings.mjs`, `state.mjs` |
 | Видимый вывод | `render.mjs`, `render-side-effects.mjs`, `rich-markdown.mjs`, `rich-list-normalization.mjs`, `tool-formatting.mjs` |
 | Команды, вопросы и уведомления | `commands.mjs`, `questions.mjs`, `final-notifications.mjs`, `run-alerts.mjs` |

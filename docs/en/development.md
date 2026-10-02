@@ -16,7 +16,7 @@ Directories follow concrete boundaries. `src/config/` normalizes installation se
 | Backend transport / recovery | `opencode.mjs`, `session-reconcile.mjs`, `backend-backoff.mjs`, `single-flight.mjs` |
 | Logical turns / compaction | `logical-turn.mjs`, `compaction-reminders.mjs`, `context-export.mjs` |
 | Topic lifecycle and titles | `topic-lifecycle.mjs`, `topic-titles.mjs` |
-| General / personal screens / setup | `control-menu.mjs`, `launch-menu.mjs`, `setup.mjs` |
+| General / topic and profile cards / setup | `control-menu.mjs`, `launch-menu.mjs`, `setup.mjs` |
 | Saved preferences / durable storage | `user-settings.mjs`, `state.mjs` |
 | Visible output | `render.mjs`, `render-side-effects.mjs`, `rich-markdown.mjs`, `rich-list-normalization.mjs`, `tool-formatting.mjs` |
 | Commands, questions and notifications | `commands.mjs`, `questions.mjs`, `final-notifications.mjs`, `run-alerts.mjs` |

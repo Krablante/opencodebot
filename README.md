@@ -10,9 +10,9 @@ OpenCodeBot turns Telegram forum topics into conversations with your OpenCodez a
 
 ## 🧭 How it works
 
-![General and personal topic creation](assets/workspace-en.png)
+![General and topic creation](assets/workspace-en.png)
 
-*General on the left; personal topic creation on the right. Preview from the actual menu renderers with sample data; Telegram client layout varies.*
+*General on the left; topic creation on the right. Preview from the actual menu renderers with sample data; Telegram client layout varies.*
 
 A Telegram topic follows one main OpenCodez session. Assistant text arrives in completed blocks. Economy mode is the default and hides ordinary tool status; `/mode full` enables compact tool status. A saved mode survives restarts and updates. Hidden reasoning, raw tool arguments, and child sessions stay out of the mirror. The bot persists topic bindings, delivery markers, and incoming Telegram receipts so it can recover after a restart. Its `/q` prompt queue remains in memory.
 
@@ -43,7 +43,7 @@ For native Node.js, run `npm ci` first, then `npm start`. Do not run it alongsid
 
 ## 💬 Use it
 
-Open the pinned Rich Message menu in General with `/menu`. **New topic** suggests a random Old Russian word and shows the exact model before creation. Choose **Another word** or enter your own title; **Settings → Random topic names** disables the default naming mode. **Profiles** creates and edits presets using the live OpenCodez model catalog; personal selection screens do not clutter the group. `/new` opens the same flow, while `/new [server] [profile] [dir:<path>] [title]` remains a shortcut. The menu moves to a fresh message daily. Bot API 10.3+ is required for rich buttons and personal ephemeral screens.
+Open the pinned Rich Message menu in General with `/menu`. **New topic** suggests a random Old Russian word and shows the exact model before creation. Choose **Another word** or enter your own title; **Settings → Random topic names** disables the default naming mode. **Profiles** creates and edits presets using the live OpenCodez model catalog. Topic/profile cards are ordinary chat messages with automatic cleanup; the Topic ready confirmation disappears after two minutes, even across a bot restart. `/new` opens the same flow, while `/new [server] [profile] [dir:<path>] [title]` remains a shortcut. The menu moves to a fresh message daily. Bot API 10.3+ is required for Rich Messages and embedded buttons.
 
 In a bound topic, `/q` queues another prompt, `/kill` stops the run, `/reset` starts fresh while preserving the old session, and `/context` exports recent logical turns across compaction. Reply to an earlier Telegram prompt to rewind that exact OpenCodez turn. **How to use** contains the illustrated guide and downloadable English/Russian PDFs. Working topics have no permanent control panel.
 

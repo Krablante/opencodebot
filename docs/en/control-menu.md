@@ -20,13 +20,13 @@ The compact Servers line uses the existing event-stream connections for every co
 
 Recent topics shows up to six open working topics, ordered by activity. Each title is a full, wrapping link; its server and status appear on a separate line. Other topics remain accessible through Telegram's topic list.
 
-Opening this screen verifies topics before filling six slots, examining at most 18 candidates. Successful checks can be reused for one minute; Refresh checks again and continues cleanup when many old topics were removed. Bot API supplies no topic-list/read method or deletion update. A silent ephemeral message visible only to the requesting operator verifies the thread and is immediately deleted; a missing-thread error confirms deletion. It never reapplies a stored title or icon. Status events do not repeat these checks. Rate limits, timeouts and permission failures preserve bindings; rate limits pause checks until Telegram's retry time.
+Opening this screen verifies topics before filling six slots, examining at most 18 candidates. Successful checks can be reused for one minute; Refresh checks again and continues cleanup when many old topics were removed. Bot API supplies no topic-list/read method or deletion update. A silent ordinary message verifies the thread and is immediately deleted; a missing-thread error confirms deletion. It never reapplies a stored title or icon. Status events do not repeat these checks. Rate limits, timeouts and permission failures preserve bindings; rate limits pause checks until Telegram's retry time.
 
 Confirmed deletion disables the topic's mirror, clears its queued prompts and scheduled recovery, and removes any pending launch. The previous OpenCodez session and disabled binding history remain available. Delivery failures indicating a missing or closed topic use the same lifecycle cleanup. See [Telegram workflow](telegram-workflow.md#topics).
 
 ## Create a topic
 
-New topic opens a personal ephemeral screen with a ready-made random title. Its card shows the saved profile name, exact provider/model ID, reasoning level and server. The configured default profile is selected first; an installation with no concrete default uses a matching saved launch profile, then its most recently used profile, `sol` if available, or another saved profile with an explicit model. This selects the wizard's draft without changing saved defaults or existing sessions.
+New topic opens an ordinary Rich Message card in the chat with a ready-made random title. Its card shows the saved profile name, exact provider/model ID, reasoning level and server. The configured default profile is selected first; an installation with no concrete default uses a matching saved launch profile, then its most recently used profile, `sol` if available, or another saved profile with an explicit model. This selects the wizard's draft without changing saved defaults or existing sessions.
 
 By default, new topics receive a uniform random word from **2,630 Old Russian nouns** bundled with the bot. The list is about 38 KB, loads once, and needs no network or model. It contains Russian Wiktionary headwords in familiar Cyrillic; some remain in use today. [Source, selection criteria and the CC BY-SA 4.0 license](../../assets/old-russian-words.LICENSE.md) accompany the list.
 
@@ -38,7 +38,7 @@ Creation requires a specific available model and reasoning level. If a saved pro
 
 `/new` without arguments opens this flow. `/new [server] [profile] [dir:<path>] [title]` remains a shortcut. Both use the same pending-topic creation path. The OpenCodez session is created on the first prompt, bound before model/System changes, and retains a launch snapshot for retry and reset.
 
-After creation, the personal Topic ready card keeps its Open topic and Close buttons and is automatically deleted two minutes after it is shown. Closing it or opening another personal screen removes it earlier. The timer is held in memory and is lost if the bot restarts during those two minutes. Telegram may not deliver the deletion event to an offline user.
+After creation, the Topic ready card keeps its Open topic and Close buttons and is automatically deleted two minutes after it is shown. Closing it or opening another topic/profile screen removes it earlier. The deletion deadline is saved in bot state and restored after restart; overdue confirmations are removed on startup. Failed deletion is logged and retried, respecting Telegram's rate limits. Offline clients receive the updated chat history when they reconnect.
 
 ## Profiles and model catalog
 
@@ -50,13 +50,13 @@ New profiles inherit OpenCodez System assignments and reasoning defaults unless 
 
 Edits affect future launches. Existing sessions retain their model and launch snapshot. `/reset` without arguments can use that snapshot when the named profile was deleted; it preserves the server and directory and leaves the previous OpenCodez session intact.
 
-## Personal dialogs
+## Topic and profile dialogs
 
-Ephemeral screens are visible only to the operator who opened them. The bot checks the actor, chat, ephemeral message ID, draft lifetime and screen revision before applying a callback. Drafts expire after 15 minutes and disappear on restart. Saved settings persist. A stale or foreign callback cannot apply a choice.
+Topic/profile cards are ordinary messages visible to chat members. Only the operator who opened a card can use its controls. The bot checks the actor, chat, topic, message ID, draft lifetime and screen revision before applying a callback. Drafts expire after 15 minutes and disappear on restart; their cards are deleted on expiry or startup. Saved settings persist. A stale or foreign callback cannot apply a choice.
 
-Topic/profile fields use Force Reply on the personal Rich Message card itself. With random names enabled, creation shows a ready-made title without asking for input. Title, or disabling random names, opens the question on that card. Requesting another field activates a fresh personal card and retires the previous card after successful delivery, because Telegram cannot toggle Force Reply through a keyboard edit. Successful input updates that card; validation errors stay on the personal card too. No separate public question or error message is sent.
+Topic/profile fields use Force Reply on the Rich Message card itself. With random names enabled, creation shows a ready-made title without asking for input. Title, or disabling random names, opens the question on that card. Requesting another field activates a fresh card and retires the previous card after successful delivery, because Telegram cannot toggle Force Reply through a keyboard edit. Successful input updates that card; validation errors stay on the card too. No separate question or error message is sent.
 
-Input belongs to the actor, chat, topic and active card. Telegram can omit `reply_to_message` for an ephemeral reply; in that case, only an ephemeral message within that actor's active input context is accepted. Ordinary unquoted text is not consumed. `/cancel` cancels the field, and Close cancels the draft. Answer messages are removed when possible. Unhandled private menu answers cannot become agent prompts, file uploads or transcriptions. Explicit private commands remain available. Provider keys follow the separate pre-journal path described in [first run](first-run.md).
+Input belongs to the actor, chat, topic and active card and requires a reply to that card. Ordinary unquoted text is not consumed. `/cancel` cancels the field, and Close cancels the draft. Answer messages are removed when possible. Card identifiers are retained for 48 hours so late or foreign replies are consumed without becoming agent prompts, file uploads or transcriptions, including after restart. No input text is stored in these records. Provider keys follow the separate pre-journal path described in [first run](first-run.md).
 
 ## Settings and guide
 
@@ -68,6 +68,6 @@ The built-in guide has eight Rich Message pages: getting started, the creation w
 
 ## Ownership and checks
 
-`control-menu.mjs` owns the General panel, daily rotation and shared settings views. `launch-menu.mjs` owns personal topic/profile drafts. `user-settings.mjs` owns durable preferences, one-time import and catalog reads. `setup.mjs` owns connection setup. They reuse the existing Telegram client, state store and session creation path.
+`control-menu.mjs` owns the General panel, daily rotation and shared settings views. `launch-menu.mjs` owns topic/profile drafts and one cleanup timer for their saved card deadlines. `user-settings.mjs` owns durable preferences, one-time import and catalog reads. `setup.mjs` owns connection setup. They reuse the existing Telegram client, state store and session creation path.
 
 After deployment, check the pinned menu, one topic-creation flow, profile save/delete/restore, model-family expansion, stale callbacks, `/reset` and `/session`. Validate Rich HTML through Telegram's prepared-message API and inspect phone-sized previews. Prepared-message acceptance verifies the API parser, not the exact layout of every Telegram client.

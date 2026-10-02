@@ -2,11 +2,12 @@ import { randomBytes } from "node:crypto"
 import { getLanguage } from "./i18n/index.mjs"
 import { escapeHtml, telegramMessageLink, topicId } from "./telegram.mjs"
 import { buttonRows, menuTable, richButton, localText } from "./menu-format.mjs"
-import { logErrorEvent } from "./logger.mjs"
+import { logErrorEvent, logInfo } from "./logger.mjs"
 import { randomTopicTitle } from "./topic-titles.mjs"
 
 const INPUT_TTL = 15 * 60_000
 const CREATED_CARD_TTL = 2 * 60_000
+const CARD_RETENTION = 48 * 60 * 60_000
 const MODELS_PER_PAGE = 100
 
 // Short-lived, actor-owned drafts. Saved profiles and launch snapshots belong to UserSettings/StateStore.
@@ -16,9 +17,87 @@ export class LaunchMenu {
     this.drafts = new Map()
     this.inputs = new Map()
     this.lanes = new Map()
+    this.cleanupOperation = Promise.resolve()
   }
 
   text(ru, en) { return localText(ru, en, getLanguage()) }
+
+  cards() { return this.state.data.telegram.launchCards || [] }
+
+  async start() {
+    // Drafts cannot resume after restart. Confirmations retain their original deadline.
+    await this.state.update((data) => {
+      const drafts = (data.telegram.launchCards || []).filter((card) => !card.deleted && card.kind === "draft")
+      if (!drafts.length) return false
+      for (const card of drafts) card.deleteAt = Date.now()
+    })
+    await this.cleanup()
+  }
+
+  stop() { this.stopped = true; clearTimeout(this.cleanupTimer) }
+
+  scheduleCleanup(minDelay = 0) {
+    clearTimeout(this.cleanupTimer)
+    if (this.stopped || !this.cards().length) return
+    const next = this.cards().reduce((next, card) => Math.min(next, card.deleted ? card.retainUntil : Math.min(card.deleteAt, card.retainUntil)), Infinity)
+    this.cleanupTimer = setTimeout(() => {
+      this.cleanup().catch((error) => logErrorEvent("launch_menu.cleanup_failed", error))
+    }, Math.max(minDelay, next - Date.now()))
+    this.cleanupTimer.unref()
+  }
+
+  cleanup() {
+    const run = this.cleanupOperation.catch(() => {}).then(async () => {
+      await this.state.update((data) => {
+        const cards = this.cards().filter((card) => card.retainUntil > Date.now())
+        if (cards.length === this.cards().length) return false
+        data.telegram.launchCards = cards
+      })
+      for (const card of this.cards()) {
+        if (this.stopped || card.deleted || card.deleteAt > Date.now()) continue
+        for (const draft of this.drafts.values()) {
+          if (String(draft.chatId) === String(card.chatId) && draft.messageId === card.messageId) this.forgetDraft(draft)
+        }
+        let retryAt
+        try {
+          await this.telegram.request("deleteMessage", { chat_id: card.chatId, message_id: card.messageId }, 0,
+            { suppressFailureLog: true, timeoutMs: 10_000, retryRateLimit: false })
+          logInfo("launch_menu.card_deleted", { kind: card.kind })
+        } catch (error) {
+          if (!/message to delete not found/i.test(error.message)) {
+            retryAt = Date.now() + Math.max(60_000, (Number(error.retryAfter) || 0) * 1000 + 1000)
+            logErrorEvent("launch_menu.delete_failed", error, { kind: card.kind, retryInMs: retryAt - Date.now() })
+          }
+        }
+        await this.state.update(() => {
+          if (retryAt) card.deleteAt = retryAt
+          else card.deleted = true
+        })
+      }
+    }).then(() => this.scheduleCleanup(), (error) => {
+      this.scheduleCleanup(60_000)
+      throw error
+    })
+    this.cleanupOperation = run
+    return run
+  }
+
+  async rememberCard(d) {
+    await this.state.update((data) => {
+      data.telegram.launchCards ||= []
+      let card = data.telegram.launchCards.find((card) => String(card.chatId) === String(d.chatId) && card.messageId === d.messageId)
+      const kind = d.page === "created" ? "created" : "draft"
+      const deleteAt = kind === "created" ? (card?.kind === "created" ? card.deleteAt : Date.now() + CREATED_CARD_TTL) : d.expires
+      if (card && card.kind === kind && card.deleteAt === deleteAt && card.rev === d.rev) return false
+      if (!card) {
+        card = { chatId: d.chatId, topicId: d.topicId, messageId: d.messageId, userId: d.userId,
+          id: d.id, retainUntil: Date.now() + CARD_RETENTION }
+        data.telegram.launchCards.push(card)
+      }
+      Object.assign(card, { kind, deleteAt, rev: d.rev })
+    })
+    this.scheduleCleanup()
+  }
 
   open(query, page = "new") {
     const key = `actor:${query.from.id}`
@@ -31,7 +110,8 @@ export class LaunchMenu {
   async openCurrent(query, page = "new") {
     this.expire()
     const userId = query.from.id
-    for (const [id, draft] of this.drafts) if (draft.userId === userId) await this.close(draft)
+    for (const draft of this.drafts.values()) if (draft.userId === userId) await this.close(draft)
+    for (const card of this.cards().filter((card) => card.userId === userId && !card.deleted)) await this.deleteCard(card)
     const serverID = this.config.defaultPrompt.serverID || this.config.opencode.servers[0].id
     const d = { id: randomBytes(4).toString("hex"), userId, chatId: query.message.chat.id, topicId: topicId(query.message),
       rev: 0, page, expires: Date.now() + INPUT_TTL, serverID,
@@ -41,7 +121,7 @@ export class LaunchMenu {
     this.drafts.set(d.id, d)
     try {
       if (page === "new" && !d.name) await this.ask(d, "title", this.text("Как назвать новую тему?", "What should the new topic be called?"))
-      await this.sendCard(d, query.id)
+      await this.sendCard(d)
     } catch (error) {
       await this.close(d)
       throw error
@@ -55,9 +135,14 @@ export class LaunchMenu {
     const action = parts.join(":")
     const prior = this.lanes.get(id) || Promise.resolve()
     const run = prior.catch(() => {}).then(async () => {
-      const d = this.drafts.get(id)
+      let d = this.drafts.get(id)
+      // A saved confirmation can still be closed after restart or a failed deletion.
+      if (!d && action === "close") {
+        const card = this.cards().find((card) => card.id === id && !card.deleted && card.kind === "created")
+        if (card) d = { ...card, expires: card.retainUntil, allowedActions: new Set(["close"]) }
+      }
       if (!d || d.expires < Date.now() || d.userId !== query.from.id || String(d.chatId) !== String(query.message?.chat?.id)
-        || Number(query.message?.ephemeral_message_id) !== d.messageId || Number(rev) !== d.rev || !d.allowedActions?.has(action)) {
+        || topicId(query.message) !== d.topicId || Number(query.message?.message_id) !== d.messageId || Number(rev) !== d.rev || !d.allowedActions?.has(action)) {
         await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: this.text("Экран устарел. Открой меню снова.", "This screen expired. Open the menu again."), showAlert: true })
         return
       }
@@ -65,7 +150,7 @@ export class LaunchMenu {
       d.expires = Date.now() + INPUT_TTL
       try {
         await this.act(d, action)
-        if (this.drafts.has(id)) await this.draw(d, query.id)
+        if (this.drafts.has(id)) await this.draw(d)
       } catch (error) {
         logErrorEvent("launch_menu.action_failed", error, { action: parts[0] })
         const translated = {
@@ -247,17 +332,17 @@ export class LaunchMenu {
     d.inputRequest = { field, prompt: text }
   }
 
-  async sendCard(d, callbackQueryId) {
+  async sendCard(d) {
     const oldMessageId = d.messageId
     const input = d.inputRequest
-    // Telegram cannot toggle Force Reply through an edit. A fresh personal card
+    // Telegram cannot toggle Force Reply through an edit. A fresh card
     // activates each input request; retire the previous card only after success.
-    const sent = await this.telegram.sendRichMessage({ chatId: d.chatId, topicId: d.topicId, html: await this.render(d),
-      ephemeral: { receiver_user_id: d.userId, callback_query_id: callbackQueryId },
+    const sent = await this.telegram.sendRichMessage({ chatId: d.chatId, topicId: d.topicId, html: await this.render(d), disableNotification: true,
       ...(input ? { replyMarkup: { force_reply: true, input_field_placeholder: input.prompt.slice(0, 64) } } : {}),
     })
-    if (!sent?.ephemeral_message_id) throw new Error("Bot API 10.3 ephemeral messages are required. Update your local Bot API server.")
-    d.messageId = sent.ephemeral_message_id
+    if (!sent?.message_id) throw new Error("Telegram did not return the card message ID")
+    d.messageId = sent.message_id
+    await this.rememberCard(d)
     if (input) this.inputs.set(d.userId, { ...input, draftId: d.id, messageId: d.messageId })
     delete d.inputRequest
     if (oldMessageId && oldMessageId !== d.messageId) await this.deleteCard(d, oldMessageId)
@@ -265,26 +350,24 @@ export class LaunchMenu {
   }
 
   async deleteCard(d, messageId = d.messageId) {
-    if (messageId) await this.telegram.request("deleteEphemeralMessage", {
-      chat_id: d.chatId, receiver_user_id: d.userId, ephemeral_message_id: messageId,
-    }, 0, { suppressFailureLog: true }).catch(() => {})
+    const card = this.cards().find((card) => String(card.chatId) === String(d.chatId) && card.messageId === messageId && !card.deleted)
+    if (!card) return
+    await this.state.update(() => { card.deleteAt = Date.now() })
+    await this.cleanup()
   }
 
   async deleteInputMessage(d, message) {
-    if (message.ephemeral_message_id) await this.deleteCard(d, message.ephemeral_message_id)
-    else if (message.message_id) await this.telegram.deleteMessage({ chatId: d.chatId, messageId: message.message_id }).catch(() => {})
+    if (message.message_id) await this.telegram.deleteMessage({ chatId: d.chatId, messageId: message.message_id }).catch(() => {})
   }
 
   async handleMessage(message) {
+    const replyId = message.reply_to_message?.message_id
+    const menuReply = this.cards().some((card) => String(card.chatId) === String(message.chat.id) && card.messageId === replyId)
     const input = this.inputs.get(message.from?.id)
     const d = input && this.drafts.get(input.draftId)
-    if (!d || d.expires < Date.now() || String(message.chat.id) !== String(d.chatId) || topicId(message) !== d.topicId) return false
-    const replyId = message.reply_to_message?.ephemeral_message_id
+    if (!d || d.expires < Date.now() || String(message.chat.id) !== String(d.chatId) || topicId(message) !== d.topicId) return menuReply
     const cancel = message.text === "/cancel"
-    // Telegram may omit reply_to_message on an ephemeral reply. Only a private
-    // message in this actor's active input context can use that fallback.
-    if (!cancel && (replyId !== undefined ? Number(replyId) !== input.messageId
-      : message.reply_to_message || !message.ephemeral_message_id)) return false
+    if ((!cancel || replyId !== undefined) && Number(replyId) !== input.messageId) return menuReply
     const value = String(message.text || "").trim()
     try {
       if (!value) throw new Error(this.text("Введи текст в строке сообщения.", "Enter text in the message input."))
@@ -312,17 +395,12 @@ export class LaunchMenu {
     return true
   }
 
-  async draw(d, callbackQueryId) {
-    if (d.inputRequest) return this.sendCard(d, callbackQueryId)
+  async draw(d) {
+    if (d.inputRequest) return this.sendCard(d)
     const html = await this.render(d)
-    try { await this.telegram.editRichMessage({ chatId: d.chatId, receiverUserId: d.userId, ephemeralMessageId: d.messageId, html }) }
+    try { await this.telegram.editRichMessage({ chatId: d.chatId, messageId: d.messageId, html }) }
     catch (error) { if (!/message is not modified/i.test(error.message)) throw error }
-    if (d.page === "created" && this.drafts.get(d.id) === d && !d.closeTimer) {
-      d.closeTimer = setTimeout(() => {
-        this.close(d).catch((error) => logErrorEvent("launch_menu.close_failed", error))
-      }, CREATED_CARD_TTL)
-      d.closeTimer.unref()
-    }
+    if (this.drafts.get(d.id) === d) await this.rememberCard(d)
   }
 
   async render(d) {
@@ -331,7 +409,6 @@ export class LaunchMenu {
     const b = (text, action, style) => { d.allowedActions.add(action); return { text, callback_data: `launch:${d.id}:${d.rev}:${action}`, style } }
     const back = b(this.text("‹ Назад", "‹ Back"), d.editing ? "editback" : "new")
     const close = b(this.text("Закрыть", "Close"), "close")
-    const footer = `<footer>${this.text("Личный экран · другие участники не видят этот выбор", "Personal screen · other members cannot see these choices")}</footer>`
     const currentInput = this.inputs.get(d.userId)
     const input = d.inputRequest || (currentInput?.draftId === d.id ? currentInput : null)
     let body = "", rows = []
@@ -427,7 +504,7 @@ export class LaunchMenu {
     d.error = ""; d.notice = ""
     const question = input && !(d.page === "new" && !d.name && input.field === "title") ? `<b>${escapeHtml(input.prompt)}</b><br>` : ""
     const inputHint = input ? `<blockquote>${question}${this.text("Ответь на эту карточку в строке сообщения. /cancel — отменить ввод.", "Reply to this card using the message input. /cancel cancels input.")}</blockquote>` : ""
-    return body + inputHint + (notice ? `<blockquote>${escapeHtml(notice)}</blockquote>` : "") + buttonRows(rows) + footer
+    return body + inputHint + (notice ? `<blockquote>${escapeHtml(notice)}</blockquote>` : "") + buttonRows(rows)
   }
 
   profileTable(name, p = {}, compact = false, reasoning) {
@@ -439,16 +516,15 @@ export class LaunchMenu {
     ])
   }
 
-  async close(d) {
-    clearTimeout(d.closeTimer)
-    delete d.closeTimer
+  forgetDraft(d) {
     this.drafts.delete(d.id)
     const input = this.inputs.get(d.userId)
     if (input?.draftId === d.id) this.inputs.delete(d.userId)
-    await this.deleteCard(d)
   }
 
+  async close(d) { this.forgetDraft(d); await this.deleteCard(d) }
+
   expire() {
-    for (const [id, d] of this.drafts) if (d.expires < Date.now()) { this.drafts.delete(id); if (this.inputs.get(d.userId)?.draftId === id) this.inputs.delete(d.userId) }
+    for (const d of this.drafts.values()) if (d.expires < Date.now()) this.forgetDraft(d)
   }
 }

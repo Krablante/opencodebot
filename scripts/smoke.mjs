@@ -152,10 +152,10 @@ async function smokeWorkspacePreferences() {
     await state.disableFinalNotificationsFor(42)
     assert.equal(state.data.preferences.notificationChoices[42], false)
     const messages = []
-    let personalMessageId = 9
+    let cardMessageId = 9
     let acceptedKey = ""
     const telegram = {
-      sendRichMessage: async (payload) => { messages.push(payload); return { ephemeral_message_id: ++personalMessageId } },
+      sendRichMessage: async (payload) => { assert.equal(payload.ephemeral, undefined); messages.push(payload); return { message_id: ++cardMessageId } },
       editRichMessage: async (payload) => { messages.push(payload) },
       sendMessage: async (payload) => { messages.push(payload); return { message_id: 11 } },
       answerCallbackQuery: async (payload) => { messages.push(payload) },
@@ -164,38 +164,43 @@ async function smokeWorkspacePreferences() {
     const launch = new LaunchMenu({ config: c, state, opencode: backend, settings, telegram, createSession: async (_message, value) => { assert.equal(value.promptProfile.model.modelID, "gpt-6.1-sol"); return { message_thread_id: 90 } } })
     const draft = await launch.open({ from: { id: 42 }, message: { chat: { id: -1001 } } }, "profiles")
     const count = messages.length
-    await launch.handleCallback({ id: "foreign", from: { id: 43 }, message: { chat: { id: -1001 }, ephemeral_message_id: 10 }, data: `launch:${draft.id}:${draft.rev}:default` })
+    await launch.handleCallback({ id: "foreign", from: { id: 43 }, message: { chat: { id: -1001 }, message_id: 10 }, data: `launch:${draft.id}:${draft.rev}:default` })
     assert.equal(messages.length, count + 1)
     assert.ok(messages.at(-1).showAlert)
     draft.page = "new"; draft.name = "Example"; draft.profileName = "sol"
     await launch.render(draft)
     await launch.act(draft, "create")
     assert.equal(draft.page, "created")
+    await launch.draw(draft)
+    const confirmation = launch.cards().find((card) => card.messageId === draft.messageId)
+    assert.ok(Math.abs(confirmation.deleteAt - Date.now() - 120_000) < 1000, "Confirmation deletion is saved with a two-minute deadline")
     await launch.close(draft)
     await state.setRandomTopicNamesEnabled(false) // Exercise the manual-title Force Reply flow.
     const beforeInput = messages.length
     const personal = await launch.open({ from: { id: 42 }, message: { chat: { id: -1001 } } })
-    assert.equal(messages.length, beforeInput + 1, "Creation opens one personal card, without a public question")
+    assert.equal(messages.length, beforeInput + 1, "Creation opens one ordinary card with the input question")
     assert.equal(messages.at(-1).replyMarkup.force_reply, true)
-    const answer = { from: { id: 42 }, chat: { id: -1001 }, ephemeral_message_id: 500, text: "First title", reply_to_message: { ephemeral_message_id: personal.messageId } }
+    const answer = { from: { id: 42 }, chat: { id: -1001 }, message_id: 500, text: "First title", reply_to_message: { message_id: personal.messageId } }
     assert.equal(await launch.handleMessage(answer), true)
     assert.equal(personal.name, "First title")
     const oldCardId = personal.messageId
     await launch.ask(personal, "title", "Topic title")
     await launch.draw(personal)
     assert.notEqual(personal.messageId, oldCardId)
-    assert.equal(await launch.handleMessage({ ...answer, text: "Stale title" }), false)
-    assert.equal(await launch.handleMessage({ ...answer, from: { id: 43 } }), false)
-    assert.equal(await launch.handleMessage({ ...answer, reply_to_message: undefined, ephemeral_message_id: undefined }), false)
-    assert.equal(await launch.handleMessage({ ...answer, reply_to_message: undefined, text: "Private title" }), true)
-    assert.equal(personal.name, "Private title", "Private replies may omit reply_to_message")
+    assert.equal(await launch.handleMessage({ ...answer, text: "Stale title" }), true, "Stale menu replies are consumed without becoming prompts")
+    assert.equal(await launch.handleMessage({ ...answer, from: { id: 43 } }), true)
+    assert.equal(personal.name, "First title", "Stale and foreign replies cannot edit the draft")
+    assert.equal(await launch.handleMessage({ ...answer, reply_to_message: undefined }), false)
+    assert.equal(await launch.handleMessage({ ...answer, reply_to_message: { message_id: personal.messageId }, text: "Second title" }), true)
+    assert.equal(personal.name, "Second title", "Ordinary inputs require a reply to the active card")
     await launch.ask(personal, "title", "Topic title")
     await launch.draw(personal)
-    assert.equal(await launch.handleMessage({ ...answer, reply_to_message: undefined, text: "x".repeat(101) }), true)
-    assert.ok(messages.at(-1).html.includes("100 characters"), "Invalid input stays on the personal card")
+    assert.equal(await launch.handleMessage({ ...answer, reply_to_message: { message_id: personal.messageId }, text: "x".repeat(101) }), true)
+    assert.ok(messages.at(-1).html.includes("100 characters"), "Invalid input stays on the card")
     assert.equal(await launch.handleMessage({ ...answer, reply_to_message: undefined, text: "/cancel" }), true)
     assert.equal(launch.inputs.has(42), false)
     await launch.close(personal)
+    launch.stop()
     const setup = new Setup({ config: c, state, settings: { storeGroqKey: async (key) => { acceptedKey = key } }, telegram, speech: {} })
     await state.update((data) => { data.preferences.audioInputs = { 42: { chatId: -1001, topicId: 9, promptId: 77, expires: Date.now() + 10000 } } })
     const safe = await setup.prepareUpdate({ update_id: 1, message: { chat: { id: -1001 }, from: { id: 42 }, message_thread_id: 9, message_id: 80, text: "gsk_disposable_key" } })
@@ -347,9 +352,10 @@ async function smokeDeliveryBounds() {
 
     const tg = new TelegramClient("test")
     const calls = []
-    tg.request = async (method, payload) => { calls.push({ method, payload }); return { ephemeral_message_id: 42 } }
-    assert.equal(await tg.forumTopicExists({ chatId: -1001, topicId: 1, receiverUserId: 42 }), true)
-    assert.deepEqual(calls.map((call) => call.method), ["sendRichMessage", "deleteEphemeralMessage"])
+    tg.request = async (method, payload) => { calls.push({ method, payload }); return { message_id: 42 } }
+    assert.equal(await tg.forumTopicExists({ chatId: -1001, topicId: 1 }), true)
+    assert.deepEqual(calls.map((call) => call.method), ["sendRichMessage", "deleteMessage"])
+    assert.equal(calls[0].payload.ephemeral_message_parameters, undefined)
     assert.ok(!calls.some((call) => Object.hasOwn(call.payload, "name")))
 
     const snapshot = structuredClone(c.promptProfiles.sol)

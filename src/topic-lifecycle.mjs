@@ -109,12 +109,11 @@ export function createTopicLifecycle({ config, state, telegram, opencode, settin
     return Boolean(bindings.length)
   }
 
-  async function topicExists(record, { force = false, receiverUserId = config.telegram.allowedUserIds[0] } = {}) {
+  async function topicExists(record, { force = false } = {}) {
     const key = `${record.chatId}:${record.topicId}`
     const cached = topicChecks.get(key)
     if (!force && cached && Date.now() - cached.at < 60_000) return true
-    const exists = await telegram.forumTopicExists({ chatId: record.chatId, topicId: record.topicId,
-      receiverUserId })
+    const exists = await telegram.forumTopicExists({ chatId: record.chatId, topicId: record.topicId })
     if (!exists) await disableTopicMirror(record.chatId, record.topicId, "Telegram topic deleted")
     else {
       topicChecks.delete(key)

@@ -70,20 +70,19 @@ export class TelegramClient {
     return me
   }
 
-  async forumTopicExists({ chatId, topicId, receiverUserId }) {
-    if (!receiverUserId || !topicId) throw new Error("Topic availability requires an operator and thread id")
+  async forumTopicExists({ chatId, topicId }) {
+    if (!topicId) throw new Error("Topic availability requires a thread id")
     if (Date.now() < (this.topicCheckRetryAt || 0)) throw new Error("Telegram topic checks are temporarily rate limited")
-    // A personal, silent probe verifies the thread without overwriting a missed
+    // A silent probe verifies the thread without overwriting a missed
     // rename. Empty edits and sendChatAction also succeed for deleted topics.
     try {
       const probe = await this.request("sendRichMessage", { chat_id: chatId, message_thread_id: topicId,
-        rich_message: { html: "<p>…</p>" }, disable_notification: true,
-        ephemeral_message_parameters: { receiver_user_id: receiverUserId } }, 0,
+        rich_message: { html: "<p>…</p>" }, disable_notification: true }, 0,
         { suppressFailureLog: true, timeoutMs: 10_000, retryRateLimit: false })
-      if (!probe?.ephemeral_message_id) throw new Error("Topic check requires Bot API 10.3 ephemeral messages")
-      await this.request("deleteEphemeralMessage", { chat_id: chatId, receiver_user_id: receiverUserId,
-        ephemeral_message_id: probe.ephemeral_message_id }, 0,
-        { suppressFailureLog: true, timeoutMs: 10_000, retryRateLimit: false }).catch(() => {})
+      if (!probe?.message_id) throw new Error("Telegram did not return the topic probe message ID")
+      await this.request("deleteMessage", { chat_id: chatId, message_id: probe.message_id }, 0,
+        { suppressFailureLog: true, timeoutMs: 10_000, retryRateLimit: false })
+        .catch((error) => logErrorEvent("telegram.topic_probe.delete_failed", error))
       return true
     } catch (error) {
       if (isDeletedTopicError(error)) return false

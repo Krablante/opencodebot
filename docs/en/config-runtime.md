@@ -158,7 +158,7 @@ Delivery journals accept only complete newline-terminated records. Startup drops
 
 Activity leases and reconcile cursors share a deferred atomic save within one minute, flushed on shutdown. Immediate state writes persist other mutations too. A failed state save reports the error; deferred saves retry after five seconds. A crash loses mutations that never reached disk. See [recovery guarantees](architecture.md#recovery-and-limits).
 
-The prompt queue, multipart/media buffers, personal drafts and unfinished voice jobs are memory-only. Prompt queues allow 20 items per session, 100 overall and 64 MiB of text/inline-file content. Queued files also occupy staging disk. Restarts drop these buffers; inbox receipt does not make them durable.
+The prompt queue, multipart/media buffers, topic/profile drafts and unfinished voice jobs are memory-only. Wizard-card identifiers and deletion deadlines are saved in `state.json` for cleanup after restart; identifiers expire after 48 hours and contain no input text. Prompt queues allow 20 items per session, 100 overall and 64 MiB of text/inline-file content. Queued files also occupy staging disk. Restarts drop these buffers; inbox receipt does not make them durable.
 
 A confirmed session-specific `404` removes its binding and session-keyed records, then keeps a pending launch in the same topic. `/reset` preserves old session history instead. Do not edit live state through a second `StateStore.load`: loading can migrate, compact and save.
 

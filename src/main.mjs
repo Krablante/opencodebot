@@ -234,6 +234,7 @@ process.once("SIGTERM", () => requestShutdown("SIGTERM"))
 await telegram.deleteWebhook()
 await finalVoice.start()
 await telegramPolling.syncCommandMenu()
+await launchMenu.start()
 await controlMenu.start()
 await updateManager.start()
 const cleanupStaging = () => Promise.all([
@@ -279,6 +280,7 @@ async function requestShutdown(signalName, exitCode = 0) {
   console.info(`[opencodebot] received ${signalName}, shutting down`)
   updateManager.stop()
   controlMenu.stop()
+  launchMenu.stop()
   finalVoice.stop()
   abort.abort()
   setTimeout(() => {
