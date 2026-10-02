@@ -38,6 +38,8 @@ Creation requires a specific available model and reasoning level. If a saved pro
 
 `/new` without arguments opens this flow. `/new [server] [profile] [dir:<path>] [title]` remains a shortcut. Both use the same pending-topic creation path. The OpenCodez session is created on the first prompt, bound before model/System changes, and retains a launch snapshot for retry and reset.
 
+After creation, the personal Topic ready card keeps its Open topic and Close buttons and is automatically deleted two minutes after it is shown. Closing it or opening another personal screen removes it earlier. The timer is held in memory and is lost if the bot restarts during those two minutes. Telegram may not deliver the deletion event to an offline user.
+
 ## Profiles and model catalog
 
 Profiles can be created, copied, renamed, edited, set as default, deleted and restored from Telegram. A new installation starts with `sol`, `solm`, `solx` and `d4flash`. Existing installations import their former built-ins and explicit configuration once into the same editable collection. Deleted profiles do not reappear after restart or update.

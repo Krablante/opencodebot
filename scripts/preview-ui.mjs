@@ -50,11 +50,12 @@ for (const language of ["ru", "en"]) {
   const recent = menu.renderSessions({ failedServers: new Set(), statuses: new Map([["local:preview-0", { type: "busy" }]]) })
   const draft = { id: "preview", rev: 0, page: "new", name: "Храмина", serverID: "local", directory: "/home/operator/project", profileName: "sol" }
   const topic = await launch.render(draft)
+  const created = await launch.render({ ...draft, page: "created", topicLink: "https://t.me/c/1000000000/100" })
   const input = await launch.render({ ...draft, userId: 42, name: "", inputRequest: { field: "title", prompt: language === "ru" ? "Как назвать новую тему?" : "What should the new topic be called?" } })
   const servers = await launch.render({ ...draft, page: "servers" })
   const modelDraft = { ...draft, page: "models", editing: true, catalog, query: "", profile: config.promptProfiles.sol }
   const models = await launch.render(modelDraft)
-  for (const [name, html] of [["home", richView(home.text, home.replyMarkup)], ["settings", richView(settingsView.text, settingsView.replyMarkup)], ["recent", richView(recent.text, recent.replyMarkup)], ["new", topic], ["input", input], ["servers", servers], ["models", models]]) await fs.writeFile(path.join(output, `${name}-${language}.html`), shell(`${name === "home" ? "<style>main>table td:first-child{width:68%}main>table td:last-child{text-align:right}</style>" : ""}<main>${html}</main>`))
+  for (const [name, html] of [["home", richView(home.text, home.replyMarkup)], ["settings", richView(settingsView.text, settingsView.replyMarkup)], ["recent", richView(recent.text, recent.replyMarkup)], ["new", topic], ["created", created], ["input", input], ["servers", servers], ["models", models]]) await fs.writeFile(path.join(output, `${name}-${language}.html`), shell(`${name === "home" ? "<style>main>table td:first-child{width:68%}main>table td:last-child{text-align:right}</style>" : ""}<main>${html}</main>`))
   for (let index = 0; index < guidePage(0, language).total; index += 1) {
     const page = menu.renderHelp(index)
     await fs.writeFile(path.join(output, `help-${index + 1}-${language}.html`), shell(`<main>${richView(page.text, page.replyMarkup)}</main>`))

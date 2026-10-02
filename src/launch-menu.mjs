@@ -6,6 +6,7 @@ import { logErrorEvent } from "./logger.mjs"
 import { randomTopicTitle } from "./topic-titles.mjs"
 
 const INPUT_TTL = 15 * 60_000
+const CREATED_CARD_TTL = 2 * 60_000
 const MODELS_PER_PAGE = 100
 
 // Short-lived, actor-owned drafts. Saved profiles and launch snapshots belong to UserSettings/StateStore.
@@ -316,6 +317,12 @@ export class LaunchMenu {
     const html = await this.render(d)
     try { await this.telegram.editRichMessage({ chatId: d.chatId, receiverUserId: d.userId, ephemeralMessageId: d.messageId, html }) }
     catch (error) { if (!/message is not modified/i.test(error.message)) throw error }
+    if (d.page === "created" && this.drafts.get(d.id) === d && !d.closeTimer) {
+      d.closeTimer = setTimeout(() => {
+        this.close(d).catch((error) => logErrorEvent("launch_menu.close_failed", error))
+      }, CREATED_CARD_TTL)
+      d.closeTimer.unref()
+    }
   }
 
   async render(d) {
@@ -433,6 +440,8 @@ export class LaunchMenu {
   }
 
   async close(d) {
+    clearTimeout(d.closeTimer)
+    delete d.closeTimer
     this.drafts.delete(d.id)
     const input = this.inputs.get(d.userId)
     if (input?.draftId === d.id) this.inputs.delete(d.userId)
