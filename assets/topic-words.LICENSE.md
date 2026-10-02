@@ -1,0 +1,9 @@
+# Random topic words
+
+`topic-words.txt` contains 943 manually selected Russian nouns for animals, plants, objects, landscapes, traditional life and fairy-tale imagery. Selection favors recognizable meanings, clear mental images and convenient pronunciation. Opaque historical forms, abstract dictionary filler and redundant spelling or diminutive variants are excluded. Historical nouns use readable modern spelling; the list is a practical naming collection, not a historical dictionary.
+
+The historical portion retains 161 recognizable headwords from the Russian Wiktionary category [Древнерусские существительные](https://ru.wiktionary.org/wiki/Категория:Древнерусские_существительные), originally retrieved on 2026-09-30 through the public MediaWiki API. Credit: Russian Wiktionary contributors. Historical final hard signs (`ъ`) are removed for display and duplicate spellings are consolidated. Source articles and contributor histories remain available at `https://ru.wiktionary.org/wiki/<original-headword>` and each article's History tab. Other entries were independently selected for OpenCodeBot; no other word collection was copied.
+
+The combined word-list asset is distributed under [Creative Commons Attribution-ShareAlike 4.0 International](https://creativecommons.org/licenses/by-sa/4.0/), separately from the application's MIT license. No dictionary definitions or examples are included. The unfiltered historical collection is no longer shipped; previous versions remain in Git history.
+
+Node's `crypto.randomInt` picks a word uniformly, then independently picks lowercase, uppercase or an initial capital with equal probability. Repetition is possible; the file loads once, with no network requests, model inference or usage-history storage. Removing a word from this collection does not rename an existing topic.

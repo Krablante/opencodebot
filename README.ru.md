@@ -55,4 +55,4 @@ docker compose logs -f opencodebot
 
 **Документация:** [индекс языков](docs/README.md) · 🇷🇺 [Русский](docs/ru/README.md) · 🇬🇧 [English](docs/en/README.md). Во всех языках одинаковая структура тем; новый язык добавляется каталогом и навигацией.
 
-Приложение распространяется под MIT, встроенный [список древнерусских слов](assets/old-russian-words.LICENSE.md) — под CC BY-SA 4.0. OpenCodeBot — самостоятельное дополнение к [OpenCodez](https://github.com/Krablante/opencodez).
+Приложение распространяется под MIT, отобранный [словарь названий тем](assets/topic-words.LICENSE.md) — под CC BY-SA 4.0. OpenCodeBot — самостоятельное дополнение к [OpenCodez](https://github.com/Krablante/opencodez).

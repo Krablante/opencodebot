@@ -55,4 +55,4 @@ See [Telegram workflow](docs/en/telegram-workflow.md) for topic rules and the fu
 
 **Documentation:** [language index](docs/README.md) · 🇬🇧 [English](docs/en/README.md) · 🇷🇺 [Русский](docs/ru/README.md). Every language follows the same topic structure; another language is one directory and navigation update.
 
-The application is MIT licensed; the bundled [Old Russian word list](assets/old-russian-words.LICENSE.md) is CC BY-SA 4.0. OpenCodeBot is an independent companion to [OpenCodez](https://github.com/Krablante/opencodez).
+The application is MIT licensed; the curated [topic word list](assets/topic-words.LICENSE.md) is CC BY-SA 4.0. OpenCodeBot is an independent companion to [OpenCodez](https://github.com/Krablante/opencodez).

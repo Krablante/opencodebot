@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const docs = path.join(root, "docs")
 const languages = (await fs.readdir(docs, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name)
-const files = ["README.md", "README.ru.md", "docs/README.md", "plugins/opencodebot-artifacts/README.md", "assets/old-russian-words.LICENSE.md"]
+const files = ["README.md", "README.ru.md", "docs/README.md", "plugins/opencodebot-artifacts/README.md", "assets/topic-words.LICENSE.md"]
 const errors = []
 let reference
 for (const language of languages) {

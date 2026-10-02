@@ -28,7 +28,9 @@ Confirmed deletion disables the topic's mirror, clears its queued prompts and sc
 
 New topic opens an ordinary Rich Message card in the chat with a ready-made random title. Its card shows the saved profile name, exact provider/model ID, reasoning level and server. The configured default profile is selected first; an installation with no concrete default uses a matching saved launch profile, then its most recently used profile, `sol` if available, or another saved profile with an explicit model. This selects the wizard's draft without changing saved defaults or existing sessions.
 
-By default, new topics receive a uniform random word from **3,483 bundled Russian nouns**: the original 2,630 Old Russian headwords plus 853 curated words for animals, plants, objects, landscapes, traditional life and fairy-tale imagery. The two files total about 50 KB and load once, without a network or model. The original list retains its CC BY-SA 4.0 attribution; the additions are MIT licensed. [Sources, selection criteria and licenses](../../assets/old-russian-words.LICENSE.md) accompany the lists.
+By default, new topics receive a uniform random word from **943 curated Russian nouns** for animals, plants, objects, landscapes, traditional life and fairy-tale imagery. The whole pool follows the same selection criteria: recognizable meanings, clear mental images and convenient pronunciation. It retains 161 headwords from the former historical collection in readable spelling. Opaque forms and redundant variants are excluded.
+
+The unfiltered historical dictionary is no longer shipped. The single curated list is about 12 KB and loads once, without a network or model. [Sources, selection criteria and the CC BY-SA 4.0 license](../../assets/topic-words.LICENSE.md) accompany the list; the application remains MIT licensed.
 
 Each word independently receives one of three equally likely styles: lowercase, uppercase or an initial capital, such as `веретено`, `ВЕРЕТЕНО` or `Веретено`. The chosen spelling stays the same from preview through creation and later restarts. The managed server suffix keeps its original spelling.
 

@@ -2,9 +2,7 @@ import { randomInt } from "node:crypto"
 import { readFileSync } from "node:fs"
 
 const TELEGRAM_TOPIC_TITLE_MAX = 128
-const TOPIC_WORDS = [...new Set(["old-russian-words.txt", "russian-image-words.txt"].flatMap((file) =>
-  readFileSync(new URL(`../assets/${file}`, import.meta.url), "utf8").trim().split("\n"),
-))]
+const TOPIC_WORDS = readFileSync(new URL("../assets/topic-words.txt", import.meta.url), "utf8").trim().split("\n")
 
 export function randomTopicTitle() {
   const word = TOPIC_WORDS[randomInt(TOPIC_WORDS.length)]
