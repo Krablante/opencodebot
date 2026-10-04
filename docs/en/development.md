@@ -14,7 +14,7 @@ Directories follow concrete boundaries. `src/config/` normalizes installation se
 | Telegram transport / input | `telegram.mjs`, `telegram-polling.mjs`, `telegram-inbox.mjs`, `telegram-rich-message.mjs` |
 | Prompt dispatch, buffers and queue | `prompt-routing.mjs`, `prompt-queue.mjs`, `multipart-prompts.mjs`, `attachments.mjs` |
 | Backend transport / recovery | `opencode.mjs`, `session-reconcile.mjs`, `backend-backoff.mjs`, `single-flight.mjs` |
-| Logical turns / compaction | `logical-turn.mjs`, `compaction-reminders.mjs`, `context-export.mjs` |
+| Logical turns / compaction / exports | `logical-turn.mjs`, `compaction-reminders.mjs`, `context-export.mjs`, `session-export.mjs` |
 | Topic lifecycle and titles | `topic-lifecycle.mjs`, `topic-titles.mjs` |
 | General / topic and profile cards / setup | `control-menu.mjs`, `launch-menu.mjs`, `setup.mjs` |
 | Saved preferences / durable storage | `user-settings.mjs`, `state.mjs` |

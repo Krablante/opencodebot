@@ -31,7 +31,7 @@ Queued prompts require both backend idle and the previous terminal outcome deliv
 
 Queue admission rechecks cancellation after a backend-status lookup. Clearing or rewinding the queue cancels older admissions still awaiting that lookup. An idle result obtained before a newer run started cannot release that run's waiting prompts.
 
-`logical-turn.mjs` follows durable compaction `turn_id`/`replay_id` and reminder links. Reconcile, context export, duration/token accounting and reminders agree on the original external request. Internal summaries are handled without being mirrored. Automatic mid-run reminders rebuild payloads from the backend and require admission confirmation before the Telegram notice. An automatic replay already persisted by OpenCodez, including pre-turn, is acknowledged through the same notice without another prompt submission.
+`logical-turn.mjs` follows durable compaction `turn_id`/`replay_id` and reminder links. Reconcile, context and session Markdown exports, duration/token accounting and reminders agree on the original external request. Internal summaries are handled without being mirrored. Automatic mid-run reminders rebuild payloads from the backend and require admission confirmation before the Telegram notice. An automatic replay already persisted by OpenCodez, including pre-turn, is acknowledged through the same notice without another prompt submission.
 
 ## Recovery and limits
 

@@ -14,7 +14,7 @@ OpenCodeBot запускается как ES-модули Node.js. Компил�
 | Транспорт и входящие обновления Telegram | `telegram.mjs`, `telegram-polling.mjs`, `telegram-inbox.mjs`, `telegram-rich-message.mjs` |
 | Отправка промптов, буферы и очередь | `prompt-routing.mjs`, `prompt-queue.mjs`, `multipart-prompts.mjs`, `attachments.mjs` |
 | Транспорт OpenCodez и восстановление | `opencode.mjs`, `session-reconcile.mjs`, `backend-backoff.mjs`, `single-flight.mjs` |
-| Логические ходы и компакция | `logical-turn.mjs`, `compaction-reminders.mjs`, `context-export.mjs` |
+| Логические ходы, компакция и экспорт | `logical-turn.mjs`, `compaction-reminders.mjs`, `context-export.mjs`, `session-export.mjs` |
 | Жизненный цикл и названия тем | `topic-lifecycle.mjs`, `topic-titles.mjs` |
 | General, карточки тем/профилей и setup | `control-menu.mjs`, `launch-menu.mjs`, `setup.mjs` |
 | Предпочтения и постоянное состояние | `user-settings.mjs`, `state.mjs` |

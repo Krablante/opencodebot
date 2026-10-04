@@ -6,6 +6,7 @@ import { logErrorEvent, logInfo, logWarn } from "./logger.mjs"
 import { getLanguage, normalizeLanguage, setLanguage, t } from "./i18n/index.mjs"
 import { isOpenCodeSessionNotFound, resolveSessionProfile } from "./opencode.mjs"
 import { buttonRows, menuTable, localText, richButton } from "./menu-format.mjs"
+import { sendSessionExport } from "./session-export.mjs"
 import {
   buildCollapsedContextMessages,
   DEFAULT_CONTEXT_TURNS,
@@ -14,7 +15,7 @@ import {
   parseContextTurnCount,
 } from "./context-export.mjs"
 
-const commandDefinitions = ["menu", "new", "session", "q", "compact", "reminder", "context", "speak", "reset", "kill", "setup"]
+const commandDefinitions = ["menu", "new", "session", "q", "compact", "reminder", "context", "export", "speak", "reset", "kill", "setup"]
 
 export function telegramBotCommands() {
   return commandDefinitions.map((command) => ({
@@ -70,6 +71,7 @@ export function createTelegramCommandHandlers({
     kill: handleKillCommand,
     compact: handleCompactCommand,
     context: handleContext,
+    export: handleExport,
     set_context: handleSetContext,
     notify_on: handleNotifyOn,
     notify_off: handleNotifyOff,
@@ -97,7 +99,7 @@ export function createTelegramCommandHandlers({
       const handler = Object.hasOwn(handlers, command.name) && handlers[command.name]
       if (!handler) return false
       if (command.name === "kill") await discardBufferedTopic(message, promptKey)
-      else if (!["reset", "artifacts_here", "sounds_here"].includes(command.name)) await multipartPrompts.flushKey(promptKey)
+      else if (!["reset", "artifacts_here", "sounds_here", "export"].includes(command.name)) await multipartPrompts.flushKey(promptKey)
       await handler(message, command.args, promptKey)
       return true
     },
@@ -207,6 +209,23 @@ export function createTelegramCommandHandlers({
       topicId: topicId(message),
       text: t("commands.context.saved", { turns: count }),
     })
+  }
+
+  async function handleExport(message, args) {
+    const currentTopicId = topicId(message)
+    const binding = state.findBindingByTopic(message.chat.id, currentTopicId)
+    const reply = (text) => telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text })
+    if (args?.trim()) return reply(t("commands.export.usage"))
+    if (!binding) return reply(t("commands.export.noBinding"))
+    try {
+      const result = await sendSessionExport({ config, opencode, telegram, binding, language: getLanguage() })
+      if (!result.prompts) return reply(t("commands.export.empty"))
+      logInfo("session_export.sent", { source: binding.serverID, sessionID: binding.sessionID, topicId: currentTopicId, ...result })
+    } catch (error) {
+      logErrorEvent("session_export.failed", error, { source: binding.serverID, sessionID: binding.sessionID, topicId: currentTopicId })
+      return reply(t(error.code === "EXPORT_TOO_LARGE" ? "commands.export.tooLarge"
+        : isOpenCodeSessionNotFound(error, binding.sessionID) ? "commands.export.notFound" : "commands.export.failed"))
+    }
   }
 
   async function handleContext(message, args) {

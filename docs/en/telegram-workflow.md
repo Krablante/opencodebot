@@ -29,6 +29,7 @@ Common actions appear in Telegram's slash menu. Setup and advanced commands stil
 | `/compact` | Condense an existing idle session using native OpenCodez compaction |
 | `/reset [profile] [server]` | Start fresh in the same topic and preserve the old session |
 | `/context [N]`, `/set_context N` | Export recent turns; save a personal default, 1–10 |
+| `/export` | Download the current session's verbatim prompts and final answers as one Markdown document |
 | `/reminder [on\|off]` | Show/change automatic prompt reminders after compaction |
 | `/speak` | Reply to text for one spoken summary |
 | `/help`, `/start`, `/setup` | Guide, General or connection setup |
@@ -70,7 +71,7 @@ The bot discards later queue items, aborts if needed, waits for idle, and asks O
 
 ## Queue
 
-Put `/q` only at the beginning of a long text prompt. The bot collects continuations from the same user and topic and admits one complete task after two seconds without another part. Even a short first part keeps queue mode for its continuations. A new `/q` starts a separate task; another command ends the current assembly, while kill/reset discard it. Unknown slash-prefixed text, such as a file path, remains part of the pending prompt. Assembly is bounded to 20 parts and 120,000 characters; exceeding either limit rejects the whole task with feedback, without sending a partial prompt.
+Put `/q` only at the beginning of a long text prompt. The bot collects continuations from the same user and topic and admits one complete task after two seconds without another part. Even a short first part keeps queue mode for its continuations. A new `/q` starts a separate task; another command ends the current assembly, while kill/reset discard it. The read-only `/export` leaves buffered input alone. Unknown slash-prefixed text, such as a file path, remains part of the pending prompt. Assembly is bounded to 20 parts and 120,000 characters; exceeding either limit rejects the whole task with feedback, without sending a partial prompt.
 
 Rich Messages accept `/q` at the beginning of the first text paragraph or heading, including bold text and `/q@botname`. Subsequent paragraphs, lists, tables, code and supported photos stay together in the queued task. A `/q` inside a code block or quote is prompt content, not a command.
 
@@ -91,6 +92,18 @@ The repeated payload is not mirrored as another human prompt, and the notice is 
 `/context` exports three recent main-session turns, or the selected 1–10. Completed turns contain the original request and final answer. Interrupted or superseded turns contain the request and numbered visible progress notes; active unfinished turns are omitted. Compaction/replay/reminder records stay inside the original logical turn. Reasoning, tools and internal summaries are excluded.
 
 Context arrives in collapsed Rich Message code blocks, fully escaped and split without truncation. The total ceiling is 240,000 characters, with chunks below 30,000 UTF-8 bytes. If later delivery fails, prior parts are removed best-effort and only a short error remains. **Collapsed content is readable by every group member**, not private storage. The bot persists only your numeric depth preference.
+
+## Session Markdown export
+
+Run `/export` without arguments in a working topic. It reads the entire current OpenCodez session and sends one `.md` document to the same topic. It does not submit prompts, flush buffered input, stop work, compact or otherwise change the session.
+
+The file contains your verbatim prompt followed by the model's verbatim final text answer, then the next pair in prompt order. Repeated human prompts remain separate. Headings identify each pair and role; text fences cannot be closed by Markdown inside the source text. Multiple source text parts remain separate literal blocks, preserving their contents and whitespace.
+
+Reasoning, commentary, tools, intermediate answers, automatic replay/reminder prompts and compaction summaries are excluded from completed pairs. A final is a completed non-summary assistant message with `finish=stop`, without an error. Replay and reminder IDs link it back to the original human prompt; text matching never removes human repetitions.
+
+Prompts without a final remain in the main sequence with an explicit absence notice. Their visible progress notes, when present, appear only in a separate appendix at the end, labelled by prompt number and **not a final answer**. Notes for completed pairs are omitted. Reverted tails and queued tasks not yet admitted to the backend are not part of the current exported history.
+
+History is read in pages, discarding reasoning, tool output and attachment data as each page arrives. The document is written and uploaded from a private temporary file without a second full copy in memory; normal completion and failures remove that file. The existing spool cleanup removes crash leftovers after 24 hours. Exports exceeding the configured Telegram transport's document limit fail explicitly rather than sending a truncated file. The General guide and both downloadable PDFs explain the same contents.
 
 ## Questions
 

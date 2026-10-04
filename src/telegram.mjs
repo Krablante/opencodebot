@@ -246,14 +246,14 @@ export class TelegramClient {
       if (caption) form.append("caption", String(caption))
       if (captionFormat === "html") form.append("parse_mode", "HTML")
       if (captionFormat === "markdownv2") form.append("parse_mode", "MarkdownV2")
-      form.append(fileField, new Blob([file.bytes], { type: file.contentType || "application/octet-stream" }), file.filename || "artifact")
+      form.append(fileField, file.blob || new Blob([file.bytes], { type: file.contentType || "application/octet-stream" }), file.filename || "artifact")
       return form
     }, {
       chatId,
       topicId,
       captionChars: typeof caption === "string" ? caption.length : undefined,
       filename: file.filename,
-      bytes: file.bytes?.length,
+      bytes: file.size || file.blob?.size || file.bytes?.length,
     })
   }
 

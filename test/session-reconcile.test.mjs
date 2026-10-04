@@ -1,5 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import fs from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
+import { createServer } from "node:http"
+import { fromMarkdown } from "mdast-util-from-markdown"
 
 import {
   buildCollapsedContextMessages,
@@ -9,6 +14,10 @@ import {
 } from "../src/context-export.mjs"
 import { loadCurrentTurnMessages } from "../src/final-notifications.mjs"
 import { createSessionReconciler } from "../src/session-reconcile.mjs"
+import { extractSessionExportTurns, loadSessionExportTurns, sendSessionExport, sessionMarkdownChunks } from "../src/session-export.mjs"
+import { createTelegramCommandHandlers } from "../src/commands.mjs"
+import { TelegramClient } from "../src/telegram.mjs"
+import { createTelegramPolling } from "../src/telegram-polling.mjs"
 
 test("a recovered web prompt persistently ends users-only catch-up before its assistant arrives", async () => {
   const harness = createHarness()
@@ -395,6 +404,206 @@ test("context turn count accepts only the supported range", () => {
   assert.throws(() => parseContextTurnCount("0"), /1 to 10/)
   assert.throws(() => parseContextTurnCount("11"), /1 to 10/)
   assert.throws(() => parseContextTurnCount("three"), /1 to 10/)
+})
+
+test("session export preserves literal repetitions and finals, with unfinished notes only in the appendix", () => {
+  const prompt = "  Repeat this\n\n## Pretend heading\n````\n<literal>&\t\r\n"
+  const final = "\n  **Final**\n```js\nx()\n```\n\n"
+  const done = assistantMessage("a1", final)
+  done.info.parentID = "u1"
+  const messages = [
+    userMessage("u1", prompt),
+    { info: { id: "a-progress", role: "assistant", parentID: "u1", finish: "tool-calls" }, parts: [
+      { type: "text", text: "discard completed progress" }, { type: "reasoning", text: "secret reasoning" },
+      { type: "tool", state: { output: "secret tool output" } },
+    ] },
+    done,
+    userMessage("u2", prompt),
+    { info: { id: "a2", role: "assistant", parentID: "u2", finish: "length" }, parts: [{ type: "text", text: "  unfinished note\n" }] },
+    userMessage("u3", "Last prompt with no notes"),
+  ]
+  const original = structuredClone(messages)
+  const turns = extractSessionExportTurns(messages)
+  assert.deepEqual(turns.map((turn) => turn.prompt), [[prompt], [prompt], ["Last prompt with no notes"]])
+  assert.deepEqual(turns[0].answer, [final])
+  assert.deepEqual(turns[0].progress, [])
+  assert.equal(turns[1].answer, null)
+  assert.deepEqual(turns[1].progress, [["  unfinished note\n"]])
+  assert.equal(turns[2].answer, null)
+  assert.deepEqual(messages, original)
+  const markdown = [...sessionMarkdownChunks(turns, "en")].join("")
+  assert.equal(markdown.split(prompt).length - 1, 2)
+  assert.ok(markdown.includes(final))
+  assert.doesNotMatch(markdown, /discard completed progress|secret reasoning|secret tool output/)
+  assert.ok(markdown.indexOf("# PROGRESS NOTES") > markdown.indexOf("Last prompt with no notes"))
+  assert.match(markdown, /Prompt 2 — progress note 1 \(not a final answer\)/)
+  const tree = fromMarkdown(markdown)
+  assert.equal(tree.children.filter((node) => node.type === "heading").some((node) => node.children[0]?.value === "Pretend heading"), false)
+  assert.equal(tree.children.filter((node) => node.type === "code").length, 5)
+})
+
+test("session export preserves separate source text parts without inserting separators into their contents", () => {
+  const prompt = ["  First part\n", "\nSecond part  "]
+  const answer = ["**Answer part one**", "\tAnswer part two\n\n"]
+  const turns = extractSessionExportTurns([
+    { info: { role: "user", id: "u1" }, parts: prompt.map((text) => ({ type: "text", text })) },
+    { info: { role: "assistant", id: "a1", parentID: "u1", finish: "stop", time: { completed: 1 } },
+      parts: answer.map((text) => ({ type: "text", text })) },
+  ])
+  const markdown = [...sessionMarkdownChunks(turns, "en")].join("")
+  assert.deepEqual(fromMarkdown(markdown).children.filter((node) => node.type === "code").map((node) => node.value), [...prompt, ...answer])
+  assert.doesNotMatch(markdown, /PROGRESS NOTES/)
+})
+
+test("session export resolves chained replay/reminder parents and only accepts completed non-summary finals", () => {
+  const original = userMessage("u1", "  Original\n")
+  const marker = { info: { id: "c1", role: "user" }, parts: [{ type: "compaction", turn_id: "u1", replay_id: "r1" }] }
+  const replay = userMessage("r1", "automatic replay")
+  const secondMarker = { info: { id: "c2", role: "user" }, parts: [{ type: "compaction", turn_id: "r1", replay_id: "r2" }] }
+  const secondReplay = userMessage("r2", "second automatic replay")
+  const reminder = { info: { id: "reminder", role: "user" }, parts: [{ type: "text", text: "internal reminder",
+    metadata: { opencodebot_reminder: { turnID: "r2", compactionID: "c2" } } }] }
+  const final = (id, text, extra = {}) => ({ info: { id, role: "assistant", parentID: "reminder", finish: "stop", time: { completed: 10 }, ...extra }, parts: [{ type: "text", text }] })
+  const turns = extractSessionExportTurns([
+    original, marker, final("summary", "internal summary", { summary: true }), replay,
+    secondMarker, secondReplay, reminder, final("first", "first final"), final("latest", "  latest final\n"),
+    { info: { id: "synthetic", role: "user" }, parts: [{ type: "text", text: "synthetic input", synthetic: true }] },
+    userMessage("u2", "Unfinished"),
+    { info: { id: "draft", role: "assistant", parentID: "u2", finish: "stop" }, parts: [{ type: "text", text: "streaming final draft" }] },
+    userMessage("u3", "Failed"), final("error", "failed output", { parentID: "u3", error: { name: "MessageAbortedError" } }),
+  ])
+  assert.equal(turns.length, 3)
+  assert.deepEqual(turns[0].prompt, ["  Original\n"])
+  assert.deepEqual(turns[0].answer, ["  latest final\n"])
+  assert.equal(turns[1].answer, null)
+  assert.deepEqual(turns[1].progress, [["streaming final draft"]])
+  assert.equal(turns[2].answer, null)
+  assert.doesNotMatch([...sessionMarkdownChunks(turns, "en")].join(""), /automatic replay|internal reminder|internal summary|synthetic input|first final/)
+})
+
+test("full session export reads every page, follows cross-page replay links and hides revert/future tails", async () => {
+  const calls = []
+  const turns = await loadSessionExportTurns({
+    binding: { serverID: "local", sessionID: "session-1", directory: "/workspace" }, asOf: 100,
+    opencode: {
+      async getSession() { return { revert: { messageID: "009" } } },
+      async messagePage(_server, _session, options) {
+        calls.push(options)
+        if (!options.before) return { before: "middle", messages: [
+          { info: { id: "005", role: "assistant", parentID: "004", finish: "stop", time: { completed: 90 } }, parts: [{ type: "text", text: "Final" }] },
+          { info: { id: "008", role: "user", time: { created: 101 } }, parts: [{ type: "text", text: "future" }] },
+          { info: { id: "009", role: "user" }, parts: [{ type: "text", text: "reverted" }] },
+        ] }
+        if (options.before === "middle") return { before: "oldest", messages: [
+          { info: { id: "003", role: "user" }, parts: [{ type: "compaction", turn_id: "001", replay_id: "004" }] },
+          { info: { id: "004", role: "user" }, parts: [{ type: "text", text: "replay" }] },
+        ] }
+        return { messages: [
+          { info: { id: "001", role: "user" }, parts: [{ type: "text", text: "Original" }] },
+          { info: { id: "002", role: "assistant", finish: "tool-calls", parentID: "001" }, parts: [{ type: "text", text: "progress" }] },
+        ] }
+      },
+    },
+  })
+  assert.deepEqual(calls.map((call) => call.before), [undefined, "middle", "oldest"])
+  assert.ok(calls.every((call) => call.directory === "/workspace"))
+  assert.deepEqual(turns, [{ userMessageID: "001", prompt: ["Original"], answer: ["Final"], progress: [] }])
+  await assert.rejects(loadSessionExportTurns({ binding: {}, opencode: {
+    getSession: async () => ({}), messagePage: async () => ({ messages: [], before: "loop" }),
+  } }), /repeated history cursor/)
+})
+
+test("/export uploads a file-backed Markdown document to its topic and removes temporary files", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencodebot-export-test-"))
+  t.after(() => fs.rm(root, { recursive: true, force: true }))
+  let received
+  const server = createServer(async (request, response) => {
+    const chunks = []
+    for await (const chunk of request) chunks.push(chunk)
+    const form = await new Request("http://test/", { method: "POST", headers: request.headers, body: Buffer.concat(chunks) }).formData()
+    received = { url: request.url, chat: form.get("chat_id"), topic: form.get("message_thread_id"),
+      filename: form.get("document").name, text: await form.get("document").text() }
+    response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: true, result: { message_id: 1 } }))
+  })
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+  t.after(() => new Promise((resolve) => server.close(resolve)))
+  const telegram = new TelegramClient("test", { rootUrl: `http://127.0.0.1:${server.address().port}` })
+  const binding = { chatId: -1001, topicId: 42, serverID: "local", sessionID: "ses_export" }
+  const messages = [userMessage("u1", "  Literal\n\n<user>&"), assistantMessage("a1", "**Final**\n")]
+  const opencode = { getSession: async () => ({}), messagePage: async () => ({ messages }) }
+  const config = { telegram: { botApi: { spoolDir: root } } }
+  const result = await sendSessionExport({ config, binding, telegram, opencode, language: "en" })
+  assert.equal(result.prompts, 1)
+  assert.equal(result.finals, 1)
+  assert.equal(received.url, "/bottest/sendDocument")
+  assert.equal(received.chat, "-1001")
+  assert.equal(received.topic, "42")
+  assert.equal(received.filename, "session-ses_export.md")
+  assert.ok(received.text.includes("  Literal\n\n<user>&"))
+  assert.ok(received.text.includes("**Final**\n"))
+  assert.equal(result.bytes, Buffer.byteLength(received.text, "utf8"))
+  assert.deepEqual(await fs.readdir(root), [])
+  const state = { chatId: binding.chatId, data: { runtime: { telegramUpdateOffset: 0 } },
+    findBindingByTopic: () => binding, isArtifactsTopic: () => false, isSoundsTopic: () => false }
+  const handlers = createTelegramCommandHandlers({ config, state, opencode, telegram,
+    multipartPrompts: { flushKey: async () => assert.fail("export must leave buffered input alone") },
+  })
+  const inboxRoot = await fs.mkdtemp(path.join(os.tmpdir(), "opencodebot-export-polling-"))
+  t.after(() => fs.rm(inboxRoot, { recursive: true, force: true }))
+  let fetched = false, finished = false, releasePoll
+  const handled = new Promise((resolve) => { releasePoll = resolve })
+  telegram.getUpdates = async () => {
+    if (fetched) { await handled; return [] }
+    fetched = true
+    return [{ update_id: 1, message: { message_id: 1, chat: { id: binding.chatId, type: "supergroup" },
+      from: { id: 42 }, message_thread_id: binding.topicId, text: "/export@test_bot" } }]
+  }
+  const polling = createTelegramPolling({
+    config: { ...config, paths: { statePath: path.join(inboxRoot, "state.json") }, mirror: { deletePinServiceMessages: false },
+      telegram: { ...config.telegram, chatId: binding.chatId, allowedUserIds: [42] } }, state, telegram,
+    commandHandlers: { ...handlers, async handle(...args) {
+      try { return await handlers.handle(...args) }
+      finally { finished = true; releasePoll() }
+    } },
+    handleTopicLifecycleMessage: async () => false, extractTelegramFiles: () => [], hasPendingAttachmentBatch: () => false,
+    multipartPromptKey: () => "buffer-key", flushPromptKey: async () => assert.fail("export must not flush input"),
+    queueTelegramPrompt: async () => assert.fail("export must never become an agent prompt"), logError: assert.fail,
+  })
+  await polling.poll({ shouldStop: () => finished })
+  assert.equal(received.topic, "42")
+  assert.ok(received.text.includes("  Literal\n\n<user>&"))
+  assert.deepEqual(await fs.readdir(root), [])
+  await assert.rejects(sendSessionExport({ config, binding, opencode, language: "en",
+    telegram: { sendDocument: async ({ file }) => {
+      const [directory] = await fs.readdir(root)
+      assert.equal((await fs.stat(path.join(root, directory))).mode & 0o777, 0o700)
+      assert.equal((await fs.stat(path.join(root, directory, file.filename))).mode & 0o777, 0o600)
+      throw new Error("delivery failed")
+    } },
+  }), /delivery failed/)
+  assert.deepEqual(await fs.readdir(root), [])
+  const oversized = userMessage("large", "x".repeat(50 * 1024 * 1024))
+  await assert.rejects(sendSessionExport({ config, binding, language: "en",
+    opencode: { getSession: async () => ({}), messagePage: async () => ({ messages: [oversized] }) },
+    telegram: { sendDocument: async () => assert.fail("oversized exports must not send a partial file") },
+  }), { code: "EXPORT_TOO_LARGE" })
+  assert.deepEqual(await fs.readdir(root), [])
+})
+
+test("/export never flushes buffered prompts or mutates the session, including no-session errors", async () => {
+  const replies = []
+  const binding = { chatId: -1001, topicId: 42, serverID: "local", sessionID: "ses_export" }
+  const handlers = createTelegramCommandHandlers({ config: {}, state: { findBindingByTopic: () => null },
+    multipartPrompts: { flushKey: async () => assert.fail("export must not submit buffered prompts") },
+    opencode: { promptAsync: async () => assert.fail("export must not submit a prompt") },
+    telegram: { sendMessage: async (message) => replies.push(message) },
+  })
+  const message = { chat: { id: binding.chatId }, message_thread_id: binding.topicId }
+  assert.equal(await handlers.handle(message, { name: "export", args: "" }, "buffer-key"), true)
+  assert.equal(replies[0].topicId, binding.topicId)
+  assert.match(replies[0].text, /no active OpenCodez session/)
+  await handlers.handle(message, { name: "export", args: "3" }, "buffer-key")
+  assert.match(replies[1].text, /without arguments/)
 })
 
 function createHarness({ cursor, pages, targetedMessage, usersOnly = true, watchdog = false } = {}) {
