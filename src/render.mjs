@@ -33,14 +33,18 @@ export class MirrorRenderer {
   }
 
   async userPrompt(binding, text, origin = "web") {
-    const plainMessages = webPromptMessages(text, this.config.mirror.maxTelegramChars)
-    if (plainMessages.length === 1) return this.sendWebPromptMessages(binding, plainMessages)
+    const value = String(text ?? "")
+    const plainMessage = value.length < this.config.mirror.maxTelegramChars ? `💬 ${escapeHtml(value)}` : ""
+    if (plainMessage && plainMessage.length <= this.config.mirror.maxTelegramChars) {
+      return this.sendWebPromptMessages(binding, [plainMessage])
+    }
 
-    const richMessages = richWebPromptMessages(text, TELEGRAM_RICH_TEXT_MAX_CHARS)
+    const richMessages = richWebPromptMessages(value, TELEGRAM_RICH_TEXT_MAX_CHARS)
     try {
       return await this.sendWebPromptMessages(binding, richMessages, { rich: true })
     } catch (error) {
       if (!isRichMessageError(error)) throw error
+      const plainMessages = webPromptMessages(value, this.config.mirror.maxTelegramChars)
       logMirrorFlush("mirror.web_prompt.rich_fallback", binding, {
         richParts: richMessages.length,
         plainParts: plainMessages.length,
@@ -54,7 +58,7 @@ export class MirrorRenderer {
     let lastMessage = null
     for (const item of messages) {
       const message = rich
-        ? await this.telegram.sendRichMessage({ chatId: binding.chatId, topicId: binding.topicId, html: item, skipEntityDetection: true })
+        ? await this.telegram.sendRichMessage({ chatId: binding.chatId, topicId: binding.topicId, blocks: item, skipEntityDetection: true })
         : await this.telegram.sendMessage({ chatId: binding.chatId, topicId: binding.topicId, text: item })
       firstMessage ||= message
       lastMessage = message
@@ -529,39 +533,46 @@ export function richWebPromptMessages(text, maxTelegramChars = TELEGRAM_RICH_TEX
 
 function buildWebPromptMessages(text, maxTelegramChars, { rich }) {
   const value = String(text ?? "")
-  const singlePrefix = rich ? "💬 <b>Web prompt</b>\n\n" : "💬 "
-  const single = `${singlePrefix}${escapeHtml(value)}`
-  if (single.length <= maxTelegramChars) return [single]
-  const chunks = splitEscapedText(value, Math.max(1, maxTelegramChars - 120))
+  const single = rich ? webPromptBlocks(value, "Web prompt") : `💬 ${escapeHtml(value)}`
+  const singleLength = rich ? value.length + "💬 Web prompt".length : single.length
+  if (singleLength <= maxTelegramChars) return [single]
+  const chunks = splitWebPromptText(value, Math.max(1, maxTelegramChars - 120), { rich })
   return chunks.map((chunk, index) => {
     const title = `Web prompt ${index + 1}/${chunks.length}`
-    return rich ? `💬 <b>${title}</b>\n\n${escapeHtml(chunk)}` : `💬 ${title}\n\n${escapeHtml(chunk)}`
+    return rich ? webPromptBlocks(chunk, title) : `💬 ${title}\n\n${escapeHtml(chunk)}`
   })
 }
 
-function splitEscapedText(text, maxEscapedChars) {
+function webPromptBlocks(text, title) {
+  return [
+    { type: "paragraph", text: ["💬 ", { type: "bold", text: title }] },
+    { type: "paragraph", text },
+  ]
+}
+
+function splitWebPromptText(text, maxChars, { rich }) {
   const value = String(text ?? "")
   if (!value) return [""]
   const chunks = []
   let current = ""
-  let currentEscapedLength = 0
+  let currentLength = 0
   let lastBreakIndex = -1
   for (const char of value) {
-    const charEscapedLength = escapeHtml(char).length
-    if (current && currentEscapedLength + charEscapedLength > maxEscapedChars) {
+    const charLength = rich ? char.length : escapeHtml(char).length
+    if (current && currentLength + charLength > maxChars) {
       let chunk = current
       let carry = ""
       if (lastBreakIndex > Math.floor(current.length * 0.45)) {
-        chunk = current.slice(0, lastBreakIndex).trimEnd()
-        carry = current.slice(lastBreakIndex).trimStart()
+        chunk = current.slice(0, lastBreakIndex)
+        carry = current.slice(lastBreakIndex)
       }
       chunks.push(chunk || current)
       current = carry
-      currentEscapedLength = escapeHtml(current).length
+      currentLength = rich ? current.length : escapeHtml(current).length
       lastBreakIndex = -1
     }
     current += char
-    currentEscapedLength += charEscapedLength
+    currentLength += charLength
     if (/\s/.test(char)) lastBreakIndex = current.length
   }
   if (current || !chunks.length) chunks.push(current)

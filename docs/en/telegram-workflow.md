@@ -114,7 +114,9 @@ Voice notes in ordinary non-FILES topics are transcript-only drafts when speech 
 
 Economy is the initial mode: visible progress, final answers and failures, with ordinary tool output hidden. Full mode adds compact expandable tool status. Both hide reasoning, raw arguments, internal bookkeeping and child activity; both show a short subagent-spawn title. Completed text blocks are sent once, not edited per token. Rollback part-removal events delete stale progress best-effort.
 
-Web prompts are literal escaped text: ordinary messages first, Rich Messages for longer input, splitting beyond 32,000 characters. A rich rejection falls back to complete ordinary chunks. Telegram-origin prompts are matched to canonical backend IDs and do not echo as web prompts. Local Markdown links/images become readable paths; HTTP images get one link-only retry if Telegram rejects photo content. Other formatting failures use ordinary text; transport failures propagate. Final `finish=stop` text gets `🏁`, and its originating user prompt is pinned.
+Web prompts preserve literal text, line breaks, blank lines and indentation. Short prompts use ordinary messages; longer prompts use Rich Message paragraph blocks with a separate title. Markdown and HTML in the prompt remain literal. Input beyond the 32,000-character message budget is split without removing whitespace; a rich rejection falls back to complete ordinary chunks. Telegram-origin prompts are matched to canonical backend IDs and do not echo as web prompts.
+
+In assistant output, local Markdown links/images become readable paths; HTTP images get one link-only retry if Telegram rejects photo content. Other formatting failures use ordinary text; transport failures propagate. Final `finish=stop` text gets `🏁`, and its originating user prompt is pinned.
 
 ## Telegram update isolation
 

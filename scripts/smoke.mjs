@@ -39,7 +39,7 @@ import { deliverTranscriptMessages, SpeechModule, transcriptMessages } from "../
 import { GroqSpeechClient } from "../src/speech/groq-client.mjs"
 import { OpenRouterSpeechClient, audioFormat } from "../src/speech/openrouter-client.mjs"
 import { StateStore } from "../src/state.mjs"
-import { TelegramClient } from "../src/telegram.mjs"
+import { escapeHtml, TelegramClient } from "../src/telegram.mjs"
 import { normalizeTelegramRichMessage } from "../src/telegram-rich-message.mjs"
 import { createTelegramPolling, parseCommand } from "../src/telegram-polling.mjs"
 import { createTopicLifecycle } from "../src/topic-lifecycle.mjs"
@@ -3377,7 +3377,7 @@ async function smokeReconcileSingleFlight() {
 }
 
 async function smokeChunkedWebPromptMirror() {
-  const raw = `${"alpha beta gamma ".repeat(40)}<unsafe>& tail`
+  const raw = `${"alpha beta gamma \n\n  ".repeat(40)}**literal** <unsafe>& tail`
   const messages = webPromptMessages(raw, 240)
   assert.ok(messages.length > 1)
   assert.equal(messages.some((message) => message.includes("truncated in Telegram mirror")), false)
@@ -3385,6 +3385,7 @@ async function smokeChunkedWebPromptMirror() {
   assert.match(messages[0], /^💬 Web prompt 1\/\d+\n\n/)
   assert.match(messages.at(-1), new RegExp(`^💬 Web prompt ${messages.length}\\/${messages.length}\\n\\n`))
   assert.ok(messages.join("\n").includes("&lt;unsafe&gt;&amp; tail"))
+  assert.equal(messages.map((message) => message.replace(/^💬 Web prompt \d+\/\d+\n\n/, "")).join(""), escapeHtml(raw))
 
   const plainSent = []
   const richSent = []
@@ -3403,9 +3404,9 @@ async function smokeChunkedWebPromptMirror() {
       },
     },
   })
-  const shortReturned = await renderer.userPrompt({ chatId: 1, topicId: 2, serverID: "nuc", sessionID: "ses_short" }, "short prompt", "web")
+  const shortReturned = await renderer.userPrompt({ chatId: 1, topicId: 2, serverID: "nuc", sessionID: "ses_short" }, "short prompt\n\n  **literal** <tag>&", "web")
   assert.equal(plainSent.length, 1)
-  assert.equal(plainSent[0].text, "💬 short prompt")
+  assert.equal(plainSent[0].text, "💬 short prompt\n\n  **literal** &lt;tag&gt;&amp;")
   assert.equal(richSent.length, 0)
   assert.equal(shortReturned.message_id, 1)
 
@@ -3413,16 +3414,21 @@ async function smokeChunkedWebPromptMirror() {
   assert.equal(plainSent.length, 1)
   assert.equal(richSent.length, 1)
   assert.equal(richSent[0].skipEntityDetection, true)
-  assert.equal(richSent[0].html, richWebPromptMessages(raw)[0])
+  assert.deepEqual(richSent[0].blocks, richWebPromptMessages(raw)[0])
+  assert.deepEqual(richSent[0].blocks, [
+    { type: "paragraph", text: ["💬 ", { type: "bold", text: "Web prompt" }] },
+    { type: "paragraph", text: raw },
+  ])
   assert.equal(returned.message_id, 101)
 
-  const huge = "alpha ".repeat(7_000).trim()
+  const huge = "alpha \n\n  beta\t**literal** <unsafe>& 😀\n".repeat(1_000)
   const richStart = richSent.length
   await renderer.userPrompt({ chatId: 1, topicId: 2, serverID: "nuc", sessionID: "ses_huge" }, huge, "web")
   const hugeParts = richSent.slice(richStart)
   assert.equal(hugeParts.length, 2)
-  assert.equal(hugeParts.every((part) => part.html.length <= 32_000), true)
-  assert.equal(hugeParts.map((part) => part.html.replace(/^💬 <b>Web prompt \d+\/\d+<\/b>\n\n/, "")).join(" "), huge)
+  assert.equal(hugeParts.every((part) => part.blocks[1].text.length + `💬 ${part.blocks[0].text[1].text}`.length <= 32_000), true)
+  assert.equal(hugeParts.map((part) => part.blocks[1].text).join(""), huge)
+  assert.equal(hugeParts.every((part) => !/[\uD800-\uDBFF]$/.test(part.blocks[1].text)), true)
 
   const fallbackSent = []
   let richAttempts = 0
