@@ -2,11 +2,12 @@ import { openAsBlob } from "node:fs"
 import { randomUUID } from "node:crypto"
 import fs from "node:fs/promises"
 import path from "node:path"
+import { toMarkdown } from "mdast-util-to-markdown"
 import { getLanguage, tFor } from "./i18n/index.mjs"
 import { isInternalUserMessage, logicalTurnUserReferences } from "./logical-turn.mjs"
 import { telegramLocalMaxFileBytes } from "./config/telegram.mjs"
 
-export async function loadSessionExportTurns({ opencode, binding, asOf = Date.now(), pageSize = 100 }) {
+export async function loadSessionExport({ opencode, binding, asOf = Date.now(), pageSize = 100 }) {
   const session = await opencode.getSession(binding.serverID, binding.sessionID, { directory: binding.directory })
   const pages = []
   const cursors = new Set()
@@ -23,7 +24,7 @@ export async function loadSessionExportTurns({ opencode, binding, asOf = Date.no
     if (before && cursors.has(before)) throw new Error("Session export received a repeated history cursor")
     if (before) cursors.add(before)
   } while (before)
-  return extractSessionExportTurns(pages.reverse().flat(), { asOf })
+  return { title: session.title || "", turns: extractSessionExportTurns(pages.reverse().flat(), { asOf }) }
 }
 
 export function extractSessionExportTurns(messages, { asOf = Date.now() } = {}) {
@@ -62,8 +63,9 @@ export function extractSessionExportTurns(messages, { asOf = Date.now() } = {}) 
   return turns
 }
 
-export function* sessionMarkdownChunks(turns, language = getLanguage()) {
-  yield `# ${tFor(language, "export.document.title")}\n\n`
+export function* sessionMarkdownChunks(turns, language = getLanguage(), title = "") {
+  const heading = title || tFor(language, "export.document.title")
+  yield `${toMarkdown({ type: "root", children: [{ type: "heading", depth: 1, children: [{ type: "text", value: heading }] }] })}\n`
   yield `${tFor(language, "export.document.description")}\n\n`
   for (const [index, turn] of turns.entries()) {
     yield `## ${tFor(language, "export.document.user", { index: index + 1 })}\n\n`
@@ -84,7 +86,7 @@ export function* sessionMarkdownChunks(turns, language = getLanguage()) {
 }
 
 export async function sendSessionExport({ config, opencode, telegram, binding, language = getLanguage() }) {
-  const turns = await loadSessionExportTurns({ opencode, binding })
+  const { title, turns } = await loadSessionExport({ opencode, binding })
   if (!turns.length) return { prompts: 0, finals: 0 }
   const root = config.telegram.botApi.spoolDir
   await fs.mkdir(root, { recursive: true, mode: 0o755 })
@@ -97,7 +99,7 @@ export async function sendSessionExport({ config, opencode, telegram, binding, l
     const maxBytes = telegram.local ? telegramLocalMaxFileBytes : 50 * 1024 * 1024
     let bytes = 0
     const chunks = function* () {
-      for (const chunk of sessionMarkdownChunks(turns, language)) {
+      for (const chunk of sessionMarkdownChunks(turns, language, title)) {
         bytes += Buffer.byteLength(chunk, "utf8")
         if (bytes > maxBytes) {
           const error = new Error("Session export exceeds the Telegram document limit")

@@ -14,7 +14,7 @@ import {
 } from "../src/context-export.mjs"
 import { loadCurrentTurnMessages } from "../src/final-notifications.mjs"
 import { createSessionReconciler } from "../src/session-reconcile.mjs"
-import { extractSessionExportTurns, loadSessionExportTurns, sendSessionExport, sessionMarkdownChunks } from "../src/session-export.mjs"
+import { extractSessionExportTurns, loadSessionExport, sendSessionExport, sessionMarkdownChunks } from "../src/session-export.mjs"
 import { createTelegramCommandHandlers } from "../src/commands.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
 import { createTelegramPolling } from "../src/telegram-polling.mjs"
@@ -483,10 +483,10 @@ test("session export resolves chained replay/reminder parents and only accepts c
 
 test("full session export reads every page, follows cross-page replay links and hides revert/future tails", async () => {
   const calls = []
-  const turns = await loadSessionExportTurns({
+  const { title, turns } = await loadSessionExport({
     binding: { serverID: "local", sessionID: "session-1", directory: "/workspace" }, asOf: 100,
     opencode: {
-      async getSession() { return { revert: { messageID: "009" } } },
+      async getSession() { return { title: "Actual OpenCodez session name", revert: { messageID: "009" } } },
       async messagePage(_server, _session, options) {
         calls.push(options)
         if (!options.before) return { before: "middle", messages: [
@@ -507,8 +507,9 @@ test("full session export reads every page, follows cross-page replay links and 
   })
   assert.deepEqual(calls.map((call) => call.before), [undefined, "middle", "oldest"])
   assert.ok(calls.every((call) => call.directory === "/workspace"))
+  assert.equal(title, "Actual OpenCodez session name")
   assert.deepEqual(turns, [{ userMessageID: "001", prompt: ["Original"], answer: ["Final"], progress: [] }])
-  await assert.rejects(loadSessionExportTurns({ binding: {}, opencode: {
+  await assert.rejects(loadSessionExport({ binding: {}, opencode: {
     getSession: async () => ({}), messagePage: async () => ({ messages: [], before: "loop" }),
   } }), /repeated history cursor/)
 })
@@ -528,9 +529,11 @@ test("/export uploads a file-backed Markdown document to its topic and removes t
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
   t.after(() => new Promise((resolve) => server.close(resolve)))
   const telegram = new TelegramClient("test", { rootUrl: `http://127.0.0.1:${server.address().port}` })
-  const binding = { chatId: -1001, topicId: 42, serverID: "local", sessionID: "ses_export" }
+  const binding = { chatId: -1001, topicId: 42, serverID: "local", sessionID: "ses_export", title: "Telegram topic name" }
   const messages = [userMessage("u1", "  Literal\n\n<user>&"), assistantMessage("a1", "**Final**\n")]
-  const opencode = { getSession: async () => ({}), messagePage: async () => ({ messages }) }
+  let sessionReads = 0
+  const sessionTitle = "Исправление **экспорта** [буквально] <tag> &amp; #"
+  const opencode = { getSession: async () => { sessionReads++; return { title: sessionTitle } }, messagePage: async () => ({ messages }) }
   const config = { telegram: { botApi: { spoolDir: root } } }
   const result = await sendSessionExport({ config, binding, telegram, opencode, language: "en" })
   assert.equal(result.prompts, 1)
@@ -539,6 +542,13 @@ test("/export uploads a file-backed Markdown document to its topic and removes t
   assert.equal(received.chat, "-1001")
   assert.equal(received.topic, "42")
   assert.equal(received.filename, "session-ses_export.md")
+  assert.equal(sessionReads, 1)
+  const heading = fromMarkdown(received.text).children[0]
+  assert.equal(heading.type, "heading")
+  assert.equal(heading.depth, 1)
+  assert.ok(heading.children.every((node) => node.type === "text"))
+  assert.equal(heading.children.map((node) => node.value).join(""), sessionTitle)
+  assert.doesNotMatch(received.text, /Telegram topic name/)
   assert.ok(received.text.includes("  Literal\n\n<user>&"))
   assert.ok(received.text.includes("**Final**\n"))
   assert.equal(result.bytes, Buffer.byteLength(received.text, "utf8"))
@@ -571,6 +581,7 @@ test("/export uploads a file-backed Markdown document to its topic and removes t
   })
   await polling.poll({ shouldStop: () => finished })
   assert.equal(received.topic, "42")
+  assert.equal(fromMarkdown(received.text).children[0].children.map((node) => node.value).join(""), sessionTitle)
   assert.ok(received.text.includes("  Literal\n\n<user>&"))
   assert.deepEqual(await fs.readdir(root), [])
   await assert.rejects(sendSessionExport({ config, binding, opencode, language: "en",

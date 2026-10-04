@@ -97,7 +97,7 @@ Context arrives in collapsed Rich Message code blocks, fully escaped and split w
 
 Run `/export` without arguments in a working topic. It reads the entire current OpenCodez session and sends one `.md` document to the same topic. It does not submit prompts, flush buffered input, stop work, compact or otherwise change the session.
 
-The file contains your verbatim prompt followed by the model's verbatim final text answer, then the next pair in prompt order. Repeated human prompts remain separate. Headings identify each pair and role; text fences cannot be closed by Markdown inside the source text. Multiple source text parts remain separate literal blocks, preserving their contents and whitespace.
+The document heading is the session's own title read from OpenCodez, displayed as plain text even when it contains Markdown characters. The file contains your verbatim prompt followed by the model's verbatim final text answer, then the next pair in prompt order. Repeated human prompts remain separate. Headings identify each pair and role; text fences cannot be closed by Markdown inside the source text. Multiple source text parts remain separate literal blocks, preserving their contents and whitespace.
 
 Reasoning, commentary, tools, intermediate answers, automatic replay/reminder prompts and compaction summaries are excluded from completed pairs. A final is a completed non-summary assistant message with `finish=stop`, without an error. Replay and reminder IDs link it back to the original human prompt; text matching never removes human repetitions.
 
