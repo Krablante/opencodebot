@@ -74,12 +74,14 @@ export function* sessionMarkdownChunks(turns, language = getLanguage(), title = 
     if (turn.answer) yield* literalBlocks(turn.answer)
     else yield `${tFor(language, "export.document.noFinal")}\n\n`
   }
-  if (!turns.some((turn) => !turn.answer && turn.progress.length)) return
-  yield `# ${tFor(language, "export.document.progress")}\n\n`
+  const notePrompts = turns.flatMap((turn, index) => !turn.answer && turn.progress.length ? [index + 1] : [])
+  if (!notePrompts.length) return
+  yield `## ${tFor(language, "export.document.progress")}\n\n`
+  yield `${tFor(language, "export.document.progressScope", { prompts: notePrompts.join(", ") })}\n\n`
   for (const [index, turn] of turns.entries()) {
     if (turn.answer) continue
     for (const [note, text] of turn.progress.entries()) {
-      yield `## ${tFor(language, "export.document.note", { index: index + 1, note: note + 1 })}\n\n`
+      yield `### ${tFor(language, "export.document.note", { index: index + 1, note: note + 1 })}\n\n`
       yield* literalBlocks(text)
     }
   }

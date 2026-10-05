@@ -421,25 +421,36 @@ test("session export preserves literal repetitions and finals, with unfinished n
     userMessage("u2", prompt),
     { info: { id: "a2", role: "assistant", parentID: "u2", finish: "length" }, parts: [{ type: "text", text: "  unfinished note\n" }] },
     userMessage("u3", "Last prompt with no notes"),
+    userMessage("u4", "Later prompt with a final"),
+    { info: { id: "a4", role: "assistant", parentID: "u4", finish: "stop", time: { completed: 1 } }, parts: [{ type: "text", text: "Later completed final" }] },
   ]
   const original = structuredClone(messages)
   const turns = extractSessionExportTurns(messages)
-  assert.deepEqual(turns.map((turn) => turn.prompt), [[prompt], [prompt], ["Last prompt with no notes"]])
+  assert.deepEqual(turns.map((turn) => turn.prompt), [[prompt], [prompt], ["Last prompt with no notes"], ["Later prompt with a final"]])
   assert.deepEqual(turns[0].answer, [final])
   assert.deepEqual(turns[0].progress, [])
   assert.equal(turns[1].answer, null)
   assert.deepEqual(turns[1].progress, [["  unfinished note\n"]])
   assert.equal(turns[2].answer, null)
+  assert.deepEqual(turns[3].answer, ["Later completed final"])
   assert.deepEqual(messages, original)
   const markdown = [...sessionMarkdownChunks(turns, "en")].join("")
   assert.equal(markdown.split(prompt).length - 1, 2)
   assert.ok(markdown.includes(final))
   assert.doesNotMatch(markdown, /discard completed progress|secret reasoning|secret tool output/)
-  assert.ok(markdown.indexOf("# PROGRESS NOTES") > markdown.indexOf("Last prompt with no notes"))
+  assert.ok(markdown.indexOf("## Appendix — progress notes") > markdown.indexOf("Later completed final"))
+  assert.match(markdown, /This section applies only to prompts: 2\./)
+  assert.doesNotMatch(markdown, /PROGRESS NOTES — NO FINAL ANSWER/)
   assert.match(markdown, /Prompt 2 — progress note 1 \(not a final answer\)/)
   const tree = fromMarkdown(markdown)
   assert.equal(tree.children.filter((node) => node.type === "heading").some((node) => node.children[0]?.value === "Pretend heading"), false)
-  assert.equal(tree.children.filter((node) => node.type === "code").length, 5)
+  assert.equal(tree.children.filter((node) => node.type === "code").length, 7)
+  assert.equal(tree.children.filter((node) => node.type === "heading" && node.depth === 1).length, 1)
+  const russian = [...sessionMarkdownChunks(turns, "ru")].join("")
+  assert.match(russian, /## Приложение — промежуточные сообщения/)
+  assert.match(russian, /Этот раздел относится только к запросам: 2\./)
+  assert.doesNotMatch(russian, /ФИНАЛЬНОГО ОТВЕТА НЕТ/)
+  assert.ok(russian.indexOf("## Приложение") > russian.indexOf("Later completed final"))
 })
 
 test("session export preserves separate source text parts without inserting separators into their contents", () => {
@@ -452,7 +463,7 @@ test("session export preserves separate source text parts without inserting sepa
   ])
   const markdown = [...sessionMarkdownChunks(turns, "en")].join("")
   assert.deepEqual(fromMarkdown(markdown).children.filter((node) => node.type === "code").map((node) => node.value), [...prompt, ...answer])
-  assert.doesNotMatch(markdown, /PROGRESS NOTES/)
+  assert.doesNotMatch(markdown, /Appendix — progress notes|This section applies only to prompts:/)
 })
 
 test("session export resolves chained replay/reminder parents and only accepts completed non-summary finals", () => {
@@ -530,13 +541,17 @@ test("/export uploads a file-backed Markdown document to its topic and removes t
   t.after(() => new Promise((resolve) => server.close(resolve)))
   const telegram = new TelegramClient("test", { rootUrl: `http://127.0.0.1:${server.address().port}` })
   const binding = { chatId: -1001, topicId: 42, serverID: "local", sessionID: "ses_export", title: "Telegram topic name" }
-  const messages = [userMessage("u1", "  Literal\n\n<user>&"), assistantMessage("a1", "**Final**\n")]
+  const messages = [
+    userMessage("u0", "Earlier superseded prompt"),
+    { info: { id: "a0", role: "assistant", parentID: "u0", finish: "tool-calls" }, parts: [{ type: "text", text: "Earlier progress" }] },
+    userMessage("u1", "  Literal\n\n<user>&"), assistantMessage("a1", "**Final**\n"),
+  ]
   let sessionReads = 0
   const sessionTitle = "Исправление **экспорта** [буквально] <tag> &amp; #"
   const opencode = { getSession: async () => { sessionReads++; return { title: sessionTitle } }, messagePage: async () => ({ messages }) }
   const config = { telegram: { botApi: { spoolDir: root } } }
   const result = await sendSessionExport({ config, binding, telegram, opencode, language: "en" })
-  assert.equal(result.prompts, 1)
+  assert.equal(result.prompts, 2)
   assert.equal(result.finals, 1)
   assert.equal(received.url, "/bottest/sendDocument")
   assert.equal(received.chat, "-1001")
@@ -551,6 +566,9 @@ test("/export uploads a file-backed Markdown document to its topic and removes t
   assert.doesNotMatch(received.text, /Telegram topic name/)
   assert.ok(received.text.includes("  Literal\n\n<user>&"))
   assert.ok(received.text.includes("**Final**\n"))
+  assert.ok(received.text.indexOf("## Appendix — progress notes") > received.text.indexOf("**Final**\n"))
+  assert.match(received.text, /This section applies only to prompts: 1\./)
+  assert.doesNotMatch(received.text, /PROGRESS NOTES — NO FINAL ANSWER/)
   assert.equal(result.bytes, Buffer.byteLength(received.text, "utf8"))
   assert.deepEqual(await fs.readdir(root), [])
   const state = { chatId: binding.chatId, data: { runtime: { telegramUpdateOffset: 0 } },
