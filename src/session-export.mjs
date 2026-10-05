@@ -45,6 +45,7 @@ export function extractSessionExportTurns(messages, { asOf = Date.now() } = {}) 
         if (root && info.id) byUserID.set(info.id, root)
         continue
       }
+      if (current) current.progress = []
       current = { userMessageID: info.id, prompt: literalTextParts(message), answer: null, progress: [] }
       turns.push(current)
       if (info.id) byUserID.set(info.id, current)
@@ -58,7 +59,7 @@ export function extractSessionExportTurns(messages, { asOf = Date.now() } = {}) 
     if (info.finish === "stop" && Number.isFinite(info.time?.completed) && info.time.completed <= asOf && !info.error) {
       target.answer = text
       target.progress = []
-    } else if (!target.answer) target.progress.push(text)
+    } else if (target === current && !target.answer) target.progress.push(text)
   }
   return turns
 }
@@ -74,16 +75,13 @@ export function* sessionMarkdownChunks(turns, language = getLanguage(), title = 
     if (turn.answer) yield* literalBlocks(turn.answer)
     else yield `${tFor(language, "export.document.noFinal")}\n\n`
   }
-  const notePrompts = turns.flatMap((turn, index) => !turn.answer && turn.progress.length ? [index + 1] : [])
-  if (!notePrompts.length) return
+  const latest = turns.at(-1)
+  if (!latest || latest.answer || !latest.progress.length) return
   yield `## ${tFor(language, "export.document.progress")}\n\n`
-  yield `${tFor(language, "export.document.progressScope", { prompts: notePrompts.join(", ") })}\n\n`
-  for (const [index, turn] of turns.entries()) {
-    if (turn.answer) continue
-    for (const [note, text] of turn.progress.entries()) {
-      yield `### ${tFor(language, "export.document.note", { index: index + 1, note: note + 1 })}\n\n`
-      yield* literalBlocks(text)
-    }
+  yield `${tFor(language, "export.document.progressScope", { index: turns.length })}\n\n`
+  for (const [note, text] of latest.progress.entries()) {
+    yield `### ${tFor(language, "export.document.note", { index: turns.length, note: note + 1 })}\n\n`
+    yield* literalBlocks(text)
   }
 }
 

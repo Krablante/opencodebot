@@ -406,7 +406,7 @@ test("context turn count accepts only the supported range", () => {
   assert.throws(() => parseContextTurnCount("three"), /1 to 10/)
 })
 
-test("session export preserves literal repetitions and finals, with unfinished notes only in the appendix", () => {
+test("session export preserves literal repetitions and finals without older prompts' progress notes", () => {
   const prompt = "  Repeat this\n\n## Pretend heading\n````\n<literal>&\t\r\n"
   const final = "\n  **Final**\n```js\nx()\n```\n\n"
   const done = assistantMessage("a1", final)
@@ -430,7 +430,7 @@ test("session export preserves literal repetitions and finals, with unfinished n
   assert.deepEqual(turns[0].answer, [final])
   assert.deepEqual(turns[0].progress, [])
   assert.equal(turns[1].answer, null)
-  assert.deepEqual(turns[1].progress, [["  unfinished note\n"]])
+  assert.deepEqual(turns[1].progress, [])
   assert.equal(turns[2].answer, null)
   assert.deepEqual(turns[3].answer, ["Later completed final"])
   assert.deepEqual(messages, original)
@@ -438,19 +438,41 @@ test("session export preserves literal repetitions and finals, with unfinished n
   assert.equal(markdown.split(prompt).length - 1, 2)
   assert.ok(markdown.includes(final))
   assert.doesNotMatch(markdown, /discard completed progress|secret reasoning|secret tool output/)
-  assert.ok(markdown.indexOf("## Appendix — progress notes") > markdown.indexOf("Later completed final"))
-  assert.match(markdown, /This section applies only to prompts: 2\./)
-  assert.doesNotMatch(markdown, /PROGRESS NOTES — NO FINAL ANSWER/)
-  assert.match(markdown, /Prompt 2 — progress note 1 \(not a final answer\)/)
+  assert.doesNotMatch(markdown, /Appendix — progress notes|unfinished note|progress note 1/)
   const tree = fromMarkdown(markdown)
   assert.equal(tree.children.filter((node) => node.type === "heading").some((node) => node.children[0]?.value === "Pretend heading"), false)
-  assert.equal(tree.children.filter((node) => node.type === "code").length, 7)
+  assert.equal(tree.children.filter((node) => node.type === "code").length, 6)
   assert.equal(tree.children.filter((node) => node.type === "heading" && node.depth === 1).length, 1)
   const russian = [...sessionMarkdownChunks(turns, "ru")].join("")
-  assert.match(russian, /## Приложение — промежуточные сообщения/)
-  assert.match(russian, /Этот раздел относится только к запросам: 2\./)
-  assert.doesNotMatch(russian, /ФИНАЛЬНОГО ОТВЕТА НЕТ/)
-  assert.ok(russian.indexOf("## Приложение") > russian.indexOf("Later completed final"))
+  assert.doesNotMatch(russian, /Приложение — промежуточные сообщения|unfinished note|progress note 1/)
+})
+
+test("session export appends only the latest prompt's notes while its final is missing", () => {
+  const note = (id, parentID, text) => ({ info: { id, role: "assistant", parentID, finish: "tool-calls", time: { completed: 1 } }, parts: [{ type: "text", text }] })
+  const turns = extractSessionExportTurns([
+    userMessage("u1", "Earlier unfinished prompt"), note("a1", "u1", "Earlier progress"),
+    userMessage("u2", "Latest unfinished prompt"), note("a-late", "u1", "Late progress for earlier prompt"),
+    { info: { id: "c2", role: "user" }, parts: [{ type: "compaction", turn_id: "u2", replay_id: "r2" }] },
+    userMessage("r2", "Internal replay"), note("a2", "r2", "  Latest note one\n"), note("a3", "r2", "Latest note two"),
+  ])
+  assert.equal(turns.length, 2)
+  assert.deepEqual(turns[0].progress, [])
+  assert.deepEqual(turns[1].progress, [["  Latest note one\n"], ["Latest note two"]])
+  for (const language of ["en", "ru"]) {
+    const markdown = [...sessionMarkdownChunks(turns, language)].join("")
+    assert.ok(markdown.includes("  Latest note one\n"))
+    assert.ok(markdown.includes("Latest note two"))
+    assert.match(markdown, /### (Prompt|Запрос) 2 — progress note 1/)
+    assert.match(markdown, /### (Prompt|Запрос) 2 — progress note 2/)
+    assert.doesNotMatch(markdown, /Earlier progress|Late progress|Internal replay/)
+    assert.ok(markdown.indexOf("Latest note one") > markdown.indexOf("Latest unfinished prompt"))
+  }
+  turns[0].progress = [["Stale older notes"]]
+  turns[1].progress = []
+  assert.doesNotMatch([...sessionMarkdownChunks(turns, "en")].join(""), /Appendix — progress notes|Stale older notes/)
+  turns[1].answer = ["Latest completed final"]
+  turns[1].progress = [["Stale latest notes"]]
+  assert.doesNotMatch([...sessionMarkdownChunks(turns, "en")].join(""), /Appendix — progress notes|Stale latest notes|Stale older notes/)
 })
 
 test("session export preserves separate source text parts without inserting separators into their contents", () => {
@@ -463,7 +485,7 @@ test("session export preserves separate source text parts without inserting sepa
   ])
   const markdown = [...sessionMarkdownChunks(turns, "en")].join("")
   assert.deepEqual(fromMarkdown(markdown).children.filter((node) => node.type === "code").map((node) => node.value), [...prompt, ...answer])
-  assert.doesNotMatch(markdown, /Appendix — progress notes|This section applies only to prompts:/)
+  assert.doesNotMatch(markdown, /Appendix — progress notes/)
 })
 
 test("session export resolves chained replay/reminder parents and only accepts completed non-summary finals", () => {
@@ -487,7 +509,7 @@ test("session export resolves chained replay/reminder parents and only accepts c
   assert.deepEqual(turns[0].prompt, ["  Original\n"])
   assert.deepEqual(turns[0].answer, ["  latest final\n"])
   assert.equal(turns[1].answer, null)
-  assert.deepEqual(turns[1].progress, [["streaming final draft"]])
+  assert.deepEqual(turns[1].progress, [])
   assert.equal(turns[2].answer, null)
   assert.doesNotMatch([...sessionMarkdownChunks(turns, "en")].join(""), /automatic replay|internal reminder|internal summary|synthetic input|first final/)
 })
@@ -566,9 +588,7 @@ test("/export uploads a file-backed Markdown document to its topic and removes t
   assert.doesNotMatch(received.text, /Telegram topic name/)
   assert.ok(received.text.includes("  Literal\n\n<user>&"))
   assert.ok(received.text.includes("**Final**\n"))
-  assert.ok(received.text.indexOf("## Appendix — progress notes") > received.text.indexOf("**Final**\n"))
-  assert.match(received.text, /This section applies only to prompts: 1\./)
-  assert.doesNotMatch(received.text, /PROGRESS NOTES — NO FINAL ANSWER/)
+  assert.doesNotMatch(received.text, /Appendix — progress notes|Earlier progress/)
   assert.equal(result.bytes, Buffer.byteLength(received.text, "utf8"))
   assert.deepEqual(await fs.readdir(root), [])
   const state = { chatId: binding.chatId, data: { runtime: { telegramUpdateOffset: 0 } },
@@ -580,6 +600,10 @@ test("/export uploads a file-backed Markdown document to its topic and removes t
   t.after(() => fs.rm(inboxRoot, { recursive: true, force: true }))
   let fetched = false, finished = false, releasePoll
   const handled = new Promise((resolve) => { releasePoll = resolve })
+  messages.push(userMessage("u2", "Latest unfinished prompt"), {
+    info: { id: "a2", role: "assistant", parentID: "u2", finish: "tool-calls" },
+    parts: [{ type: "text", text: "Latest progress only" }],
+  })
   telegram.getUpdates = async () => {
     if (fetched) { await handled; return [] }
     fetched = true
@@ -601,6 +625,11 @@ test("/export uploads a file-backed Markdown document to its topic and removes t
   assert.equal(received.topic, "42")
   assert.equal(fromMarkdown(received.text).children[0].children.map((node) => node.value).join(""), sessionTitle)
   assert.ok(received.text.includes("  Literal\n\n<user>&"))
+  assert.match(received.text, /The latest prompt 3 has no final answer/)
+  assert.match(received.text, /Prompt 3 — progress note 1/)
+  assert.ok(received.text.indexOf("## Appendix — progress notes") > received.text.indexOf("Latest unfinished prompt"))
+  assert.ok(received.text.includes("Latest progress only"))
+  assert.doesNotMatch(received.text, /Earlier progress/)
   assert.deepEqual(await fs.readdir(root), [])
   await assert.rejects(sendSessionExport({ config, binding, opencode, language: "en",
     telegram: { sendDocument: async ({ file }) => {
