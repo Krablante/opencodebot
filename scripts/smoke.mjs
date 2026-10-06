@@ -3989,15 +3989,15 @@ async function smokePeriodicIncompleteRunGrace() {
       reconcileUntil: new Date(Date.now() + 60_000).toISOString(),
     }
     await state.bindTopic(binding)
-    await state.markUserMirrored(server.id, binding.sessionID, "user-race")
-    await state.markAssistantMirrored(server.id, binding.sessionID, "assistant-race")
+    await state.markUserMirrored(server.id, binding.sessionID, "msg_001")
+    await state.markAssistantMirrored(server.id, binding.sessionID, "msg_002")
 
     const user = {
-      info: { id: "user-race", role: "user", time: { created: Date.now() - 2_000 } },
+      info: { id: "msg_001", role: "user", time: { created: Date.now() - 2_000 } },
       parts: [{ type: "text", text: "finish the work" }],
     }
     const staleAssistant = {
-      info: { id: "assistant-race", role: "assistant", parentID: user.info.id, time: { created: Date.now() - 1_000 } },
+      info: { id: "msg_002", role: "assistant", parentID: user.info.id, time: { created: Date.now() - 1_000 } },
       parts: [{ type: "text", text: "Done." }],
     }
     const finalAssistant = {

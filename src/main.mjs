@@ -77,7 +77,7 @@ const renderer = new MirrorRenderer({
   },
   onFinalAssistantMirrored: async (binding, assistantMessageID) => {
     await state.markAssistantMirrored(binding.serverID, binding.sessionID, assistantMessageID)
-    await promptRouter.promptQueue.markTerminalMirrored(binding)
+    await promptRouter.promptQueue.markTerminalMirrored(binding, { messageID: assistantMessageID })
   },
 })
 let controlMenu

@@ -258,7 +258,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
   }
 
   async function sendTelegramPrompt(binding, text, files = [], { sourceMessageId, feedbackMode = "prompt" } = {}) {
-    promptQueue.markBusy(binding)
+    promptQueue.markBusy(binding, undefined, { submitted: true })
     await activateBindingForPrompt(binding, "telegram-prompt")
     const feedbackMessage = feedbackMode === "rewind"
       ? feedbackMessageFor(binding)

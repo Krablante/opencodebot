@@ -27,8 +27,31 @@ export class PromptQueue {
     state.compacting = null
   }
 
-  markBusy(binding) {
-    beginRun(this.state(binding))
+  markBusy(binding, userMessageID, { submitted = false } = {}) {
+    const state = this.state(binding)
+    if (!userMessageID) {
+      beginRun(state)
+      state.awaitingUser ||= submitted
+      return
+    }
+    // OpenCodez's canonical message IDs are ordered by creation. A recovered
+    // old prompt must not reset the gates of a newer dispatch.
+    if (state.messageFloor && userMessageID <= state.messageFloor) return
+    if (!state.awaitingUser) beginRun(state)
+    state.messageFloor = userMessageID
+    state.awaitingUser = false
+    state.idle = false
+    state.terminalMirrored = false
+  }
+
+  observeUserMessage(binding, userMessageID, { submitted = false } = {}) {
+    if (!userMessageID) return
+    if (this.state(binding).awaitingUser && !submitted) return
+    this.markBusy(binding, userMessageID)
+  }
+
+  generation(binding) {
+    return this.state(binding).generation
   }
 
   markSendFailed(binding) {
@@ -36,6 +59,7 @@ export class PromptQueue {
     state.busy = false
     state.idle = true
     state.terminalMirrored = true
+    state.awaitingUser = false
   }
 
   isBusy(binding) {
@@ -138,6 +162,7 @@ export class PromptQueue {
   clear(binding) {
     const state = this.state(binding)
     state.epoch += 1
+    state.generation += 1
     const items = state.items
     const cleared = state.items.map((item, index) => ({
       index: index + 1,
@@ -149,6 +174,7 @@ export class PromptQueue {
     state.busy = false
     state.idle = true
     state.terminalMirrored = true
+    state.awaitingUser = false
     this.cancelCompaction(binding)
     state.items = []
     items.forEach((item) => this.dropItem(item))
@@ -163,14 +189,28 @@ export class PromptQueue {
     return items.length
   }
 
-  async markBackendIdle(binding) {
+  async markBackendIdle(binding, { generation } = {}) {
     const state = this.state(binding)
+    if (generation !== undefined && generation !== state.generation) return { status: "waiting" }
     state.idle = true
     return this.drainIfReady(binding, state)
   }
 
-  async markTerminalMirrored(binding, { backendIdle = false } = {}) {
+  markBackendBusy(binding, { generation } = {}) {
     const state = this.state(binding)
+    if (generation !== undefined && generation !== state.generation) return
+    state.busy = true
+    state.idle = false
+  }
+
+  async markTerminalMirrored(binding, { backendIdle = false, messageID, generation } = {}) {
+    const state = this.state(binding)
+    if (generation !== undefined && generation !== state.generation) return { status: "waiting" }
+    if (messageID) {
+      if (state.awaitingUser || (state.messageFloor && messageID < state.messageFloor)) return { status: "waiting" }
+      if (messageID === state.messageFloor && !state.terminalMirrored && !backendIdle) return { status: "waiting" }
+      state.messageFloor = messageID
+    }
     if (backendIdle) state.idle = true
     state.terminalMirrored = true
     return this.drainIfReady(binding, state)
@@ -188,6 +228,7 @@ export class PromptQueue {
   async sendNow(binding, text, files = [], metadata = {}) {
     const state = this.state(binding)
     beginRun(state)
+    state.awaitingUser = true
     try {
       await this.sendPrompt(binding, text, files, metadata)
     } catch (error) {

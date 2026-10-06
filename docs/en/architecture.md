@@ -31,6 +31,8 @@ Queued prompts require both backend idle and the previous terminal outcome deliv
 
 Queue admission rechecks cancellation after a backend-status lookup. Clearing or rewinding the queue cancels older admissions still awaiting that lookup. An idle result obtained before a newer run started cannot release that run's waiting prompts.
 
+Completion gates follow canonical OpenCodez message IDs. A dispatched prompt waits for its user message to be observed through SSE or a matched pending Telegram receipt before a final can complete it. Recovery anchors to the latest user message, so historical or repeated finals cannot complete a newer run. Idle events recheck backend status when prompts are waiting; asynchronous status/outcome checks retain the run generation they started with. The paired `session.status` idle and `session.idle` events can release only one task for the same completion.
+
 `logical-turn.mjs` follows durable compaction `turn_id`/`replay_id` and reminder links. Reconcile, context and session Markdown exports, duration/token accounting and reminders agree on the original external request. Internal summaries are handled without being mirrored. Automatic mid-run reminders rebuild payloads from the backend and require admission confirmation before the Telegram notice. An automatic replay already persisted by OpenCodez, including pre-turn, is acknowledged through the same notice without another prompt submission.
 
 ## Recovery and limits

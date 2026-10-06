@@ -14,6 +14,7 @@ import {
 } from "../src/context-export.mjs"
 import { loadCurrentTurnMessages } from "../src/final-notifications.mjs"
 import { createSessionReconciler } from "../src/session-reconcile.mjs"
+import { PromptQueue } from "../src/prompt-queue.mjs"
 import { extractSessionExportTurns, loadSessionExport, sendSessionExport, sessionMarkdownChunks } from "../src/session-export.mjs"
 import { createTelegramCommandHandlers } from "../src/commands.mjs"
 import { TelegramClient } from "../src/telegram.mjs"
@@ -118,6 +119,46 @@ test("a disabled binding cannot resume reconciliation after a topic reset", asyn
   assert.deepEqual(harness.renderedUsers, [])
   assert.deepEqual(harness.renderedAssistants, [])
   assert.equal(harness.terminalMirrors, 0)
+})
+
+test("paired idle events and recovery of the previous final release only one queued task", async () => {
+  const sent = []
+  let backendStatus = { type: "idle" }
+  const queue = new PromptQueue(async (_binding, text) => sent.push(text))
+  const harness = createHarness({ usersOnly: false, queue, sessionStatus: async () => backendStatus })
+  const { binding, reconciler } = harness
+  const event = (type, properties) => reconciler.handleOpenCodeEvent({ id: binding.serverID }, {
+    type, properties: { sessionID: binding.sessionID, ...properties },
+  })
+  queue.markBusy(binding, "msg_001")
+  await queue.enqueue(binding, "first")
+  await queue.enqueue(binding, "second")
+  harness.setMessages([userMessage("msg_001", "original"), assistantMessage("msg_002", "original final")])
+  harness.userMirrored.add("msg_001")
+  harness.assistantMirrored.add("msg_002")
+  await queue.markTerminalMirrored(binding, { messageID: "msg_002" })
+
+  await event("session.status", { status: { type: "idle" } })
+  assert.deepEqual(sent, ["first"])
+  // Keep the backend temporarily idle before its new user event is observable.
+  await event("session.idle", {})
+  await reconciler.reconcileBinding(binding)
+  assert.deepEqual(sent, ["first"])
+  assert.equal(queue.status(binding).length, 1)
+
+  backendStatus = { type: "busy" }
+  await event("message.updated", { info: { ...userMessage("msg_003", "first").info, sessionID: binding.sessionID } })
+  await event("message.updated", { info: { ...assistantMessage("msg_002", "original final").info, sessionID: binding.sessionID } })
+  await event("session.idle", {})
+  assert.deepEqual(sent, ["first"])
+
+  harness.setMessages([userMessage("msg_003", "first"), assistantMessage("msg_004", "first final")])
+  await queue.markTerminalMirrored(binding, { messageID: "msg_004" })
+  assert.deepEqual(sent, ["first"])
+  backendStatus = { type: "idle" }
+  await event("session.status", { status: backendStatus })
+  assert.deepEqual(sent, ["first", "second"])
+  assert.equal(queue.isBusy(binding), true)
 })
 
 test("incremental reconcile stops paging at the last fully scanned message cursor", async () => {
@@ -664,7 +705,7 @@ test("/export never flushes buffered prompts or mutates the session, including n
   assert.match(replies[1].text, /without arguments/)
 })
 
-function createHarness({ cursor, pages, targetedMessage, usersOnly = true, watchdog = false } = {}) {
+function createHarness({ cursor, pages, targetedMessage, usersOnly = true, watchdog = false, queue, sessionStatus } = {}) {
   const now = Date.now()
   const binding = {
     serverID: "dima",
@@ -708,7 +749,7 @@ function createHarness({ cursor, pages, targetedMessage, usersOnly = true, watch
     compactTools: async () => {},
     assistantMessage: async (_binding, text) => renderedAssistants.push(text),
   }
-  const promptQueue = {
+  const promptQueue = queue || {
     hasExpectedStop: () => false,
     markBusy: () => {},
     markTerminalMirrored: async () => {
@@ -718,6 +759,7 @@ function createHarness({ cursor, pages, targetedMessage, usersOnly = true, watch
   const opencode = {
     servers: [],
     messages: async () => messages,
+    ...(sessionStatus ? { sessionStatus } : {}),
     ...(targetedMessage ? {
       message: async () => {
         messageCalls += 1

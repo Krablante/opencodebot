@@ -98,13 +98,18 @@ export function createSessionReconciler({
 
   async function reconcileQueuedPromptStatus(binding) {
     if (!queuedPromptCount(binding) || typeof opencode.sessionStatus !== "function") return
+    const generation = promptQueue.generation?.(binding)
     const status = await backendRequest(binding.serverID, "reconcile queued prompt status", () => opencode.sessionStatus(
       binding.serverID,
       binding.sessionID,
       { directory: binding.directory },
     ))
-    if (status === skippedBackendRequest || status?.type !== "idle") return
-    const result = await promptQueue.markBackendIdle(binding)
+    if (status === skippedBackendRequest) return
+    if (status?.type !== "idle") {
+      promptQueue.markBackendBusy?.(binding, { generation })
+      return
+    }
+    const result = await promptQueue.markBackendIdle(binding, { generation })
     if (result.status === "sent") {
       logInfo("queue.reconcile.sent", {
         source: binding.serverID,
@@ -169,7 +174,7 @@ export function createSessionReconciler({
     if (event.type === "session.next.prompted" || newUserRun) {
       await activateBindingForPrompt(binding, event.type === "session.next.prompted" ? "web-prompt" : "user-message")
     } else await maybeExtendBindingActivity(binding, "opencode-event")
-    if (newUserRun && !promptQueue.hasExpectedStop(binding)) promptQueue.markBusy(binding)
+    if (newUserRun && !promptQueue.hasExpectedStop(binding)) promptQueue.markBusy(binding, properties.info.id)
     scheduleTargetedMessageReconcile(binding, event, manualCompaction)
     const fields = () => ({
       source: server.id,
@@ -189,7 +194,7 @@ export function createSessionReconciler({
         case "session.next.prompted": {
           startRun(binding, properties.messageID)
           promptQueue.clearExpectedStop(binding)
-          promptQueue.markBusy(binding)
+          promptQueue.markBusy(binding, properties.messageID)
           if (isCompactionReplay(binding, properties.messageID)) {
             latestUserMessages.set(key, compactionReplayRoots.get(`${key}:${properties.messageID}`))
             if (properties.messageID) await state.markUserMirrored(server.id, sessionID, properties.messageID)
@@ -243,7 +248,7 @@ export function createSessionReconciler({
             if (properties.finish === "stop") {
               clearManualCompaction(binding, "step-ended")
               clearRunCheck(binding)
-              await promptQueue.markTerminalMirrored(binding)
+              await promptQueue.markTerminalMirrored(binding, { messageID: properties.assistantMessageID })
             }
             break
           }
@@ -254,7 +259,7 @@ export function createSessionReconciler({
           if (properties.finish === "stop") {
             if (state.isAssistantMirrored(server.id, sessionID, properties.assistantMessageID)) {
               clearRunCheck(binding)
-              await promptQueue.markTerminalMirrored(binding)
+              await promptQueue.markTerminalMirrored(binding, { messageID: properties.assistantMessageID })
             } else {
               const mirrored = await renderer.finalAssistantMessageReady(binding, properties.assistantMessageID)
               if (mirrored) clearRunCheck(binding)
@@ -264,6 +269,7 @@ export function createSessionReconciler({
           }
           break
         case "session.status":
+          if (properties.status?.type && properties.status.type !== "idle") promptQueue.markBackendBusy?.(binding)
           if (properties.status?.type === "retry") retryStatusChanged = await handleRetryStatus(binding, properties.status)
           if (properties.status?.type === "idle") {
             await clearRetryStatus(binding, { clearFeedback: true })
@@ -424,6 +430,7 @@ export function createSessionReconciler({
       return
     }
     if (info.role === "user") {
+      if (!promptQueue.hasExpectedStop(binding)) promptQueue.observeUserMessage?.(binding, info.id)
       const internal = isCompactionReplay(binding, info.id) || isInternalUserMessage(message)
       const rootID = internalLogicalRoot(binding, message, [message])
       if (state.isUserMirrored(binding.serverID, binding.sessionID, info.id)) {
@@ -458,7 +465,7 @@ export function createSessionReconciler({
       }
     }
     if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
-      if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding)
+      if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding, { messageID: info.id })
       return
     }
     if (info.summary !== true && !await renderStoredAssistantMessage(binding, message)) {
@@ -468,7 +475,7 @@ export function createSessionReconciler({
     await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
     if (info.finish === "stop") {
       clearRunCheck(binding)
-      await promptQueue.markTerminalMirrored(binding)
+      await promptQueue.markTerminalMirrored(binding, { messageID: info.id })
     }
   }
 
@@ -492,7 +499,20 @@ export function createSessionReconciler({
 
   async function handleSessionIdle(server, binding) {
     const queued = queuedPromptCount(binding) > 0
-    const result = await promptQueue.markBackendIdle(binding)
+    const generation = promptQueue.generation?.(binding)
+    // Both idle event shapes can refer to the previous run. Verify current
+    // status before letting either event release a queued prompt.
+    if (queued && typeof opencode.sessionStatus === "function") {
+      const status = await backendRequest(server.id, "queue idle event status", () => opencode.sessionStatus(
+        server.id, binding.sessionID, { directory: binding.directory },
+      ))
+      if (status === skippedBackendRequest) return
+      if (status?.type !== "idle") {
+        promptQueue.markBackendBusy?.(binding, { generation })
+        return
+      }
+    }
+    const result = await promptQueue.markBackendIdle(binding, { generation })
     if (queued && result.status !== "sent") await reconcileBindingNow(binding)
     if (promptQueue.hasExpectedStop(binding)) {
       const userMessageID = latestUserMessages.get(bindingKey(binding))
@@ -650,6 +670,7 @@ export function createSessionReconciler({
       return
     }
     if (questionManager?.hasPending(server.id, binding.sessionID)) return
+    const generation = promptQueue.generation?.(binding)
 
     const statuses = await backendRequest(server.id, "incomplete-run-status", () => opencode.request(server, "/session/status", { directory: binding.directory }))
     if (statuses === skippedBackendRequest) {
@@ -703,6 +724,7 @@ export function createSessionReconciler({
     }
     if (currentStatuses?.[binding.sessionID]?.type && currentStatuses[binding.sessionID].type !== "idle") return
     if (questionManager?.hasPending(server.id, binding.sessionID) || !activeBinding(binding)) return
+    if (generation !== undefined && generation !== promptQueue.generation(binding)) return
     if (outcome.complete) {
       let mirrored = state.isAssistantMirrored(server.id, binding.sessionID, outcome.assistantMessageID)
       if (!mirrored && outcome.finalAnswer) {
@@ -725,14 +747,14 @@ export function createSessionReconciler({
       }
       if (!mirrored) return
       clearRunCheck(binding)
-      await promptQueue.markTerminalMirrored(binding, { backendIdle: true })
+      await promptQueue.markTerminalMirrored(binding, { backendIdle: true, messageID: outcome.assistantMessageID || outcome.userMessageID, generation })
       return
     }
 
     const warningKey = incompleteWarningKey(binding, outcome)
     if (state.incompleteRunHandled(warningKey)) {
       clearRunCheck(binding)
-      await promptQueue.markTerminalMirrored(binding, { backendIdle: true })
+      await promptQueue.markTerminalMirrored(binding, { backendIdle: true, messageID: outcome.assistantMessageID || outcome.userMessageID, generation })
       return
     }
     if (incompleteNotifications.has(warningKey)) return
@@ -772,7 +794,7 @@ export function createSessionReconciler({
         source,
       })
       clearRunCheck(binding)
-      await promptQueue.markTerminalMirrored(binding, { backendIdle: true })
+      await promptQueue.markTerminalMirrored(binding, { backendIdle: true, messageID: outcome.assistantMessageID || outcome.userMessageID, generation })
     } finally {
       incompleteNotifications.delete(warningKey)
     }
@@ -791,7 +813,7 @@ export function createSessionReconciler({
       if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
         if (info.finish === "stop") {
           clearRunCheck(binding)
-          await promptQueue.markTerminalMirrored(binding)
+          await promptQueue.markTerminalMirrored(binding, { messageID: info.id })
         }
         return
       }
@@ -801,7 +823,7 @@ export function createSessionReconciler({
     if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
       if (info.finish === "stop") {
         clearRunCheck(binding)
-        await promptQueue.markTerminalMirrored(binding)
+        await promptQueue.markTerminalMirrored(binding, { messageID: info.id })
       }
       return
     }
@@ -1245,6 +1267,10 @@ export function createSessionReconciler({
     if (!activeBinding(binding)) return
     rememberCompactionMessages(binding, messages)
     await reminders.observe(binding, messages)
+    const latestUser = [...messages].reverse().find((message) => (message.info || message).role === "user")
+    if (latestUser && !promptQueue.hasExpectedStop(binding)) {
+      promptQueue.observeUserMessage?.(binding, (latestUser.info || latestUser).id)
+    }
     for (const [messageIndex, message] of messages.entries()) {
       if (!activeBinding(binding)) return
       const info = message.info || message
@@ -1302,12 +1328,12 @@ export function createSessionReconciler({
         if (notified === null) return
       }
       if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) {
-        if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding)
+        if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding, { messageID: info.id })
         continue
       }
       if (info.summary === true) {
         skippedAssistantIDs.push(info.id)
-        if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding)
+        if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding, { messageID: info.id })
         skippedAssistants += 1
         continue
       }
@@ -1318,7 +1344,7 @@ export function createSessionReconciler({
       }
       await renderStoredAssistantMessage(binding, message)
       await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
-      if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding)
+      if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding, { messageID: info.id })
       mirroredAssistants += 1
     }
     if (skippedAssistantIDs.length) await state.markAssistantMirroredMany(binding.serverID, binding.sessionID, skippedAssistantIDs)
@@ -1490,6 +1516,7 @@ export function createSessionReconciler({
   }
 
   async function recordConsumedPromptOrigin(binding, marker, opencodeMessageID) {
+    promptQueue.observeUserMessage?.(binding, opencodeMessageID, { submitted: true })
     const telegramMessageID = Number(marker?.messageId)
     if (!opencodeMessageID || !Number.isSafeInteger(telegramMessageID)) return
     await state.recordPromptOrigin({
