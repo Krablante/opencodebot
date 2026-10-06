@@ -30,7 +30,10 @@ menu.serverConnections = new Map(config.opencode.servers.map((server) => [server
 const launch = new LaunchMenu({ config, state, opencode, settings })
 const catalog = { entries: [], models: Object.values(config.promptProfiles).map((p) => ({ id: p.model.modelID, name: p.model.providerID === "openai" ? "GPT-6.1 Sol" : "DeepSeek V4.1 Flash", providerID: p.model.providerID, providerName: p.model.providerID, family: p.model.providerID === "openai" ? "Sol" : "DeepSeek", variants: p.model.providerID === "openai" ? ["medium", "high", "xhigh"] : ["low", "high", "max"] })).filter((m, i, list) => list.findIndex((other) => other.id === m.id) === i) }
 settings.catalog = async () => catalog
-catalog.entries = [...new Set(Object.values(config.promptProfiles).map((p) => p.opencodezSystem).filter(Boolean))].map((name) => ({ id: name, name }))
+catalog.entries = [
+  { id: "builtin:codex_gpt_6_1_sol", name: "Codex · GPT-6.1 Sol" },
+  { id: "builtin:default", name: "OpenCode" },
+]
 
 const font = await fs.readFile(process.env.OPENCODEBOT_PREVIEW_FONT || "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf").catch(() => null)
 const boldFont = await fs.readFile(process.env.OPENCODEBOT_PREVIEW_BOLD_FONT || "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf").catch(() => null)

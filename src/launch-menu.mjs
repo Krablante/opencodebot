@@ -291,8 +291,16 @@ export class LaunchMenu {
     const model = catalog.models.find((m) => m.id === profile.model.modelID && m.providerID === profile.model.providerID)
     if (!model) throw new Error(this.text("Модель отсутствует на выбранном сервере. Подключи провайдера в OpenCodez или выбери другой профиль.", "The model is unavailable on this server. Connect its provider in OpenCodez or choose another profile."))
     if (profile.model.variant && !model.variants.includes(profile.model.variant)) throw new Error(this.text("Этот уровень reasoning недоступен для модели.", "This reasoning variant is unavailable for the model."))
-    if (profile.opencodezSystem && profile.opencodezSystem !== "default" && profile.opencodezSystem !== "none"
-      && !catalog.entries.some((e) => e.id === profile.opencodezSystem || e.name === profile.opencodezSystem)) throw new Error(this.text("System prompt профиля отсутствует на этом сервере. Выбери другой профиль или сервер.", "The profile's System prompt is unavailable on this server. Choose another profile or server."))
+    if (profile.opencodezSystem && profile.opencodezSystem !== "default" && profile.opencodezSystem !== "none") {
+      const name = profile.opencodezSystem
+      // Match OpenCodez's short-name resolution: exact ID, local file, builtin.
+      const entry = catalog.entries.find((e) => e.id === name)
+        || catalog.entries.find((e) => e.id === `file:${name}`)
+        || catalog.entries.find((e) => e.id === `builtin:${name}`)
+        || catalog.entries.find((e) => e.name === name)
+      if (!entry) throw new Error(this.text("System prompt профиля отсутствует на этом сервере. Выбери другой профиль или сервер.", "The profile's System prompt is unavailable on this server. Choose another profile or server."))
+      profile.opencodezSystem = entry.id
+    }
   }
 
   async prepareLaunch(d) {

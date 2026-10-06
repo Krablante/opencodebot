@@ -5,6 +5,7 @@ import test from "node:test"
 import { applyPromptProfile, parseNewTopicArgs, parseResetArgs, parseResetProfileArg } from "../src/prompt-profiles.mjs"
 import { normalizePromptProfiles } from "../src/config/prompt-profiles.mjs"
 import { OpenCodeClient, profileFromMessages } from "../src/opencode.mjs"
+import { LaunchMenu } from "../src/launch-menu.mjs"
 import { baseTitleFromTelegramTitle, managedTopicTitle } from "../src/topic-titles.mjs"
 
 test("built-in prompt profiles use current models, variants, and System prompts", () => {
@@ -32,6 +33,37 @@ test("built-in prompt profiles use current models, variants, and System prompts"
     agent: "build",
     model: profiles.sol.model,
   })
+})
+
+test("launch System names resolve to catalog IDs while missing prompts remain blocked", async () => {
+  const profiles = normalizePromptProfiles()
+  const catalog = {
+    models: [{ providerID: "openai", id: "gpt-6.1-sol", variants: ["medium", "high", "xhigh"] }],
+    entries: [
+      { id: "builtin:codex_gpt_6_1_sol", name: "Codex · GPT-6.1 Sol" },
+      { id: "builtin:review", name: "Builtin review" },
+      { id: "file:review", name: "My review" },
+      { id: "saved:review", name: "Saved review" },
+    ],
+  }
+  const menu = new LaunchMenu({ settings: { catalog: async () => catalog } })
+  for (const [name, expected] of [
+    ["codex_gpt_6_1_sol", "builtin:codex_gpt_6_1_sol"],
+    ["builtin:codex_gpt_6_1_sol", "builtin:codex_gpt_6_1_sol"],
+    ["review", "file:review"],
+    ["builtin:review", "builtin:review"],
+    ["saved:review", "saved:review"],
+    ["Saved review", "saved:review"],
+    ["default", "default"],
+    ["none", "none"],
+  ]) {
+    const profile = { ...structuredClone(profiles.sol), opencodezSystem: name }
+    await menu.validate({ serverID: "local" }, profile)
+    assert.equal(profile.opencodezSystem, expected)
+  }
+  await assert.rejects(menu.validate({ serverID: "local" }, {
+    ...structuredClone(profiles.sol), opencodezSystem: "missing-prompt",
+  }), /System prompt/)
 })
 
 test("/new resolves a profile and preserves an unknown token as title text", async () => {

@@ -132,7 +132,7 @@ async function smokeWorkspacePreferences() {
     const state = new StateStore(path.join(root, "state.json"))
     await state.load()
     configureI18n({ state, defaultLanguage: "en" })
-    const catalog = { entries: [{ id: "builtin:codex_gpt_6_1_sol", name: "codex_gpt_6_1_sol" }], models: [{ providerID: "openai", id: "gpt-6.1-sol", name: "GPT-6.1 Sol", family: "Sol", variants: ["medium", "high", "xhigh"] }] }
+    const catalog = { entries: [{ id: "builtin:codex_gpt_6_1_sol", name: "Codex · GPT-6.1 Sol" }], models: [{ providerID: "openai", id: "gpt-6.1-sol", name: "GPT-6.1 Sol", family: "Sol", variants: ["medium", "high", "xhigh"] }] }
     const backend = { server: () => ({}), request: async () => catalog, defaultNewSessionDirectory: () => "/workspace" }
     const settings = new UserSettings({ config: c, state, opencode: backend })
     await settings.initialize()
@@ -171,7 +171,18 @@ async function smokeWorkspacePreferences() {
       answerCallbackQuery: async (payload) => { messages.push(payload) },
       deleteMessage: async () => {}, request: async () => {},
     }
-    const launch = new LaunchMenu({ config: c, state, opencode: backend, settings, telegram, createSession: async (_message, value) => { assert.equal(value.promptProfile.model.modelID, "gpt-6.1-sol"); return { message_thread_id: 90 } } })
+    const launch = new LaunchMenu({ config: c, state, opencode: backend, settings, telegram, createSession: async (_message, value) => {
+      assert.equal(value.promptProfile.model.modelID, "gpt-6.1-sol")
+      assert.equal(value.promptProfile.opencodezSystem, "builtin:codex_gpt_6_1_sol")
+      return { message_thread_id: 90 }
+    } })
+    for (const profileName of ["sol", "solm", "solx"]) {
+      const preview = { serverID: "local", directory: "C:\\Users\\Example User", profileName }
+      await launch.prepareLaunch(preview)
+      assert.equal(preview.launchReady, true, "Shipped short System names resolve against the real builtin catalog shape")
+      assert.equal(preview.launchProfile.opencodezSystem, "builtin:codex_gpt_6_1_sol")
+      assert.equal(settings.data.profiles[profileName].opencodezSystem, "codex_gpt_6_1_sol", "Preparing a launch preserves the saved profile")
+    }
     const draft = await launch.open({ from: { id: 42 }, message: { chat: { id: -1001 } } }, "profiles")
     const count = messages.length
     await launch.handleCallback({ id: "foreign", from: { id: 43 }, message: { chat: { id: -1001 }, message_id: 10 }, data: `launch:${draft.id}:${draft.rev}:default` })

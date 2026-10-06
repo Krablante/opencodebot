@@ -52,6 +52,8 @@ The catalog comes from the selected server's `/opencodez/library`. It includes p
 
 New profiles inherit OpenCodez System assignments and reasoning defaults unless the user chooses explicit settings. The profile editor also supports agent and System selection. Saving checks the selected model and variant against the chosen server. Catalog presence cannot guarantee account quota or paid access.
 
+Saved short System names also work: the bot resolves an exact catalog ID first, then a matching local file, then a builtin. Each launch saves the resolved ID in its snapshot; existing profiles do not need to be recreated. A genuinely missing prompt still blocks creation.
+
 Edits affect future launches. Existing sessions retain their model and launch snapshot. `/reset` without arguments can use that snapshot when the named profile was deleted; it preserves the server and directory and leaves the previous OpenCodez session intact.
 
 ## Topic and profile dialogs
