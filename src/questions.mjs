@@ -4,7 +4,7 @@ import { logInfo } from "./logger.mjs"
 import { t } from "./i18n/index.mjs"
 
 const CALLBACK_PREFIX = "oq:"
-const CARD_FORMAT = "rich-v1"
+const CARD_FORMAT = "rich-v2"
 
 export function createQuestionManager({ config, state, telegram, opencode, backendRequest, skippedBackendRequest, logError = () => {} }) {
   const operations = new Map()
@@ -70,11 +70,15 @@ export function createQuestionManager({ config, state, telegram, opencode, backe
       const sent = await telegram.sendRichMessage({ chatId: record.chatId, topicId: record.topicId, html })
       record.messageId = sent.message_id
     }
+    // Until Telegram accepts the edit, a reply still belongs to the question
+    // currently visible in the chat, even when the next step is already saved.
+    if (record.step < record.questions.length) record.replyIndex = record.step
     record.needsRender = false
     await state.upsertQuestion(record)
   }
 
   async function retireInput(record) {
+    // Compatibility cleanup for reply messages opened by older bot versions.
     if (!record.input) return
     const messageId = record.input.messageId
     rememberMessage(record, messageId)
@@ -125,19 +129,6 @@ export function createQuestionManager({ config, state, telegram, opencode, backe
     await draw(record)
   }
 
-  async function askCustom(record, actor) {
-    await retireInput(record)
-    const question = record.questions[record.step]
-    const name = escapeHtml(actor.first_name || t("questions.you"))
-    const html = `<h3>✎ ${escapeHtml(t("questions.ownAnswer"))}</h3><p>${escapeHtml(question.text)}</p><p><a href="tg://user?id=${actor.id}">${name}</a>, ${escapeHtml(t("questions.inputHelp"))}</p>`
-    const sent = await telegram.sendRichMessage({ chatId: record.chatId, topicId: record.topicId, html,
-      replyMarkup: { force_reply: true, selective: true, input_field_placeholder: t("questions.inputPlaceholder") },
-    })
-    record.input = { messageId: sent.message_id, questionIndex: record.step, actorID: actor.id }
-    rememberMessage(record, sent.message_id)
-    await draw(record)
-  }
-
   async function handleCallback(query) {
     const data = String(query?.data || "")
     if (!data.startsWith(CALLBACK_PREFIX)) return false
@@ -166,18 +157,16 @@ export function createQuestionManager({ config, state, telegram, opencode, backe
       const pick = /^pick(\d+)$/.exec(action || "")
       const go = /^go(\d+)$/.exec(action || "")
       if ((pick && !question?.options[Number(pick[1])]) || (go && !record.questions[Number(go[1])])
-        || (action === "custom" && (!question?.custom || !query.from?.id))
         || (action === "next" && !question) || (action === "back" && record.step <= 0)
         || (action === "submit" && record.step !== record.questions.length)
         || (action === "clear" && !record.customAnswers[record.step])
-        || (!pick && !go && !["custom", "clear", "next", "back", "submit", "reject"].includes(action))) {
+        || (!pick && !go && !["clear", "next", "back", "submit", "reject"].includes(action))) {
         await answer(t("questions.optionUnavailable"), true); return true
       }
       await answer()
       record.notice = ""
       try {
         if (action === "submit" || action === "reject") { await submit(record, action === "reject"); return true }
-        if (action === "custom") { await askCustom(record, query.from); return true }
         await retireInput(record)
         if (pick) {
           const index = Number(pick[1])
@@ -209,30 +198,34 @@ export function createQuestionManager({ config, state, telegram, opencode, backe
     const saved = state.questionRecords().find((item) => item.chatId === message.chat?.id
       && item.topicId === message.message_thread_id && (item.messageId === replyID || item.input?.messageId === replyID || item.previousMessageIds?.includes(replyID)))
     if (!saved) return false
+    const direct = saved.messageId === replyID
+    const questionIndex = direct
+      ? saved.replyIndex ?? Math.min(saved.step || 0, (saved.questions?.length || 1) - 1)
+      : saved.input?.questionIndex
     return ordered(saved.serverID, saved.requestID, async () => {
       const current = state.questionRecord(saved.requestID)
       if (!current) return true
       const record = prepareRecord(current)
       const input = record.input
       const binding = state.findBinding(record.serverID, record.sessionID)
-      // Recognized old/foreign replies are consumed, never routed as prompts.
+      // A direct card reply is input. Retired cards and foreign legacy input
+      // replies are still consumed, never routed as new agent prompts.
       if (record.status !== "pending" || !binding || binding.disabled) return true
-      if (!input || input.messageId !== replyID || input.actorID !== message.from?.id || input.questionIndex !== record.step) {
-        if (replyID === record.messageId && record.questions[record.step]?.custom) await telegram.sendMessage({
-          chatId: record.chatId, topicId: record.topicId, text: t("questions.useOwnButton"),
-        })
-        return true
-      }
+      if (!direct && (!input || input.messageId !== replyID || input.actorID !== message.from?.id)) return true
+      const question = record.questions[questionIndex]
+      if (!question) return true
       const text = String(message.text || message.caption || "").trim()
-      if (text === "/cancel") { await retireInput(record); await draw(record); return true }
+      if (!direct && text === "/cancel") { await retireInput(record); await draw(record); return true }
       if (!text) {
         await telegram.sendMessage({ chatId: record.chatId, topicId: record.topicId, text: t("questions.textRequired") })
         return true
       }
       await retireInput(record)
-      record.customAnswers[record.step] = text
-      if (!record.questions[record.step].multiple) record.selections[record.step] = []
-      if (record.questions[record.step].multiple) await draw(record)
+      record.notice = ""
+      record.customAnswers[questionIndex] = text
+      if (!question.multiple) record.selections[questionIndex] = []
+      if (record.questions.length === 1 && !question.multiple) await submit(record)
+      else if (question.multiple || questionIndex !== record.step) await draw(record)
       else await advance(record)
       return true
     })
@@ -317,6 +310,7 @@ function prepareRecord(saved) {
   }
   record.revision ||= 0
   record.step ||= 0
+  record.replyIndex ??= Math.min(record.step, record.questions.length - 1)
   record.selections ||= []
   record.customAnswers ||= []
   record.previousMessageIds ||= []
@@ -361,6 +355,7 @@ export function renderQuestionCard(saved) {
   if (record.step >= total) {
     return `<h2>${escapeHtml(t("questions.reviewTitle"))}</h2><footer>${escapeHtml(t("questions.reviewHelp"))}</footer>`
       + notice + summary(draftAnswers(record), true)
+      + (total ? `<footer>${escapeHtml(t("questions.reviewReplyHelp", { number: record.replyIndex + 1 }))}</footer>` : "")
       + buttonRows([[button(t("questions.sendAnswers"), "submit", "success")],
         ...(total ? [[button(t("questions.back"), "back", "link"), button(t("questions.dismiss"), "reject", "link")]] : [[button(t("questions.dismiss"), "reject", "link")]])])
   }
@@ -375,11 +370,8 @@ export function renderQuestionCard(saved) {
     html += buttonRows([[button(`${mark} ${option.label}`, `pick${index}`, picked ? "primary" : undefined)]])
     if (option.description) html += `<footer>${escapeHtml(option.description)}</footer>`
   })
-  if (question.custom) {
-    html += buttonRows([[button(`${own ? "✓" : "✎"} ${t("questions.ownAnswer")}`, "custom", own ? "primary" : undefined)]])
-    if (own) html += `<blockquote>${escapeHtml(own)}</blockquote>` + buttonRows([[button(t("questions.clearOwnAnswer"), "clear", "link")]])
-  }
-  if (record.input) html += `<footer>${escapeHtml(t("questions.waitingInput"))}</footer>`
+  html += `<footer>${escapeHtml(t("questions.replyHelp"))}</footer>`
+  if (own) html += `<blockquote>${escapeHtml(own)}</blockquote>` + buttonRows([[button(t("questions.clearOwnAnswer"), "clear", "link")]])
   const hasAnswer = draftAnswers(record)[record.step].length > 0
   const next = question.multiple || hasAnswer || total > 1
     ? button(total === 1 ? t("questions.sendAnswer") : record.returnToReview ? t("questions.toReview") : t("questions.next"), "next", hasAnswer ? "success" : undefined) : null

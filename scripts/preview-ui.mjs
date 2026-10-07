@@ -74,7 +74,7 @@ for (const language of ["ru", "en"]) {
     ] }
   const selectedQuestion = { ...questionCard, step: 1, selections: [[0], [0]], customAnswers: ["", language === "ru" ? "Ещё в Firefox на планшете" : "Also Firefox on my tablet"] }
   const questionStates = [["first", questionCard], ["multiple", selectedQuestion],
-    ["input", { ...selectedQuestion, input: { messageId: 1 } }], ["review", { ...selectedQuestion, step: 2 }],
+    ["review", { ...selectedQuestion, step: 2 }],
     ["done", { ...selectedQuestion, status: "answered", answers: [[questionCard.questions[0].options[0].label], [questionCard.questions[1].options[0].label, selectedQuestion.customAnswers[1]]] }]]
   for (const [name, record] of questionStates) await fs.writeFile(path.join(output, `question-${name}-${language}.html`), shell(`<style>.question footer{margin:4px 0 12px;font-size:12px}.question h3{margin:20px 0 6px}.question tg-button[disabled]{opacity:.45}</style><main class="question">${renderQuestionCard(record)}</main>`))
   for (let index = 0; index < guidePage(0, language).total; index += 1) {

@@ -43,7 +43,7 @@ function fixture(stateStore) {
     message: { chat: { id: binding.chatId }, message_id: record().messageId }, ...overrides,
   })
   const reply = (text, overrides = {}) => ({ chat: { id: binding.chatId }, message_thread_id: binding.topicId,
-    from: { id: 7 }, text, reply_to_message: { message_id: record().input?.messageId || record().messageId }, ...overrides })
+    from: { id: 7 }, text, reply_to_message: { message_id: record().messageId }, ...overrides })
   async function ask(questions = [choice()]) {
     const info = { id: "que_test", sessionID: binding.sessionID, questions }
     opencode.pending = [info]
@@ -69,7 +69,7 @@ test("single choice uses embedded rich buttons, notifications and a one-click ba
   assert.equal(f.sent.length, 2, "a repeated asked event cannot reopen a resolved request")
 })
 
-test("a batch collects choices and custom multi-select, survives restart, supports edits and submits once", async () => {
+test("direct card replies collect custom multi-select, survive restart and submit with the batch", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-questions-"))
   try {
     const state = new StateStore(path.join(root, "state.json"))
@@ -86,19 +86,16 @@ test("a batch collects choices and custom multi-select, survives restart, suppor
     await f.manager.handleCallback(f.callback("pick1"))
     assert.deepEqual(f.record().selections[1], [0])
     assert.match(f.edits.at(-1).html, /☑ Firefox/)
-    await f.manager.handleCallback(f.callback("custom"))
-    const inputId = f.record().input.messageId
-    assert.equal(f.sent.at(-1).replyMarkup.force_reply, true)
-    assert.equal(f.sent.at(-1).replyMarkup.selective, true)
-    assert.match(f.sent.at(-1).html, /tg:\/\/user\?id=7/)
+    const cardId = f.record().messageId
+    assert.doesNotMatch(f.edits.at(-1).html, /:custom|force_reply/)
+    assert.match(f.edits.at(-1).html, /reply to this card/)
 
     const restart = new StateStore(path.join(root, "state.json"))
     await restart.load()
     const restarted = createQuestionManager({ config: { finalNotifications: { userIds: [7] } }, state: restart, telegram: f.telegram, opencode: f.opencode })
     await restarted.reconcile()
-    assert.equal(f.sent.length, 3, "recovery does not resend the card or DM")
-    assert.equal(await restarted.handleReplyMessage(f.reply("Foreign", { from: { id: 8 } })), true)
-    assert.equal(restart.questionRecord("que_test").input.messageId, inputId)
+    assert.equal(f.sent.length, 2, "recovery does not resend the card or DM")
+    assert.equal(restart.questionRecord("que_test").messageId, cardId)
     assert.equal(await restarted.handleReplyMessage(f.reply("/custom/path")), true)
     assert.equal(restart.questionRecord("que_test").customAnswers[1], "/custom/path")
     const click = (action) => ({ ...f.callback(action), data: `oq:que_test:${restart.questionRecord("que_test").revision}:${action}` })
@@ -109,13 +106,13 @@ test("a batch collects choices and custom multi-select, survives restart, suppor
     assert.equal(restart.questionRecord("que_test").step, 2)
     await restarted.handleCallback(click("submit"))
     assert.deepEqual(f.replies[0].answers, [["Buttons"], ["Firefox", "/custom/path"]])
-    assert.equal(await restarted.handleReplyMessage(f.reply("Late", { reply_to_message: { message_id: inputId } })), true)
+    assert.equal(await restarted.handleReplyMessage(f.reply("Late")), true)
     assert.equal(f.replies.length, 1)
-    assert.ok(f.deleted.includes(inputId))
+    assert.equal(f.sent.filter((message) => message.html).length, 1, "custom input creates no extra message")
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
-test("old and overlapping clicks cannot consume another question; main-card replies never become prompts", async () => {
+test("old and overlapping clicks cannot consume another question; direct card replies become answers", async () => {
   const f = fixture()
   await f.ask([choice(), choice()])
   const first = f.callback("pick0"), second = f.callback("pick1")
@@ -125,35 +122,49 @@ test("old and overlapping clicks cannot consume another question; main-card repl
   assert.equal(f.replies.length, 0)
   assert.match(f.callbacks.at(-1).text, /card has changed/)
   assert.equal(await f.manager.handleReplyMessage(f.reply("Reply to card")), true)
-  assert.match(f.sent.at(-1).text, /Tap.*own answer/)
+  assert.equal(f.record().customAnswers[1], "Reply to card")
+  assert.equal(f.record().step, 2)
+  assert.equal(f.replies.length, 0)
   assert.equal(await f.manager.handleReplyMessage(f.reply("Unrelated", { reply_to_message: { message_id: 9999 } })), false)
-  await f.manager.handleCallback(f.callback("custom"))
-  const staleReply = f.reply("Too late")
+  await f.state.upsertQuestion({ ...f.record(), previousMessageIds: [999] })
+  const staleReply = f.reply("Too late", { reply_to_message: { message_id: 999 } })
   await f.manager.handleCallback(f.callback("back"))
   assert.equal(await f.manager.handleReplyMessage(staleReply), true)
-  assert.equal(f.record().step, 0)
-  assert.equal(f.record().customAnswers.some(Boolean), false)
+  assert.equal(f.record().step, 1)
+  assert.equal(f.record().customAnswers[1], "Reply to card")
 })
 
-test("custom input cancellation, custom:false, skipping and backend resolution retain correct question boundaries", async () => {
+test("direct replies work without custom options, support captions and edit the review's identified question", async () => {
   const f = fixture()
   await f.ask([choice({ custom: false }), choice()])
-  assert.doesNotMatch(f.sent[0].html, /own answer/)
-  await f.manager.handleCallback(f.callback("custom"))
+  assert.match(f.sent[0].html, /reply to this card/)
+  await f.manager.handleReplyMessage(f.reply("Own answer without an option"))
+  assert.equal(f.record().customAnswers[0], "Own answer without an option")
   assert.equal(f.record().input, undefined)
-  await f.manager.handleCallback(f.callback("next"))
-  await f.manager.handleCallback(f.callback("custom"))
-  const inputId = f.record().input.messageId
-  await f.manager.handleReplyMessage(f.reply("/cancel"))
-  assert.equal(f.record().input, null)
+  await f.manager.handleReplyMessage(f.reply("", { caption: "Caption answer" }))
+  assert.equal(f.record().step, 2)
+  assert.equal(f.record().customAnswers[1], "Caption answer")
+  await f.manager.handleReplyMessage(f.reply("Edited from review"))
+  assert.equal(f.record().step, 2)
+  assert.equal(f.record().customAnswers[1], "Edited from review")
+  await f.manager.handleCallback(f.callback("go0"))
+  await f.manager.handleReplyMessage(f.reply("First answer edited"))
+  assert.equal(f.record().step, 2)
+  assert.match(f.edits.at(-1).html, /Reply here.*question 1/)
+  await f.manager.handleReplyMessage(f.reply("First answer edited again"))
+  assert.equal(f.record().customAnswers[0], "First answer edited again")
+  assert.equal(f.record().customAnswers[1], "Edited from review")
+  await f.manager.handleCallback(f.callback("back"))
+  await f.manager.handleReplyMessage(f.reply(""))
+  assert.match(f.sent.at(-1).text, /answer as text/)
   assert.equal(f.record().step, 1)
-  await f.manager.handleCallback(f.callback("custom"))
+  await f.manager.handleCallback(f.callback("next"))
   await f.manager.handleEvent(f.server, f.binding, { type: "question.replied", properties: {
     requestID: "que_test", answers: [["Web answer 1"], ["Web answer 2"]],
   } })
   assert.match(f.edits.at(-1).html, /1\. Gesture.*Web answer 1.*2\. Gesture.*Web answer 2/s)
   assert.doesNotMatch(f.edits.at(-1).html, /tg-button/)
-  assert.equal(await f.manager.handleReplyMessage(f.reply("Late", { reply_to_message: { message_id: inputId } })), true)
+  assert.equal(await f.manager.handleReplyMessage(f.reply("Late")), true)
   assert.equal(f.replies.length, 0)
 })
 
@@ -180,24 +191,78 @@ test("legacy cards upgrade in place and failed renders recover without losing ch
   const f = fixture()
   f.records.set("que_test", { requestID: "que_test", serverID: "sample", sessionID: "ses_test", chatId: f.binding.chatId,
     topicId: f.binding.topicId, directory: "/tmp", status: "pending", messageId: 90,
-    questions: [{ ...choice(), text: "Legacy text", question: undefined }], notifiedUserIds: ["7"] })
+    questions: [{ ...choice(), text: "Legacy text", question: undefined }, choice()], notifiedUserIds: ["7"] })
   await f.ask()
   assert.equal(f.sent.length, 0)
   assert.equal(f.record().messageId, 90)
   assert.match(f.edits.at(-1).html, /Legacy text/)
   const edit = f.telegram.editRichMessage
   f.telegram.editRichMessage = async () => { throw new Error("Network unavailable") }
-  await f.manager.handleCallback(f.callback("custom"))
+  await assert.rejects(f.manager.handleReplyMessage(f.reply("Preserved draft")), /Network unavailable/)
   assert.equal(f.record().needsRender, true)
   f.telegram.editRichMessage = edit
   await f.manager.reconcile()
   assert.equal(f.record().needsRender, false)
-  assert.equal(f.record().input.questionIndex, 0)
+  assert.equal(f.record().customAnswers[0], "Preserved draft")
   f.opencode.pending = []
   await f.manager.reconcile()
   assert.equal(f.record().status, "closed")
   await f.manager.handleEvent(f.server, f.binding, { type: "question.replied", properties: { requestID: "que_test", answers: [["Actual answer"]] } })
   assert.equal(f.record().status, "answered", "an authoritative reply supersedes recovery's closed marker")
+})
+
+test("a direct reply answers a lone question immediately, including slash text, without a custom button", async () => {
+  const f = fixture()
+  await f.ask()
+  assert.equal(await f.manager.handleReplyMessage(f.reply("/path/to/canvas")), true)
+  assert.deepEqual(f.replies[0].answers, [["/path/to/canvas"]])
+  assert.equal(f.record().status, "answered")
+  assert.equal(f.sent.length, 2, "only the original card and DM are sent")
+})
+
+test("legacy input remains usable across upgrade, but direct card replies need no input owner", async () => {
+  const f = fixture()
+  await f.ask([choice({ multiple: true })])
+  await f.state.upsertQuestion({ ...f.record(), format: "rich-v1", input: { messageId: 99, actorID: 7, questionIndex: 0 }, previousMessageIds: [99] })
+  await f.manager.reconcile()
+  assert.equal(f.record().format, "rich-v2")
+  assert.equal(await f.manager.handleReplyMessage(f.reply("Foreign legacy", { from: { id: 8 }, reply_to_message: { message_id: 99 } })), true)
+  assert.equal(f.record().customAnswers.length, 0)
+  assert.equal(await f.manager.handleReplyMessage(f.reply("Direct answer", { from: { id: 8 } })), true)
+  assert.equal(f.record().customAnswers[0], "Direct answer")
+  assert.equal(f.record().input, null)
+  assert.ok(f.deleted.includes(99))
+  assert.equal(await f.manager.handleReplyMessage(f.reply("Retired legacy", { reply_to_message: { message_id: 99 } })), true)
+  assert.equal(f.record().customAnswers[0], "Direct answer")
+})
+
+test("overlapping replies stay attached to their question instead of consuming the next one", async () => {
+  const f = fixture()
+  await f.ask([choice(), choice()])
+  await Promise.all([f.manager.handleReplyMessage(f.reply("First draft")), f.manager.handleReplyMessage(f.reply("Revised draft"))])
+  assert.equal(f.record().step, 1)
+  assert.equal(f.record().customAnswers[0], "Revised draft")
+  assert.equal(f.record().customAnswers[1], undefined)
+  assert.equal(f.replies.length, 0)
+})
+
+test("a reply during a slow card transition answers the question still visible in Telegram", async () => {
+  const f = fixture()
+  await f.ask([choice(), choice()])
+  let entered, release
+  const editing = new Promise((resolve) => { entered = resolve })
+  const gate = new Promise((resolve) => { release = resolve })
+  const edit = f.telegram.editRichMessage
+  f.telegram.editRichMessage = async (message) => { entered(); await gate; await edit(message) }
+  const transition = f.manager.handleCallback(f.callback("pick0"))
+  await editing
+  const reply = f.manager.handleReplyMessage(f.reply("Answer to the visible first question"))
+  release()
+  await Promise.all([transition, reply])
+  assert.equal(f.record().step, 1)
+  assert.equal(f.record().customAnswers[0], "Answer to the visible first question")
+  assert.equal(f.record().customAnswers[1], undefined)
+  assert.equal(f.replies.length, 0)
 })
 
 test("rich rendering escapes question text, option labels, descriptions and answers", () => {
@@ -213,7 +278,6 @@ test("removing custom multi-select text preserves checked options", async () => 
   const f = fixture()
   await f.ask([choice({ multiple: true })])
   await f.manager.handleCallback(f.callback("pick0"))
-  await f.manager.handleCallback(f.callback("custom"))
   await f.manager.handleReplyMessage(f.reply("Another gesture"))
   await f.manager.handleCallback(f.callback("clear"))
   await f.manager.handleCallback(f.callback("next"))
@@ -257,8 +321,8 @@ test("missing-session cleanup retires input and keeps reply identifiers for the 
     const f = fixture(state)
     await state.bindTopic(f.binding)
     await f.ask()
-    await f.manager.handleCallback(f.callback("custom"))
-    const oldReply = f.reply("Old session answer")
+    await state.upsertQuestion({ ...f.record(), input: { messageId: 99, questionIndex: 0, actorID: 7 }, previousMessageIds: [99] })
+    const oldReply = f.reply("Old session answer", { reply_to_message: { message_id: 99 } })
     await state.removeMissingBinding("sample", "ses_test")
     await f.manager.reconcile()
     assert.equal(f.record().status, "closed")
