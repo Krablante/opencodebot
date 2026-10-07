@@ -1213,7 +1213,10 @@ function removeBindingState(data, binding, { createPending = false, promptProfil
   data.bindings = data.bindings.filter((item) => !(item.serverID === serverID && item.sessionID === sessionID))
   data.pendingPrompts = (data.pendingPrompts || []).filter((item) => !(item.serverID === serverID && item.sessionID === sessionID))
   data.promptOrigins = (data.promptOrigins || []).filter((item) => !(item.serverID === serverID && item.sessionID === sessionID))
-  data.questionMessages = (data.questionMessages || []).filter((item) => !(item.serverID === serverID && item.sessionID === sessionID))
+  // Keep question-card identifiers so replies to a removed session cannot become
+  // prompts for the replacement session. The existing question retention bounds apply.
+  data.questionMessages = (data.questionMessages || []).map((item) => item.serverID === serverID && item.sessionID === sessionID && item.status === "pending"
+    ? { ...item, status: "closed", needsRender: true } : item)
   data.incompleteRunHistory = (data.incompleteRunHistory || []).filter((item) => !(item.serverID === serverID && item.sessionID === sessionID))
   data.seenSessions = (data.seenSessions || []).filter((key) => key !== sessionKey(serverID, sessionID))
   data.finalNotifications ||= { enabledUserIds: [], sentMessages: [] }

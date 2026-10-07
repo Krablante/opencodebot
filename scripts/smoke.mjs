@@ -470,7 +470,7 @@ async function smokeI18n() {
     assert.equal(telegramBotCommands().some((item) => item.command === "lang"), false)
     assert.ok(catalogKeys().length > 150)
     assert.match(tFor("ru", "polling.unknownCommand"), /Неизвестная команда/)
-    assert.match(tFor("ru", "questions.answered", { answerHtml: "ответ" }), /Выбран ответ/)
+    assert.match(tFor("ru", "questions.doneTitle"), /Ответы отправлены/)
     assert.match(tFor("ru", "updates.failureTitle"), /Не удалось обновить/)
     assert.equal(tFor("ru", "speech.transcribing"), "🎙️ Распознаю аудио…")
     assert.match(tFor("ru", "artifacts.saved", { serverHtml: "nuc", body: "file.txt" }), /Сохранено/)
@@ -1335,12 +1335,12 @@ async function smokeQuestionRecovery() {
     hasPendingQuestion: () => false,
   }
   const telegram = {
-    async sendMessage() {
+    async sendRichMessage() {
       sendCalls += 1
       await sendGate
       return { message_id: 999 }
     },
-    async editMessageText() {},
+    async editRichMessage() {},
   }
   const opencode = {
     servers: new Map([[server.id, server]]),

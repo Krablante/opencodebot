@@ -49,6 +49,8 @@ The gateway admits four uploads/deliveries at a time and returns `503` with `Ret
 
 Durability covers recorded receipts and delivery identifiers. A crash between an external side effect and its marker can repeat the action. Queued prompts, topic/profile drafts and unfinished voice work disappear on restart. Ordinary wizard-card identifiers and deletion deadlines persist in state: startup removes abandoned draft cards and restores confirmation cleanup. Neither the inbox nor successful markers promise exactly-once network delivery. Keep their backups together and preserve corrupt data for deliberate recovery.
 
+Question cards persist their step, selections, custom answers and active reply-message identifiers in the existing question records. One operation lane per request orders recovery, Telegram input and backend resolution. Card revisions reject stale clicks; retired input identifiers consume old replies. A batch is sent to OpenCodez only at final confirmation. Missing-session cleanup retains closed question records within the existing retention bound so their replies cannot enter a replacement session.
+
 `health:live` checks the actual process, polling/reconcile progress, Telegram and required discovery APIs. A stopped recovery loop initiates shutdown; Compose restarts the process. Shutdown cancels ordinary requests, flushes deferred state and allows eight seconds before exit. State, upload and journal details belong in the [runtime reference](config-runtime.md), deployment in [Docker](docker.md).
 
 ## Deliberate tradeoffs

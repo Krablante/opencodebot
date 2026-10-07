@@ -107,9 +107,11 @@ History is read in pages, discarding reasoning, tool output and attachment data 
 
 ## Questions
 
-A single-choice OpenCodez question has one button per option. A click answers through the backend, removes the keyboard and updates the same message. For custom answers, reply to the question message with text. Multi-question/multi-select requests link to OpenCodez. A question resolved in the web UI also closes its Telegram controls.
+OpenCodez questions appear as a Rich Message card with progress, options and descriptions. A single-choice click advances to the next question; a lone single-choice question is answered immediately. For multiple selection, tap options to toggle their checkmarks, then choose Next. Your own answer opens a separate reply message; reply there with text, or use `/cancel` to cancel input. With multiple selection, your text can accompany selected options.
 
-Pending questions are recovered by the existing 15-second reconcile loop and after SSE reconnect, sharing host backoff and per-request single-flight. They never count as a terminal queue signal. Blocking question alerts reach configured DM recipients even when their final-answer notifications are off.
+A questionnaire with several questions ends with a review: change any answer, then send them together. Back revisits earlier questions; Skip question leaves an explicit empty answer. Dismiss cancels the request in OpenCodez. Submitted answers remain grouped by question. Choices and active input survive bot restarts. An answer or cancellation in the web UI closes the Telegram controls too. Old buttons and replies cannot answer a later question or become a new prompt.
+
+Pending questions are recovered by the existing 15-second reconcile loop and after SSE reconnect, sharing host backoff and a per-request operation lane with buttons, replies and resolution events. They never count as a terminal queue signal. Blocking question alerts reach configured DM recipients even when their final-answer notifications are off.
 
 ## Final notifications
 

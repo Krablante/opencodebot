@@ -11,6 +11,7 @@ import { FinalVoiceModule } from "../src/final-voice.mjs"
 import { configureI18n } from "../src/i18n/index.mjs"
 import { richView } from "../src/menu-format.mjs"
 import { guideDocument, guidePage } from "../src/user-guide.mjs"
+import { renderQuestionCard } from "../src/questions.mjs"
 
 const output = path.resolve(process.argv[2] || "/tmp/opencodez/opencodebot-ui")
 await fs.mkdir(output, { recursive: true })
@@ -59,6 +60,23 @@ for (const language of ["ru", "en"]) {
   const modelDraft = { ...draft, page: "models", editing: true, catalog, query: "", profile: config.promptProfiles.sol }
   const models = await launch.render(modelDraft)
   for (const [name, html] of [["home", richView(home.text, home.replyMarkup)], ["settings", richView(settingsView.text, settingsView.replyMarkup)], ["recent", richView(recent.text, recent.replyMarkup)], ["new", topic], ["created", created], ["input", input], ["servers", servers], ["models", models]]) await fs.writeFile(path.join(output, `${name}-${language}.html`), shell(`${name === "home" ? "<style>main>table td:first-child{width:68%}main>table td:last-child{text-align:right}</style>" : ""}<main>${html}</main>`))
+  const questionCard = { requestID: "que_preview", status: "pending", revision: 1,
+    questions: language === "ru" ? [
+      { header: "Жест", question: "Под «тапами для движения» ты имеешь в виду протяжку пальцем по самому холсту или нажатия на кнопки?", options: [
+        { label: "Протяжка по холсту", description: "Перемещаю холст жестом пальца" }, { label: "Нажатия на кнопки", description: "Использую кнопки управления" }] },
+      { header: "Браузер", question: "В каких браузерах это происходит?", multiple: true, options: [
+        { label: "Firefox на Android", description: "Мобильный Firefox" }, { label: "Chrome на Android", description: "Мобильный Chrome" }, { label: "Safari на iPhone", description: "Мобильный Safari" }] },
+    ] : [
+      { header: "Gesture", question: "By taps to move, do you mean dragging a finger across the canvas or tapping the controls?", options: [
+        { label: "Drag across the canvas", description: "Move the canvas with a finger gesture" }, { label: "Tap the controls", description: "Use the movement buttons" }] },
+      { header: "Browser", question: "Which browsers does this happen in?", multiple: true, options: [
+        { label: "Firefox on Android", description: "Mobile Firefox" }, { label: "Chrome on Android", description: "Mobile Chrome" }, { label: "Safari on iPhone", description: "Mobile Safari" }] },
+    ] }
+  const selectedQuestion = { ...questionCard, step: 1, selections: [[0], [0]], customAnswers: ["", language === "ru" ? "Ещё в Firefox на планшете" : "Also Firefox on my tablet"] }
+  const questionStates = [["first", questionCard], ["multiple", selectedQuestion],
+    ["input", { ...selectedQuestion, input: { messageId: 1 } }], ["review", { ...selectedQuestion, step: 2 }],
+    ["done", { ...selectedQuestion, status: "answered", answers: [[questionCard.questions[0].options[0].label], [questionCard.questions[1].options[0].label, selectedQuestion.customAnswers[1]]] }]]
+  for (const [name, record] of questionStates) await fs.writeFile(path.join(output, `question-${name}-${language}.html`), shell(`<style>.question footer{margin:4px 0 12px;font-size:12px}.question h3{margin:20px 0 6px}.question tg-button[disabled]{opacity:.45}</style><main class="question">${renderQuestionCard(record)}</main>`))
   for (let index = 0; index < guidePage(0, language).total; index += 1) {
     const page = menu.renderHelp(index)
     await fs.writeFile(path.join(output, `help-${index + 1}-${language}.html`), shell(`<main>${richView(page.text, page.replyMarkup)}</main>`))
@@ -99,4 +117,4 @@ for (const language of ["ru", "en"]) {
   state.data = snapshot
 }
 console.log(`UI previews generated in ${output}`)
-function shell(body) { return `<!doctype html><html><head><meta charset="utf-8"><title>OpenCodeBot · Guide</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}${fontCss}</style></head><body>${body}</body></html>` }
+function shell(body) { return `<!doctype html><html><head><meta charset="utf-8"><title>OpenCodeBot · Guide</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}${fontCss}@page{size:A4;margin:12mm}@media print{section:nth-of-type(5){font-size:15px;line-height:1.4}section blockquote{break-inside:avoid}}</style></head><body>${body}</body></html>` }

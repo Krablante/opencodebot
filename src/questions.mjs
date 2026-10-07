@@ -1,163 +1,241 @@
-import { clampTelegram, escapeHtml, telegramMessageLink } from "./telegram.mjs"
+import { escapeHtml, telegramMessageLink } from "./telegram.mjs"
+import { buttonRows } from "./menu-format.mjs"
 import { logInfo } from "./logger.mjs"
 import { t } from "./i18n/index.mjs"
 
 const CALLBACK_PREFIX = "oq:"
+const CARD_FORMAT = "rich-v1"
 
-export function createQuestionManager({
-  config,
-  state,
-  telegram,
-  opencode,
-  backendRequest,
-  skippedBackendRequest,
-  logError = () => {},
-}) {
-  const inflight = new Map()
+export function createQuestionManager({ config, state, telegram, opencode, backendRequest, skippedBackendRequest, logError = () => {} }) {
+  const operations = new Map()
   const reconcileOperations = new Map()
 
-  async function handleEvent(server, binding, event) {
+  // Buttons, replies, recovery and backend resolution share one request lane.
+  // A second click cannot consume the next question while the first is drawing it.
+  function ordered(serverID, requestID, action) {
+    const key = `${serverID}:${requestID}`
+    const previous = operations.get(key)
+    const operation = (previous || Promise.resolve()).catch(() => {}).then(action)
+    operations.set(key, operation)
+    return operation.finally(() => { if (operations.get(key) === operation) operations.delete(key) })
+  }
+
+  function handleEvent(server, binding, event) {
     const requestID = event.properties?.id || event.properties?.requestID
-    logInfo("question.event.received", {
-      source: server.id,
-      eventType: event.type,
-      requestID,
-      sessionID: event.properties?.sessionID,
-    })
     if (event.type === "question.asked") return handleAsked(server, binding, event.properties)
-    const pending = inflight.get(questionOperationKey(server.id, requestID))
-    if (pending) await pending.catch(() => undefined)
-    if (event.type === "question.replied") return handleResolved(event.properties.requestID, "answered", event.properties.answers || [])
-    if (event.type === "question.rejected") return handleResolved(event.properties.requestID, "rejected", [])
-    return false
-  }
-
-  function handleAsked(server, binding, info, delivery = "event") {
-    const key = questionOperationKey(server.id, info.id)
-    const pending = inflight.get(key)
-    if (pending) return pending
-    const operation = sendQuestion(server, binding, info, delivery).finally(() => inflight.delete(key))
-    inflight.set(key, operation)
-    return operation
-  }
-
-  async function sendQuestion(server, binding, info, delivery) {
-    const existing = state.questionRecord(info.id)
-    if (existing?.status === "pending" && existing.messageId) {
-      // The request is immutable. Recovery only owes missing recipient alerts;
-      // rewriting the same card every reconcile pass adds no information.
-      await notifyRecipients(binding, existing)
-      return true
-    }
-    const questions = normalizeQuestions(info.questions)
-    const question = questions.length === 1 ? questions[0] : null
-    const record = {
-      requestID: info.id,
-      serverID: server.id,
-      sessionID: info.sessionID,
-      chatId: binding.chatId,
-      topicId: binding.topicId,
-      directory: binding.directory,
-      status: "pending",
-      interactive: Boolean(question && !question.multiple && question.options.length),
-      question,
-      questions,
-      answers: [],
-      notifiedUserIds: existing?.notifiedUserIds || [],
-      createdAt: existing?.createdAt || new Date().toISOString(),
-    }
-    const sent = await telegram.sendMessage({
-      chatId: binding.chatId,
-      topicId: binding.topicId,
-      text: renderQuestion(record),
-      replyMarkup: questionReplyMarkup(record),
+    return ordered(server.id, requestID, () => {
+      if (event.type === "question.replied") return resolve(requestID, "answered", event.properties.answers || [])
+      if (event.type === "question.rejected") return resolve(requestID, "rejected")
+      return false
     })
-    record.messageId = sent.message_id
-    await state.upsertQuestion(record)
-    logInfo("question.telegram.sent", {
-      source: server.id,
-      sessionID: info.sessionID,
-      requestID: info.id,
-      topicId: binding.topicId,
-      interactive: record.interactive,
-      delivery,
-    })
-    await notifyRecipients(binding, record)
-    return true
   }
 
-  async function handleResolved(requestID, status, answers) {
-    const record = state.questionRecord(requestID)
-    if (!record) return false
-    await state.resolveQuestion(requestID, status, answers)
-    try {
-      await telegram.editMessageText({
-        chatId: record.chatId,
-        messageId: record.messageId,
-        text: renderQuestion({ ...record, status, answers }),
-        replyMarkup: { inline_keyboard: [] },
+  function handleAsked(server, binding, info) {
+    return ordered(server.id, info.id, async () => {
+      const existing = state.questionRecord(info.id)
+      // Late/replayed asked events must not reopen an already settled request.
+      if (existing && existing.status !== "pending") return true
+      const record = prepareRecord(existing || {
+        requestID: info.id, serverID: server.id, sessionID: info.sessionID,
+        chatId: binding.chatId, topicId: binding.topicId, directory: binding.directory,
+        status: "pending", questions: normalizeQuestions(info.questions), answers: [],
+        notifiedUserIds: [], createdAt: new Date().toISOString(),
       })
-    } catch (error) {
-      logError(error, { event: "question.message.edit", requestID })
-    }
-    logInfo("question.resolved", {
-      source: record.serverID,
-      sessionID: record.sessionID,
-      requestID,
-      status,
+      if (!record.messageId || record.needsRender) {
+        await draw(record)
+        logInfo("question.telegram.sent", { source: server.id, sessionID: info.sessionID, requestID: info.id, topicId: binding.topicId, questions: record.questions.length })
+      }
+      await notifyRecipients(binding, record)
+      return true
     })
+  }
+
+  async function draw(record) {
+    record.revision += 1
+    record.needsRender = true
+    await state.upsertQuestion(record)
+    const html = renderQuestionCard(record)
+    if (record.messageId) {
+      try {
+        await telegram.editRichMessage({ chatId: record.chatId, messageId: record.messageId, html })
+      } catch (error) {
+        if (/message is not modified/i.test(error.message)) { /* already rendered */ }
+        else if (/message (?:to edit )?not found|message can.t be edited/i.test(error.message)) {
+          rememberMessage(record, record.messageId)
+          record.messageId = undefined
+        } else throw error
+      }
+    }
+    if (!record.messageId) {
+      const sent = await telegram.sendRichMessage({ chatId: record.chatId, topicId: record.topicId, html })
+      record.messageId = sent.message_id
+    }
+    record.needsRender = false
+    await state.upsertQuestion(record)
+  }
+
+  async function retireInput(record) {
+    if (!record.input) return
+    const messageId = record.input.messageId
+    rememberMessage(record, messageId)
+    record.input = null
+    await state.upsertQuestion(record)
+    await telegram.deleteMessage({ chatId: record.chatId, messageId }).catch((error) => logError(error, { event: "question.input.delete", requestID: record.requestID }))
+  }
+
+  async function resolve(requestID, status, answers = []) {
+    const saved = state.questionRecord(requestID)
+    if (!saved || (saved.status === status && !saved.needsRender)
+      || (status === "closed" && ["answered", "rejected"].includes(saved.status))) return false
+    const record = prepareRecord(saved)
+    await retireInput(record)
+    record.status = status
+    record.answers = answers
+    record.selections = []
+    record.customAnswers = []
+    record.notice = ""
+    await state.resolveQuestion(requestID, status, answers)
+    try { await draw(record) }
+    catch (error) { logError(error, { event: "question.message.edit", requestID }) }
+    logInfo("question.resolved", { source: record.serverID, sessionID: record.sessionID, requestID, status })
     return true
+  }
+
+  async function submit(record, reject = false) {
+    await retireInput(record)
+    await state.upsertQuestion(record)
+    try {
+      if (reject) await opencode.rejectQuestion(record.serverID, record.requestID, { directory: record.directory })
+      else await opencode.replyQuestion(record.serverID, record.requestID, draftAnswers(record), { directory: record.directory })
+      await resolve(record.requestID, reject ? "rejected" : "answered", reject ? [] : draftAnswers(record))
+    } catch (error) {
+      logError(error, { event: "question.reply", requestID: record.requestID })
+      if (error.status === 404) return resolve(record.requestID, "closed")
+      // Keep the draft, including the last selection, for a safe explicit retry.
+      if (!reject) record.step = record.questions.length
+      record.notice = t(reject ? "questions.dismissFailed" : "questions.sendFailed")
+      await draw(record)
+    }
+  }
+
+  async function advance(record) {
+    if (record.questions.length === 1) return submit(record)
+    record.step = record.returnToReview ? record.questions.length : record.step + 1
+    record.returnToReview = false
+    await draw(record)
+  }
+
+  async function askCustom(record, actor) {
+    await retireInput(record)
+    const question = record.questions[record.step]
+    const name = escapeHtml(actor.first_name || t("questions.you"))
+    const html = `<h3>✎ ${escapeHtml(t("questions.ownAnswer"))}</h3><p>${escapeHtml(question.text)}</p><p><a href="tg://user?id=${actor.id}">${name}</a>, ${escapeHtml(t("questions.inputHelp"))}</p>`
+    const sent = await telegram.sendRichMessage({ chatId: record.chatId, topicId: record.topicId, html,
+      replyMarkup: { force_reply: true, selective: true, input_field_placeholder: t("questions.inputPlaceholder") },
+    })
+    record.input = { messageId: sent.message_id, questionIndex: record.step, actorID: actor.id }
+    rememberMessage(record, sent.message_id)
+    await draw(record)
   }
 
   async function handleCallback(query) {
     const data = String(query?.data || "")
     if (!data.startsWith(CALLBACK_PREFIX)) return false
-    const [, requestID, optionText] = data.split(":")
-    const record = state.questionRecord(requestID)
-    if (!record || record.status !== "pending") {
-      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("questions.alreadyAnswered"), showAlert: true })
+    const [, requestID, revision, action] = data.split(":")
+    const saved = state.questionRecord(requestID)
+    const answer = (text, showAlert = false) => telegram.answerCallbackQuery({ callbackQueryId: query.id, text, showAlert })
+    if (!saved) { await answer(t("questions.alreadyAnswered"), true); return true }
+    return ordered(saved.serverID, requestID, async () => {
+      const current = state.questionRecord(requestID)
+      if (!current) { await answer(t("questions.alreadyAnswered"), true); return true }
+      const record = prepareRecord(current)
+      if (record.status !== "pending") { await answer(t("questions.alreadyAnswered"), true); return true }
+      const binding = state.findBinding(record.serverID, record.sessionID)
+      if (!binding || binding.disabled || binding.topicId !== record.topicId || binding.chatId !== record.chatId) {
+        await answer(t("questions.alreadyAnswered"), true)
+        await resolve(requestID, "closed")
+        return true
+      }
+      if (query.message?.chat?.id !== record.chatId || query.message?.message_id !== record.messageId) {
+        await answer(t("questions.wrongQuestion"), true); return true
+      }
+      if (String(record.revision) !== revision || record.needsRender) {
+        await answer(t("questions.cardUpdated")); return true
+      }
+      const question = record.questions[record.step]
+      const pick = /^pick(\d+)$/.exec(action || "")
+      const go = /^go(\d+)$/.exec(action || "")
+      if ((pick && !question?.options[Number(pick[1])]) || (go && !record.questions[Number(go[1])])
+        || (action === "custom" && (!question?.custom || !query.from?.id))
+        || (action === "next" && !question) || (action === "back" && record.step <= 0)
+        || (action === "submit" && record.step !== record.questions.length)
+        || (action === "clear" && !record.customAnswers[record.step])
+        || (!pick && !go && !["custom", "clear", "next", "back", "submit", "reject"].includes(action))) {
+        await answer(t("questions.optionUnavailable"), true); return true
+      }
+      await answer()
+      record.notice = ""
+      try {
+        if (action === "submit" || action === "reject") { await submit(record, action === "reject"); return true }
+        if (action === "custom") { await askCustom(record, query.from); return true }
+        await retireInput(record)
+        if (pick) {
+          const index = Number(pick[1])
+          const selected = record.selections[record.step] || []
+          record.selections[record.step] = question.multiple
+            ? (selected.includes(index) ? selected.filter((value) => value !== index) : [...selected, index]) : [index]
+          if (!question.multiple) {
+            record.customAnswers[record.step] = ""
+            await advance(record)
+            return true
+          }
+        } else if (action === "clear") record.customAnswers[record.step] = ""
+        else if (go) { record.step = Number(go[1]); record.returnToReview = true }
+        else if (action === "back") { record.step -= 1; record.returnToReview = false }
+        else if (action === "next") { await advance(record); return true }
+        await draw(record)
+      } catch (error) {
+        logError(error, { event: "question.action", requestID })
+        // Persisted needsRender makes the existing recovery loop retry the card.
+        await telegram.sendMessage({ chatId: record.chatId, topicId: record.topicId, text: t("questions.actionFailed") })
+      }
       return true
-    }
-    if (query.message?.chat?.id !== record.chatId || query.message?.message_id !== record.messageId) {
-      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("questions.wrongQuestion"), showAlert: true })
-      return true
-    }
-    const option = record.question?.options?.[Number(optionText)]
-    if (!option) {
-      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("questions.optionUnavailable"), showAlert: true })
-      return true
-    }
-    const binding = state.findBinding(record.serverID, record.sessionID)
-    try {
-      await opencode.replyQuestion(record.serverID, requestID, [[option.label]], { directory: binding?.directory })
-      await handleResolved(requestID, "answered", [[option.label]])
-      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("questions.selected", { option: option.label }) })
-    } catch (error) {
-      logError(error, { event: "question.reply", requestID })
-      await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("questions.replyFailed"), showAlert: true })
-    }
-    return true
+    })
   }
 
   async function handleReplyMessage(message) {
-    const replyToMessageID = message?.reply_to_message?.message_id
-    const text = String(message?.text || message?.caption || "").trim()
-    if (!replyToMessageID || !text || text.startsWith("/")) return false
-    const record = state.questionRecords().find((item) => item.status === "pending"
-      && item.chatId === message.chat?.id
-      && item.topicId === message.message_thread_id
-      && item.messageId === replyToMessageID
-      && item.question?.custom)
-    if (!record) return false
-    const binding = state.findBinding(record.serverID, record.sessionID)
-    try {
-      await opencode.replyQuestion(record.serverID, record.requestID, [[text]], { directory: binding?.directory })
-      await handleResolved(record.requestID, "answered", [[text]])
-    } catch (error) {
-      logError(error, { event: "question.custom_reply", requestID: record.requestID })
-      await telegram.sendMessage({ chatId: record.chatId, topicId: record.topicId, text: t("questions.customFailed") })
-    }
-    return true
+    const replyID = message?.reply_to_message?.message_id
+    if (!replyID) return false
+    const saved = state.questionRecords().find((item) => item.chatId === message.chat?.id
+      && item.topicId === message.message_thread_id && (item.messageId === replyID || item.input?.messageId === replyID || item.previousMessageIds?.includes(replyID)))
+    if (!saved) return false
+    return ordered(saved.serverID, saved.requestID, async () => {
+      const current = state.questionRecord(saved.requestID)
+      if (!current) return true
+      const record = prepareRecord(current)
+      const input = record.input
+      const binding = state.findBinding(record.serverID, record.sessionID)
+      // Recognized old/foreign replies are consumed, never routed as prompts.
+      if (record.status !== "pending" || !binding || binding.disabled) return true
+      if (!input || input.messageId !== replyID || input.actorID !== message.from?.id || input.questionIndex !== record.step) {
+        if (replyID === record.messageId && record.questions[record.step]?.custom) await telegram.sendMessage({
+          chatId: record.chatId, topicId: record.topicId, text: t("questions.useOwnButton"),
+        })
+        return true
+      }
+      const text = String(message.text || message.caption || "").trim()
+      if (text === "/cancel") { await retireInput(record); await draw(record); return true }
+      if (!text) {
+        await telegram.sendMessage({ chatId: record.chatId, topicId: record.topicId, text: t("questions.textRequired") })
+        return true
+      }
+      await retireInput(record)
+      record.customAnswers[record.step] = text
+      if (!record.questions[record.step].multiple) record.selections[record.step] = []
+      if (record.questions[record.step].multiple) await draw(record)
+      else await advance(record)
+      return true
+    })
   }
 
   async function reconcile() {
@@ -175,12 +253,13 @@ export function createQuestionManager({
   async function reconcileServerNow(serverID) {
     const server = opencode.servers.get(serverID)
     if (!server) return
-    const directories = new Set([
-      server.home,
+    const directories = new Set([server.home,
       ...state.bindings().filter((binding) => binding.serverID === server.id && !binding.disabled).map((binding) => binding.directory),
+      ...state.questionRecords().filter((record) => record.serverID === server.id && (record.status === "pending" || record.needsRender)).map((record) => record.directory),
     ].filter(Boolean))
     for (const directory of directories) {
       try {
+        const tracked = new Set(state.questionRecords().filter((record) => record.serverID === server.id && record.directory === directory).map((record) => record.requestID))
         const pending = backendRequest
           ? await backendRequest(server.id, "pending questions", () => opencode.questions(server.id, { directory }))
           : await opencode.questions(server.id, { directory })
@@ -188,20 +267,23 @@ export function createQuestionManager({
         const pendingIDs = new Set(pending.map((item) => item.id))
         await Promise.all(pending.map(async (info) => {
           const binding = state.findBinding(server.id, info.sessionID)
-          if (binding && !binding.disabled) await handleAsked(server, binding, info, "reconcile")
+          if (binding && !binding.disabled) await handleAsked(server, binding, info)
         }))
-        for (const record of state.questionRecords()) {
-          if (record.serverID !== server.id || record.directory !== directory || record.status !== "pending" || pendingIDs.has(record.requestID)) continue
-          await handleResolved(record.requestID, "closed", [])
+        for (const saved of state.questionRecords()) {
+          if (saved.serverID !== server.id || saved.directory !== directory) continue
+          await ordered(server.id, saved.requestID, async () => {
+            const record = state.questionRecord(saved.requestID)
+            if (!record) return
+            const binding = state.findBinding(server.id, record.sessionID)
+            if (record.status === "pending" && ((tracked.has(record.requestID) && !pendingIDs.has(record.requestID)) || !binding || binding.disabled)) await resolve(record.requestID, "closed")
+            else if (record.needsRender) {
+              if (record.status === "pending") await draw(prepareRecord(record))
+              else await resolve(record.requestID, record.status, record.answers || [])
+            }
+          })
         }
-      } catch (error) {
-        logError(error, { event: "question.reconcile", serverID: server.id, directory })
-      }
+      } catch (error) { logError(error, { event: "question.reconcile", serverID: server.id, directory }) }
     }
-  }
-
-  function hasPending(serverID, sessionID) {
-    return state.hasPendingQuestion(serverID, sessionID)
   }
 
   async function notifyRecipients(binding, record) {
@@ -210,72 +292,101 @@ export function createQuestionManager({
       const value = String(userID)
       if (record.notifiedUserIds.includes(value)) continue
       try {
-        await telegram.sendMessage({
-          chatId: userID,
+        await telegram.sendMessage({ chatId: userID,
           text: t("questions.notification", { topicHtml: escapeHtml(binding.topicTitle || t("questions.topicFallback", { topicId: binding.topicId })) }),
           replyMarkup: link ? { inline_keyboard: [[{ text: t("questions.open"), url: link }]] } : undefined,
         })
         record.notifiedUserIds.push(value)
         await state.upsertQuestion(record)
-      } catch (error) {
-        logError(error, { event: "question.notification", requestID: record.requestID, userID })
-      }
+      } catch (error) { logError(error, { event: "question.notification", requestID: record.requestID, userID }) }
     }
   }
 
-  return { handleEvent, handleCallback, handleReplyMessage, reconcile, reconcileServer, hasPending }
+  return { handleEvent, handleCallback, handleReplyMessage, reconcile, reconcileServer,
+    hasPending: (serverID, sessionID) => state.hasPendingQuestion(serverID, sessionID) }
 }
 
-function questionOperationKey(serverID, requestID) {
-  return `${serverID}:${requestID}`
+function prepareRecord(saved) {
+  const record = structuredClone(saved)
+  if (record.format !== CARD_FORMAT) {
+    record.questions = normalizeQuestions(record.questions || (record.question ? [record.question] : []))
+    record.format = CARD_FORMAT
+    record.needsRender = true
+    delete record.question
+    delete record.interactive
+  }
+  record.revision ||= 0
+  record.step ||= 0
+  record.selections ||= []
+  record.customAnswers ||= []
+  record.previousMessageIds ||= []
+  record.notifiedUserIds ||= []
+  return record
+}
+
+function rememberMessage(record, messageId) {
+  if (messageId && !record.previousMessageIds.includes(messageId)) record.previousMessageIds.push(messageId)
 }
 
 function normalizeQuestions(questions) {
-  if (!Array.isArray(questions)) return []
-  return questions.map((value) => ({
-    header: String(value.header || "").trim(),
-    text: String(value.question || "").trim(),
-    multiple: Boolean(value.multiple),
-    custom: value.custom !== false,
-    options: Array.isArray(value.options)
-      ? value.options.map((option) => ({ label: String(option.label || "").trim(), description: String(option.description || "").trim() })).filter((option) => option.label)
-      : [],
+  return (Array.isArray(questions) ? questions : []).map((value) => ({
+    header: String(value.header || "").trim(), text: String(value.question || value.text || "").trim(),
+    multiple: Boolean(value.multiple), custom: value.custom !== false,
+    options: (Array.isArray(value.options) ? value.options : []).map((option) => ({
+      label: String(option.label || "").trim(), description: String(option.description || "").trim(),
+    })).filter((option) => option.label),
   }))
 }
 
-function renderQuestion(record) {
-  const question = record.question
-  const lines = [t("questions.title")]
-  if (!question) {
-    lines.push("", t("questions.multipleIntro"))
-    ;(record.questions || []).forEach((item, index) => {
-      lines.push("", `<b>${index + 1}.</b> ${escapeHtml(item.text)}`)
-    })
-  } else {
-    lines.push("", escapeHtml(question.text))
-    question.options.forEach((option, index) => {
-      lines.push("", `<b>${index + 1}. ${escapeHtml(option.label)}</b>`)
-      if (option.description) lines.push(escapeHtml(option.description))
-    })
-    if (question.multiple) lines.push("", t("questions.multipleHelp"))
-    else if (question.custom) lines.push("", t("questions.customHelp"))
-  }
-  if (record.status === "answered") lines.push("", t("questions.answered", { answerHtml: escapeHtml(flattenAnswers(record.answers)) }))
-  if (record.status === "rejected") lines.push("", t("questions.rejected"))
-  if (record.status === "closed") lines.push("", t("questions.closed"))
-  return clampTelegram(lines.join("\n"))
+function draftAnswers(record) {
+  return record.questions.map((question, index) => [...new Set([
+    ...(record.selections[index] || []).map((option) => question.options[option]?.label).filter(Boolean),
+    ...(record.customAnswers[index] ? [record.customAnswers[index]] : []),
+  ])])
 }
 
-function questionReplyMarkup(record) {
-  if (!record.interactive || record.status !== "pending") return undefined
-  return {
-    inline_keyboard: record.question.options.map((option, index) => [{
-      text: option.label.slice(0, 64),
-      callback_data: `${CALLBACK_PREFIX}${record.requestID}:${index}`,
-    }]),
+export function renderQuestionCard(saved) {
+  const record = prepareRecord(saved)
+  const total = record.questions.length
+  const button = (text, action, style) => ({ text, callback_data: `${CALLBACK_PREFIX}${record.requestID}:${record.revision}:${action}`, style })
+  const notice = record.notice ? `<blockquote>${escapeHtml(record.notice)}</blockquote>` : ""
+  const summary = (answers, editable) => record.questions.map((question, index) =>
+    `<h3>${index + 1}. ${escapeHtml(question.header || t("questions.questionLabel"))}</h3><p>${escapeHtml(question.text)}</p>`
+    + `<blockquote>${escapeHtml((answers[index] || []).join(" · ") || t("questions.skipped"))}</blockquote>`
+    + (editable ? buttonRows([[button(t("questions.change"), `go${index}`, "link")]]) : "")).join("")
+  if (record.status !== "pending") {
+    const title = t(record.status === "answered" ? "questions.doneTitle" : record.status === "rejected" ? "questions.rejectedTitle" : "questions.closedTitle")
+    return `<h2>${escapeHtml(title)}</h2>` + (record.status === "answered" ? summary(record.answers || [], false) : "")
   }
-}
-
-function flattenAnswers(answers) {
-  return (answers || []).flat().filter(Boolean).join(", ") || t("questions.answerSent")
+  if (record.step >= total) {
+    return `<h2>${escapeHtml(t("questions.reviewTitle"))}</h2><footer>${escapeHtml(t("questions.reviewHelp"))}</footer>`
+      + notice + summary(draftAnswers(record), true)
+      + buttonRows([[button(t("questions.sendAnswers"), "submit", "success")],
+        ...(total ? [[button(t("questions.back"), "back", "link"), button(t("questions.dismiss"), "reject", "link")]] : [[button(t("questions.dismiss"), "reject", "link")]])])
+  }
+  const question = record.questions[record.step]
+  const selected = record.selections[record.step] || []
+  const own = record.customAnswers[record.step]
+  let html = `<h2>${escapeHtml(t("questions.cardTitle"))}</h2><footer>${escapeHtml(t("questions.progress", { current: record.step + 1, total }))} · ${escapeHtml(t(question.multiple ? "questions.chooseMany" : "questions.chooseOne"))}</footer>`
+    + notice + `<p>${escapeHtml(question.text)}</p>`
+  question.options.forEach((option, index) => {
+    const picked = selected.includes(index)
+    const mark = question.multiple ? (picked ? "☑" : "☐") : (picked ? "●" : "○")
+    html += buttonRows([[button(`${mark} ${option.label}`, `pick${index}`, picked ? "primary" : undefined)]])
+    if (option.description) html += `<footer>${escapeHtml(option.description)}</footer>`
+  })
+  if (question.custom) {
+    html += buttonRows([[button(`${own ? "✓" : "✎"} ${t("questions.ownAnswer")}`, "custom", own ? "primary" : undefined)]])
+    if (own) html += `<blockquote>${escapeHtml(own)}</blockquote>` + buttonRows([[button(t("questions.clearOwnAnswer"), "clear", "link")]])
+  }
+  if (record.input) html += `<footer>${escapeHtml(t("questions.waitingInput"))}</footer>`
+  const hasAnswer = draftAnswers(record)[record.step].length > 0
+  const next = question.multiple || hasAnswer || total > 1
+    ? button(total === 1 ? t("questions.sendAnswer") : record.returnToReview ? t("questions.toReview") : t("questions.next"), "next", hasAnswer ? "success" : undefined) : null
+  // Single choice advances on its option button. Empty batch answers are explicit.
+  html += buttonRows([
+    ...(next && (hasAnswer || total > 1) ? [[hasAnswer ? next : button(t("questions.skip"), "next", "link")]] : []),
+    [...(record.step > 0 ? [button(t("questions.back"), "back", "link")] : []), button(t("questions.dismiss"), "reject", "link")],
+  ])
+  return html
 }

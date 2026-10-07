@@ -117,6 +117,13 @@ export class OpenCodeClient {
     })
   }
 
+  async rejectQuestion(serverID, requestID, options = {}) {
+    return this.request(this.server(serverID), `/question/${encodeURIComponent(requestID)}/reject`, {
+      ...options,
+      method: "POST",
+    })
+  }
+
   async promptAsync(serverID, sessionID, payload, options = {}) {
     return this.request(this.server(serverID), `/session/${encodeURIComponent(sessionID)}/prompt_async`, {
       ...options,

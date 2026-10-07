@@ -52,7 +52,8 @@ const pages = {
       <tr><td><code>/compact</code></td><td>Сжать контекст завершённой сессии</td></tr></table>
       <p><code>/export</code> присылает в эту тему Markdown-файл с промптами и финальными ответами всей текущей сессии. Подробности — на странице «Экспорт сессии».</p>
       <p>В длинном промпте достаточно одного <code>/q</code> в начале: части собираются в одну задачу после двух секунд тишины. В Rich Message команда может начинать абзац или заголовок; текст и фотографии идут вместе. Новый <code>/q</code> начинает отдельную задачу.</p>
-      <p>Вопросы агента показываются кнопками; работа продолжится после ответа. Бот показывает сообщения агента и результат. Обычные действия инструментов скрыты по умолчанию.</p>
+      <p>На вопросы агента отвечай прямо в Telegram. Карточка ведёт по вопросам; несколько вариантов отмечаются кнопками, «Свой ответ» открывает ввод реплаем. В конце опросника проверь и отправь ответы вместе. Один вопрос с одним выбором отправляется сразу. Выбор сохраняется при перезапуске бота.</p>
+      <p>Бот показывает сообщения агента и результат. Обычные действия инструментов скрыты по умолчанию.</p>
       <p>При сбое проверь <code>/session</code>, прежде чем повторять запрос: сервер мог уже принять его. Если новая тема ещё ждёт первый запуск, восстанови соединение и отправь задачу снова в неё.</p>
       <blockquote>Чтобы остановить агента перед закрытием или удалением топика, сначала выполни <code>/kill</code>. Закрытие выключает зеркало и очередь, но серверная сессия сохраняется.</blockquote>
     `],
@@ -130,7 +131,8 @@ const pages = {
       <tr><td><code>/compact</code></td><td>Compact an idle session</td></tr></table>
       <p><code>/export</code> sends a Markdown document with prompts and final answers from the entire current session to this topic. See the Session export guide page.</p>
       <p>One <code>/q</code> at the start is enough for a long prompt: parts become one task after two seconds of quiet. In a Rich Message, the command can start a paragraph or heading; text and photos stay together. A new <code>/q</code> starts a separate task.</p>
-      <p>Agent questions use buttons; work continues after your answer. The bot shows agent text and final answers. Ordinary tool actions are hidden by default.</p>
+      <p>Answer agent questions directly in Telegram. The card walks through questions; buttons toggle multiple choices, and Your own answer opens reply input. At the end of a questionnaire, review and send your answers together. A lone single-choice question is answered immediately. Choices survive bot restarts.</p>
+      <p>The bot shows agent text and final answers. Ordinary tool actions are hidden by default.</p>
       <p>After a failure, check <code>/session</code> before retrying: the server may already have accepted the prompt. If a new topic is still waiting for its first launch, restore the connection and submit the task again there.</p>
       <blockquote>To stop the agent before closing or deleting a topic, run <code>/kill</code> first. Closing disables mirroring and clears the queue, while the server session is preserved.</blockquote>
     `],
