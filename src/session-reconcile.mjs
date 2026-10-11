@@ -457,6 +457,7 @@ export function createSessionReconciler({
       scheduleReconcile(binding, 500)
       return
     }
+    if (await notifyFailedCompaction(binding, info)) return
     if (info.summary === true && info.finish === "stop") {
       const notified = await notifyCompletedCompaction(binding, info)
       if (notified === null) {
@@ -802,6 +803,7 @@ export function createSessionReconciler({
 
   async function handleAssistantMessageUpdated(binding, info) {
     if (!info?.id || !isCompleted(info)) return
+    if (await notifyFailedCompaction(binding, info)) return
     if (info.summary === true) {
       if (info.finish === "stop") {
         const notified = await notifyCompletedCompaction(binding, info)
@@ -860,6 +862,29 @@ export function createSessionReconciler({
     return true
   }
 
+  async function notifyFailedCompaction(binding, info, latestUserID = latestUserMessages.get(bindingKey(binding))) {
+    if (info?.summary !== true || !info.error || !isCompleted(info)) return false
+    if (state.isAssistantMirrored(binding.serverID, binding.sessionID, info.id)) return true
+    if (info.id < latestUserID) {
+      await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
+      return true
+    }
+    clearRunCheck(binding)
+    clearManualCompaction(binding, "compaction-failed")
+    if (!promptQueue.hasExpectedStop(binding)) {
+      await clearRetryStatus(binding, { clearFeedback: true })
+      const properties = { assistantMessageID: info.id, error: info.error }
+      const failure = await notifySessionError(binding, properties, promptQueue.clear(binding))
+      await notifyRunAlert(binding, {
+        kind: "error", properties,
+        detail: failure.detail ? `${failure.detail.title}: ${failure.detail.message}` : "OpenCodez compaction failed.",
+        topicMessageId: failure.message?.message_id,
+      })
+    }
+    await state.markAssistantMirrored(binding.serverID, binding.sessionID, info.id)
+    return true
+  }
+
   function notifyLatestManualCompaction(binding, since) {
     return runAfterFlight(bindingOperations, bindingKey(binding), async () => {
       if (!activeBinding(binding)) return false
@@ -871,7 +896,7 @@ export function createSessionReconciler({
       if (messages === skippedBackendRequest) return false
       for (const message of [...messages].reverse()) {
         const info = message.info
-        if (info?.summary !== true || info.finish !== "stop" || !Number.isFinite(info.time?.completed) || info.time.completed < since || !info.parentID) continue
+        if (info?.summary !== true || (info.finish !== "stop" && !info.error) || !Number.isFinite(info.time?.completed) || info.time.completed < since || !info.parentID) continue
         const parent = messages.find((item) => item.info?.id === info.parentID)
         const marker = parent || await backendRequest(binding.serverID, "manual compaction marker", () => opencode.message(
           binding.serverID,
@@ -881,6 +906,7 @@ export function createSessionReconciler({
         ))
         if (marker === skippedBackendRequest) return false
         if (!marker?.parts?.some((part) => part.type === "compaction" && part.auto === false)) continue
+        if (await notifyFailedCompaction(binding, info)) return true
         return notifyCompletedCompaction(binding, info, { messages: [marker] })
       }
       return false
@@ -1332,6 +1358,10 @@ export function createSessionReconciler({
         continue
       }
       if (info.summary === true) {
+        if (!shouldSkipAssistantForCatchup(usersOnlyCatchup, catchupUserSeen) && await notifyFailedCompaction(binding, info, latestUser?.info?.id || latestUser?.id)) {
+          mirroredAssistants += 1
+          continue
+        }
         skippedAssistantIDs.push(info.id)
         if (info.finish === "stop") await promptQueue.markTerminalMirrored(binding, { messageID: info.id })
         skippedAssistants += 1

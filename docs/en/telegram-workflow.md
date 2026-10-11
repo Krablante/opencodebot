@@ -88,6 +88,8 @@ If a backend restart or lost event leaves a run idle without a final answer, the
 
 `/compact` requires an idle existing session with history and a known model. It runs in the background and accepts later prompts into the queue. Kill/repeat/reset/rewind cancel the bot's in-flight operation. Completion posts one `🗜️ session compacted`; internal summaries remain private. The same marker appears for automatic or web-initiated compaction.
 
+If compaction fails, including when the estimated input exceeds the safe request budget, the bot posts the error and its cause in the working topic and sends the usual failure alerts. A failed internal summary is an error, so hiding summary text does not hide the failure. Recovery uses the same delivery marker to avoid duplicate notices.
+
 Reminders are initially on. Automatic compaction during active work rebuilds the original request and attachments from OpenCodez and adds an English `REMINDER:` asking the agent to preserve progress and later corrections. Admission must succeed before `🔁 Original prompt added as a reminder.` appears. When OpenCodez itself repeats the request, including after pre-turn compaction, the bot confirms the persisted replay and shows the same notice without submitting another copy. A completed summary alone does not prove that the request was repeated.
 
 The repeated payload is not mirrored as another human prompt, and the notice is tracked to avoid repeating it during normal recovery or restart. Manual compaction, stopped runs and disabled topics receive no bot-injected reminder; an already confirmed server replay can still be acknowledged after the run finishes. Repeated compactions follow the original request rather than nesting reminders. Retained large-file paths must still exist.

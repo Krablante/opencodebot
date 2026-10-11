@@ -374,6 +374,91 @@ test("context export counts interrupted prompts, keeps completed answers, and om
   ])
 })
 
+test("failed compaction reports its cause once through events, exact-message recovery and history", async () => {
+  const errorText = "Compaction was not sent to OpenAI: the estimated input (1183349 tokens) exceeds the safe request budget (784800 tokens) for gpt-6.1-sol, even after shortening tool results. Local session history is unchanged."
+  for (const route of ["event", "exact", "history", "manual"]) {
+    const notices = [], alerts = [], submitted = []
+    const queue = new PromptQueue(async (_binding, text) => submitted.push(text))
+    const marker = { ...userMessage("msg_002", ""), parts: [{ type: "compaction", auto: route !== "manual", turn_id: "msg_001" }] }
+    const failure = { ...assistantMessage("msg_003", "hidden summary"), info: {
+      ...assistantMessage("msg_003", "").info, parentID: marker.info.id, sessionID: "session-1", summary: true,
+      agent: "compaction", finish: "error", error: { name: "UnknownError", data: { message: errorText } },
+    } }
+    const harness = createHarness({ usersOnly: false, queue, targetedMessage: route === "exact" ? failure : undefined,
+      telegram: { sendMessage: async (message) => { notices.push(message); return { message_id: 77 } } },
+      runAlerter: { notify: async (alert) => alerts.push(alert) },
+    })
+    const { binding, reconciler } = harness
+    harness.setMessages([userMessage("msg_001", "Keep working"), marker, failure])
+    queue.markBusy(binding, "msg_001")
+    await queue.enqueue(binding, "Queued work")
+    if (route === "history") await reconciler.reconcileBinding(binding)
+    else if (route === "manual") assert.equal(await reconciler.notifyLatestManualCompaction(binding, 0), true)
+    else {
+      await reconciler.handleOpenCodeEvent({ id: binding.serverID }, {
+        type: "message.updated", properties: { info: route === "exact" ? {
+          id: failure.info.id, sessionID: binding.sessionID, role: "assistant", time: failure.info.time,
+        } : failure.info },
+      })
+      if (route === "exact") await new Promise((resolve) => setTimeout(resolve, 200))
+    }
+    assert.equal(notices.length, 1, route)
+    assert.equal(notices[0].topicId, binding.topicId)
+    assert.match(notices[0].text, /Compaction was not sent to OpenAI/)
+    assert.match(notices[0].text, /1183349 tokens/)
+    assert.match(notices[0].text, /784800 tokens/)
+    assert.doesNotMatch(notices[0].text, /hidden summary|session compacted/)
+    assert.equal(alerts.length, 1)
+    assert.equal(alerts[0].kind, "error")
+    assert.equal(alerts[0].topicMessageId, 77)
+    assert.equal(queue.status(binding).length, 0)
+    assert.equal(queue.isBusy(binding), false)
+    assert.deepEqual(submitted, [])
+    await reconciler.reconcileBinding(binding)
+    await reconciler.handleOpenCodeEvent({ id: binding.serverID }, { type: "message.updated", properties: { info: failure.info } })
+    assert.equal(notices.length, 1, `${route}: replay`)
+    assert.equal(alerts.length, 1)
+  }
+})
+
+test("expected stops and historical catch-up keep compaction errors quiet", async () => {
+  for (const expectedStop of [false, true]) {
+    const notices = []
+    const queue = new PromptQueue(async () => assert.fail("must not submit"))
+    const harness = createHarness({ usersOnly: !expectedStop, queue,
+      telegram: { sendMessage: async (message) => notices.push(message) },
+    })
+    const failure = { ...assistantMessage("msg_003", "hidden summary"), info: {
+      ...assistantMessage("msg_003", "").info, sessionID: harness.binding.sessionID,
+      summary: true, finish: "error", error: { name: "UnknownError", data: { message: "Compaction failed" } },
+    } }
+    if (expectedStop) {
+      queue.markExpectedStop(harness.binding)
+      await harness.reconciler.handleOpenCodeEvent({ id: harness.binding.serverID }, { type: "message.updated", properties: { info: failure.info } })
+    } else {
+      harness.setMessages([failure])
+      await harness.reconciler.reconcileBinding(harness.binding)
+    }
+    assert.deepEqual(notices, [])
+    assert.equal(harness.assistantMirrored.has(failure.info.id), true)
+  }
+})
+
+test("an old compaction error cannot clear a newer run or its queued work", async () => {
+  const notices = []
+  const queue = new PromptQueue(async () => assert.fail("must not submit"))
+  const harness = createHarness({ usersOnly: false, queue, telegram: { sendMessage: async (message) => notices.push(message) } })
+  const failure = assistantMessage("msg_002", "hidden summary")
+  Object.assign(failure.info, { summary: true, finish: "error", error: { name: "UnknownError", data: { message: "Compaction failed" } } })
+  harness.setMessages([userMessage("msg_001", "Old prompt"), failure, userMessage("msg_003", "New prompt")])
+  queue.markBusy(harness.binding, "msg_003")
+  await queue.enqueue(harness.binding, "Next task")
+  await harness.reconciler.reconcileBinding(harness.binding)
+  assert.deepEqual(notices, [])
+  assert.equal(queue.status(harness.binding).length, 1)
+  assert.equal(queue.isBusy(harness.binding), true)
+})
+
 test("the latest ledger-marked interruption exports user prompt and visible progress notes", () => {
   const turns = extractContextTurns([
     userMessage("user-interrupted", "Keep this prompt"),
@@ -705,7 +790,7 @@ test("/export never flushes buffered prompts or mutates the session, including n
   assert.match(replies[1].text, /without arguments/)
 })
 
-function createHarness({ cursor, pages, targetedMessage, usersOnly = true, watchdog = false, queue, sessionStatus } = {}) {
+function createHarness({ cursor, pages, targetedMessage, usersOnly = true, watchdog = false, queue, sessionStatus, telegram = {}, runAlerter } = {}) {
   const now = Date.now()
   const binding = {
     serverID: "dima",
@@ -784,7 +869,8 @@ function createHarness({ cursor, pages, targetedMessage, usersOnly = true, watch
   const reconciler = createSessionReconciler({
     config: {},
     state,
-    telegram: {},
+    telegram,
+    runAlerter,
     opencode,
     renderer,
     promptQueue,
