@@ -26,6 +26,7 @@ Common actions appear in Telegram's slash menu. Setup and advanced commands stil
 | `/session` | Server, copyable session ID, status, saved launch settings and separate file/audio destinations |
 | `/q <prompt>`, `/q status`, `/q delete N` | Queue work, inspect it or remove an item |
 | `/kill` | Abort this session and discard its queued/multipart prompts |
+| `/repeat` | Stop and resend the last user prompt verbatim, including attachments |
 | `/compact` | Condense an existing idle session using native OpenCodez compaction |
 | `/reset [profile] [server]` | Start fresh in the same topic and preserve the old session |
 | `/context [N]`, `/set_context N` | Export recent turns; save a personal default, 1–10 |
@@ -63,6 +64,8 @@ Send ordinary text in a working topic. Near-limit multipart text is briefly coll
 
 Acceptance appears as one short status message. From the third provider retry it becomes one editable warning; output/idle removes it. A rejected prompt receives a concise error. If the backend session was deleted, the topic becomes pending and asks for a resend; no replacement prompt is silently issued. OpenCodez always generates message IDs.
 
+`/repeat` takes no arguments. It uses the latest user request in the active session, from Telegram or the web, following compaction/replay/reminder links to the original. It stops the run as `/kill` does, clears the queue and unfinished input for the whole topic, waits for the stop, and submits the same text, attachments and request settings in that session. It also works when the session is idle. No `REMINDER:` instruction is added, and history is preserved. Empty sessions or failed history/stop checks receive feedback without submitting a prompt; retained file paths must still be accessible.
+
 ### Reply-to-rewind
 
 Reply to an earlier Telegram user prompt to replace its exact OpenCodez turn. The stored origin link must belong to the same active session/topic and unreplaced branch. Replies to old pre-reset prompts or another topic are rejected; unrelated replies remain ordinary prompts. Prompts predating durable origin links cannot rewind.
@@ -71,19 +74,19 @@ The bot discards later queue items, aborts if needed, waits for idle, and asks O
 
 ## Queue
 
-Put `/q` only at the beginning of a long text prompt. The bot collects continuations from the same user and topic and admits one complete task after two seconds without another part. Even a short first part keeps queue mode for its continuations. A new `/q` starts a separate task; another command ends the current assembly, while kill/reset discard it. The read-only `/export` leaves buffered input alone. Unknown slash-prefixed text, such as a file path, remains part of the pending prompt. Assembly is bounded to 20 parts and 120,000 characters; exceeding either limit rejects the whole task with feedback, without sending a partial prompt.
+Put `/q` only at the beginning of a long text prompt. The bot collects continuations from the same user and topic and admits one complete task after two seconds without another part. Even a short first part keeps queue mode for its continuations. A new `/q` starts a separate task; another command ends the current assembly, while kill/repeat/reset discard it. The read-only `/export` leaves buffered input alone. Unknown slash-prefixed text, such as a file path, remains part of the pending prompt. Assembly is bounded to 20 parts and 120,000 characters; exceeding either limit rejects the whole task with feedback, without sending a partial prompt.
 
 Rich Messages accept `/q` at the beginning of the first text paragraph or heading, including bold text and `/q@botname`. Subsequent paragraphs, lists, tables, code and supported photos stay together in the queued task. A `/q` inside a code block or quote is prompt content, not a command.
 
 After assembly, `/q` checks backend status when admitted. Idle work starts immediately; busy work waits in memory with its files. Release requires backend idle plus a delivered terminal answer/notice, in either order. History recovery supplies missing final/idle signals. Questions and in-flight manual compaction hold the queue. A failed run clears pending items and lists their summaries; duplicate events cannot release two prompts.
 
-Limits are 20 waiting prompts per session, 100 overall and 64 MiB of text/inline content. Full queues reject with an explicit resend notice; `/q delete N` makes room. Kill, reset, closure/deletion and conversion to FILES/AUDIO discard the whole topic's multipart/attachment buffers, including other operators' pending input. A restart drops queues and downstream buffers. It does not delete backend history. [Storage guarantees](config-runtime.md#paths-and-state) explain why durable input receipt is a different boundary.
+Limits are 20 waiting prompts per session, 100 overall and 64 MiB of text/inline content. Full queues reject with an explicit resend notice; `/q delete N` makes room. Kill, repeat, reset, closure/deletion and conversion to FILES/AUDIO discard the whole topic's multipart/attachment buffers, including other operators' pending input. A restart drops queues and downstream buffers. It does not delete backend history. [Storage guarantees](config-runtime.md#paths-and-state) explain why durable input receipt is a different boundary.
 
 ## Compaction and context
 
 If a backend restart or lost event leaves a run idle without a final answer, the bot posts an interruption warning in its working topic. Reconnection and the existing one-minute watchdog cover that case without rescanning completed histories on every tick. The backend must be reachable to confirm the outcome. `/session` labels an idle backend **Not running**; this reports activity, while the task's result or interruption appears in the conversation.
 
-`/compact` requires an idle existing session with history and a known model. It runs in the background and accepts later prompts into the queue. Kill/reset/rewind cancel the bot's in-flight operation. Completion posts one `🗜️ session compacted`; internal summaries remain private. The same marker appears for automatic or web-initiated compaction.
+`/compact` requires an idle existing session with history and a known model. It runs in the background and accepts later prompts into the queue. Kill/repeat/reset/rewind cancel the bot's in-flight operation. Completion posts one `🗜️ session compacted`; internal summaries remain private. The same marker appears for automatic or web-initiated compaction.
 
 Reminders are initially on. Automatic compaction during active work rebuilds the original request and attachments from OpenCodez and adds an English `REMINDER:` asking the agent to preserve progress and later corrections. Admission must succeed before `🔁 Original prompt added as a reminder.` appears. When OpenCodez itself repeats the request, including after pre-turn compaction, the bot confirms the persisted replay and shows the same notice without submitting another copy. A completed summary alone does not prove that the request was repeated.
 

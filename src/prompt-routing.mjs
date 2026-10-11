@@ -3,7 +3,7 @@ import { AttachmentBuffer, cleanupFiles, downloadTelegramFiles, prepareInlineFil
 import { applyPromptProfile } from "./prompt-profiles.mjs"
 import { logErrorEvent, logInfo } from "./logger.mjs"
 import { MultipartPromptBuffer } from "./multipart-prompts.mjs"
-import { isOpenCodeSessionNotFound, promptPayload, resolveSessionProfile, titleFromText } from "./opencode.mjs"
+import { isOpenCodeSessionNotFound, promptPayload, resolveSessionProfile, titleFromText, visibleTextFromParts } from "./opencode.mjs"
 import { PromptQueue, summarizeWords } from "./prompt-queue.mjs"
 import { promptHash } from "./state.mjs"
 import { escapeHtml, topicId } from "./telegram.mjs"
@@ -257,7 +257,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     return multipartPrompts.pending.get(key)?.context?.queued === true
   }
 
-  async function sendTelegramPrompt(binding, text, files = [], { sourceMessageId, feedbackMode = "prompt" } = {}) {
+  async function sendTelegramPrompt(binding, text, files = [], { sourceMessageId, feedbackMode = "prompt", payload } = {}) {
     promptQueue.markBusy(binding, undefined, { submitted: true })
     await activateBindingForPrompt(binding, "telegram-prompt")
     const feedbackMessage = feedbackMode === "rewind"
@@ -274,16 +274,19 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
         Object.assign(binding, { agent: setupProfile.agent, model: setupProfile.model })
         await state.update(() => { delete current.setupProfile })
       }
-      const profile = await currentProfile(binding)
-      const transferred = await prepareSavedFilesForServer(files, { server: opencode.server(binding.serverID), sessionID: binding.sessionID, signal })
-      const preparedFiles = await prepareInlineFiles(transferred)
+      if (!payload) {
+        const profile = await currentProfile(binding)
+        const transferred = await prepareSavedFilesForServer(files, { server: opencode.server(binding.serverID), sessionID: binding.sessionID, signal })
+        const preparedFiles = await prepareInlineFiles(transferred)
+        payload = promptPayload(text, profile, preparedFiles)
+      }
       await state.addPendingPrompt({
         serverID: binding.serverID,
         sessionID: binding.sessionID,
         hash: promptHash(text),
         messageId: sourceMessageId,
       })
-      await opencode.promptAsync(binding.serverID, binding.sessionID, promptPayload(text, profile, preparedFiles), { directory: binding.directory })
+      await opencode.promptAsync(binding.serverID, binding.sessionID, payload, { directory: binding.directory })
       if (await pinTelegramPromptMessage(binding, sourceMessageId, "telegram-prompt", { serviceMessageAfterId: feedbackMessage?.message_id })) {
         await state.markPendingPromptPinned(binding.serverID, binding.sessionID, text, sourceMessageId).catch(logError)
       }
@@ -521,6 +524,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
   }
 
   return {
+    repeatPrompt: (binding, payload) => sendTelegramPrompt(binding, visibleTextFromParts(payload.parts), [], { payload }),
     activateBindingForPrompt,
     clearPromptFeedback,
     createPendingPromptQueue: () => promptQueue,

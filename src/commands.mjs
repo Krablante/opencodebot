@@ -7,6 +7,7 @@ import { getLanguage, normalizeLanguage, setLanguage, t } from "./i18n/index.mjs
 import { isOpenCodeSessionNotFound, resolveSessionProfile } from "./opencode.mjs"
 import { buttonRows, menuTable, localText, richButton } from "./menu-format.mjs"
 import { sendSessionExport } from "./session-export.mjs"
+import { loadLatestPrompt, originalPromptPayload } from "./compaction-reminders.mjs"
 import {
   buildCollapsedContextMessages,
   DEFAULT_CONTEXT_TURNS,
@@ -15,7 +16,7 @@ import {
   parseContextTurnCount,
 } from "./context-export.mjs"
 
-const commandDefinitions = ["menu", "new", "session", "q", "compact", "reminder", "context", "export", "speak", "reset", "kill", "setup"]
+const commandDefinitions = ["menu", "new", "session", "q", "compact", "reminder", "context", "export", "speak", "reset", "kill", "repeat", "setup"]
 
 export function telegramBotCommands() {
   return commandDefinitions.map((command) => ({
@@ -30,6 +31,7 @@ export function createTelegramCommandHandlers({
   telegram,
   opencode,
   promptQueue,
+  repeatPrompt,
   multipartPrompts,
   createPendingTopic,
   discardAttachmentBatch = async () => 0,
@@ -69,6 +71,7 @@ export function createTelegramCommandHandlers({
     start: (message) => controlMenu.open(message),
     q: handleQueueCommand,
     kill: handleKillCommand,
+    repeat: handleRepeatCommand,
     compact: handleCompactCommand,
     context: handleContext,
     export: handleExport,
@@ -99,7 +102,7 @@ export function createTelegramCommandHandlers({
       const handler = Object.hasOwn(handlers, command.name) && handlers[command.name]
       if (!handler) return false
       if (command.name === "kill") await discardBufferedTopic(message, promptKey)
-      else if (!["reset", "artifacts_here", "sounds_here", "export"].includes(command.name)) await multipartPrompts.flushKey(promptKey)
+      else if (!["repeat", "reset", "artifacts_here", "sounds_here", "export"].includes(command.name)) await multipartPrompts.flushKey(promptKey)
       await handler(message, command.args, promptKey)
       return true
     },
@@ -362,15 +365,11 @@ export function createTelegramCommandHandlers({
       return
     }
 
-    const compactOperation = compactOperations.get(compactOperationKey(binding))
-    if (compactOperation) compactOperation.cancelled = true
     const wasBusy = promptQueue.isBusy(binding)
-    promptQueue.markExpectedStop(binding)
+    let cleared
     try {
-      await opencode.abortSession(binding.serverID, binding.sessionID, { directory: binding.directory })
+      cleared = await stopBindingRun(binding)
     } catch (error) {
-      if (compactOperation) compactOperation.cancelled = false
-      promptQueue.clearExpectedStop(binding)
       await telegram.sendMessage({
         chatId: message.chat.id,
         topicId: currentTopicId,
@@ -378,8 +377,61 @@ export function createTelegramCommandHandlers({
       })
       return
     }
-    const cleared = promptQueue.clear(binding, "Killed by /kill")
     await telegram.sendMessage({ chatId: message.chat.id, topicId: currentTopicId, text: t("commands.kill.result", { wasBusy, cleared: cleared.length }) })
+  }
+
+  async function stopBindingRun(binding) {
+    const operation = compactOperations.get(compactOperationKey(binding))
+    if (operation) operation.cancelled = true
+    promptQueue.setStopping(binding, true)
+    promptQueue.markExpectedStop(binding)
+    try {
+      await opencode.abortSession(binding.serverID, binding.sessionID, { directory: binding.directory })
+      return promptQueue.clear(binding)
+    } catch (error) {
+      if (operation) operation.cancelled = false
+      promptQueue.clearExpectedStop(binding)
+      throw error
+    } finally {
+      promptQueue.setStopping(binding, false)
+    }
+  }
+
+  async function handleRepeatCommand(message, args, promptKey) {
+    const binding = state.findBindingByTopic(message.chat.id, topicId(message))
+    const reply = (key) => telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t(key) })
+    if (args?.trim()) return reply("commands.repeat.usage")
+    if (!binding) return reply("commands.repeat.noBinding")
+    let payload, status
+    try {
+      const source = await loadLatestPrompt(opencode, binding)
+      if (!source) return reply("commands.repeat.empty")
+      payload = originalPromptPayload(source)
+      if (!payload.parts.length) return reply("commands.repeat.empty")
+      status = await opencode.sessionStatus(binding.serverID, binding.sessionID, { directory: binding.directory })
+    } catch {
+      return reply("commands.repeat.inspectFailed")
+    }
+    await discardBufferedTopic(message, promptKey)
+    try {
+      await stopBindingRun(binding)
+    } catch {
+      return reply("commands.repeat.stopFailed")
+    }
+    try {
+      await opencode.waitForSessionIdle(binding.serverID, binding.sessionID, { directory: binding.directory, timeoutMs: 45_000 })
+      if (status.type !== "idle") await promptQueue.waitForExpectedStop(binding)
+      promptQueue.clearExpectedStop(binding)
+    } catch {
+      return reply("commands.repeat.stopFailed")
+    }
+    try {
+      await repeatPrompt(binding, payload)
+    } catch (error) {
+      if (!error.feedbackReported) await reply("commands.repeat.sendFailed")
+      return
+    }
+    await reply("commands.repeat.sent")
   }
 
   async function handleCompactCommand(message) {

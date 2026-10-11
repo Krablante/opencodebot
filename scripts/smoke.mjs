@@ -18,6 +18,7 @@ import {
 import { AttachmentBuffer, cleanupFiles, downloadTelegramFiles, extractTelegramFiles, prepareInlineFiles } from "../src/attachments.mjs"
 import { artifactFileCaptionHtml, startArtifactGateway } from "../src/artifacts-gateway.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "../src/commands.mjs"
+import { reminderPayload } from "../src/compaction-reminders.mjs"
 import { assertRuntimeConfig, loadConfig } from "../src/config.mjs"
 import { normalizeFinalVoiceConfig } from "../src/config/final-voice.mjs"
 import { normalizeUpdatesConfig } from "../src/config/updates.mjs"
@@ -109,6 +110,7 @@ async function smokeLocalInvariants() {
   await smokeRunAlerts()
   await smokeChunkedWebPromptMirror()
   await smokeKillCommand()
+  await smokeRepeatCommand()
   await smokeCompactCommand()
   await smokeContextCommands()
   await smokeResetCommand()
@@ -462,7 +464,7 @@ async function smokeI18n() {
     await state.load()
     configureI18n({ state, defaultLanguage: "en" })
     assert.equal(getLanguage(), "en")
-    assert.equal(telegramBotCommands().length, 12)
+    assert.equal(telegramBotCommands().length, 13)
     assert.equal(telegramBotCommands().some((item) => item.command === "help"), false)
     assert.ok(telegramBotCommands().some((item) => item.command === "reminder"))
     assert.ok(telegramBotCommands().some((item) => item.command === "export"))
@@ -2522,6 +2524,118 @@ async function smokeKillCommand() {
   assert.match(sent.at(-1).text, /enabled/)
   await handlers.handle({ chat: { id: 123 }, message_thread_id: 456 }, { name: "debug_off", args: "" }, "123:456")
   assert.equal(debugEnabled, false)
+}
+
+async function smokeRepeatCommand() {
+  assert.ok(telegramBotCommands().some((command) => command.command === "repeat"))
+  const binding = { chatId: 123, topicId: 456, serverID: "local", sessionID: "ses_repeat", directory: "/tmp/work" }
+  const source = { info: { id: "msg_001", role: "user", agent: "build", model: { providerID: "example", modelID: "example-model" },
+    variant: "high", system: "Original system", tools: { bash: false }, format: { type: "text" } }, parts: [
+    { type: "file", mime: "image/png", filename: "photo.png", url: "data:image/png;base64,YQ==" },
+    { type: "text", text: "  Original prompt\n\n    Keep whitespace.  \n" },
+    { type: "file", mime: "text/plain", filename: "notes.txt", url: "file:///tmp/notes.txt" },
+    { type: "text", text: "Captured file contents\n", synthetic: true },
+    { type: "text", text: "Ignored text", ignored: true },
+  ] }
+  const marker = { info: { id: "msg_002", role: "user" }, parts: [{ type: "compaction", auto: true, turn_id: source.info.id, replay_id: "msg_004" }] }
+  const summary = { info: { id: "msg_003", role: "assistant", summary: true }, parts: [] }
+  const replay = { info: { ...source.info, id: "msg_004" }, parts: source.parts }
+  const reminder = { info: { ...source.info, id: "msg_005" }, parts: reminderPayload(source, marker.info.id).parts }
+  const expected = { agent: "build", model: source.info.model, variant: "high", system: source.info.system, tools: source.info.tools,
+    format: source.info.format, parts: [source.parts[0], source.parts[1], source.parts[3]] }
+  const calls = [], sent = [], submitted = [], receipts = []
+  let mode = "busy", failure = "", hasBinding = true, empty = false
+  const state = {
+    findBindingByTopic: () => hasBinding ? binding : undefined,
+    findBinding: () => binding,
+    addPendingPrompt: async (receipt) => receipts.push(receipt),
+    removePendingPrompt: async () => {},
+  }
+  const telegram = { sendMessage: async (message) => { sent.push(message); return { message_id: sent.length } } }
+  let queue
+  const opencode = {
+    async getSession() { return { id: binding.sessionID, revert: { messageID: "msg_006" } } },
+    async messagePage(_server, _session, options) {
+      calls.push("history")
+      assert.equal(options.limit, 20)
+      assert.equal(options.directory, binding.directory)
+      if (failure === "history") throw new Error("unavailable")
+      if (empty) return { messages: [] }
+      // The original and native replay marker lie on different pages.
+      return options.before === summary.info.id ? { messages: [source, marker] }
+        : { messages: [summary, replay, reminder, { info: { ...source.info, id: "msg_006" }, parts: [{ type: "text", text: "Reverted tail" }] }], before: summary.info.id }
+    },
+    async sessionStatus() { return { type: mode } },
+    async abortSession() {
+      calls.push("abort")
+      if (failure === "abort") throw new Error("unavailable")
+      // Stop events must not release old queued tasks while abort is pending.
+      await queue.markTerminalMirrored(binding)
+      await queue.markBackendIdle(binding)
+      queue.clearExpectedStop(binding)
+      await queue.markBackendIdle(binding) // The paired idle event arrives before abort resolves.
+    },
+    async waitForSessionIdle() {
+      calls.push("idle")
+      if (failure === "idle") throw new Error("timeout")
+    },
+    async promptAsync(serverID, sessionID, payload, options) {
+      calls.push("submit")
+      assert.equal(serverID, binding.serverID)
+      assert.equal(sessionID, binding.sessionID)
+      assert.equal(options.directory, binding.directory)
+      if (failure === "submit") throw new Error("rejected")
+      submitted.push(payload)
+    },
+    server() { throw new Error("Repeat must reuse persisted attachments") },
+  }
+  const c = loadConfig(path.join(projectRoot, "config.example.json"))
+  c.reconcile.enabled = false
+  c.promptFeedback.enabled = false
+  const router = createPromptRouter({ config: c, state, telegram, opencode, renderer: { shouldPinUserPrompts: () => false },
+    scheduleReconcile: () => {}, logError: (error) => { throw error } })
+  queue = router.createPendingPromptQueue()
+  const handlers = createTelegramCommandHandlers({ config: c, state, telegram, opencode, promptQueue: queue,
+    repeatPrompt: router.repeatPrompt, discardTopicBuffers: async () => calls.push("discard"),
+    multipartPrompts: { flushKey: async () => { throw new Error("Repeat must not flush buffered input") } } })
+  const message = { chat: { id: 123 }, message_thread_id: 456, message_id: 789 }
+  const run = (args = "") => handlers.handle(message, { name: "repeat", args }, "123:456:42")
+  queue.markBusy(binding, source.info.id)
+  await queue.enqueue(binding, "Old queued task")
+  await run()
+  assert.deepEqual(calls, ["history", "history", "discard", "abort", "idle", "submit"])
+  assert.deepEqual(submitted, [expected])
+  assert.equal(queue.status(binding).length, 0)
+  assert.equal(queue.isBusy(binding), true)
+  assert.equal(queue.hasExpectedStop(binding), false)
+  assert.equal(receipts[0].messageId, undefined) // /repeat is not a rewind origin for the prompt.
+  assert.match(sent.at(-1).text, /Last prompt resent verbatim/)
+  assert.deepEqual(reminder.parts.slice(1).filter((part) => part.type === "text").map((part) => part.text),
+    expected.parts.filter((part) => part.type === "text").map((part) => part.text))
+
+  mode = "idle"
+  await run()
+  assert.deepEqual(submitted[1], expected)
+  for (const scenario of ["arguments", "unbound", "empty", "history", "abort", "idle", "submit"]) {
+    calls.length = 0
+    const count = submitted.length
+    hasBinding = scenario !== "unbound"
+    empty = scenario === "empty"
+    failure = scenario
+    if (scenario === "abort") {
+      queue.markBusy(binding)
+      await queue.enqueue(binding, "Keep queued work if abort fails")
+    }
+    await run(scenario === "arguments" ? "unexpected" : "")
+    assert.equal(submitted.length, count)
+    assert.doesNotMatch(sent.at(-1).text, /Last prompt resent/)
+    if (["arguments", "unbound", "empty", "history"].includes(scenario)) {
+      assert.equal(calls.includes("abort"), false)
+      assert.equal(calls.includes("discard"), false)
+    }
+    if (["abort", "idle"].includes(scenario)) assert.equal(calls.includes("submit"), false)
+    if (scenario === "abort") assert.equal(queue.status(binding).length, 1)
+  }
 }
 
 async function smokeCompactCommand() {

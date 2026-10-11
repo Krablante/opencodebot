@@ -1,5 +1,5 @@
 import { t } from "./i18n/index.mjs"
-import { isInternalUserMessage, logicalTurnRootID, reminderReference } from "./logical-turn.mjs"
+import { isInternalUserMessage, logicalTurnRootID, logicalTurnSliceReady, logicalTurnStartIndex, reminderReference } from "./logical-turn.mjs"
 import { logInfo, logWarn } from "./logger.mjs"
 
 const REMINDER_HEADER = "REMINDER: The original request for the current run is repeated below in full. Continue from your current progress, preserve later user corrections, and do not repeat completed work."
@@ -209,20 +209,47 @@ export function createCompactionReminders({ state, opencode, telegram, backendRe
 }
 
 export function reminderPayload(source, compactionID) {
-  const parts = [{ type: "text", text: `${REMINDER_HEADER}\n\n`, synthetic: true, metadata: { opencodebot_reminder: { compactionID, turnID: source.info.id } } }]
+  const payload = originalPromptPayload(source, { synthetic: true })
+  payload.parts.unshift({ type: "text", text: `${REMINDER_HEADER}\n\n`, synthetic: true, metadata: { opencodebot_reminder: { compactionID, turnID: source.info.id } } })
+  payload.parts[0].metadata.opencodebot_reminder.partCount = payload.parts.length
+  return payload
+}
+
+export function originalPromptPayload(source, { synthetic = false } = {}) {
+  const parts = []
   for (const part of source.parts || []) {
-    if (part.type === "text" && !part.ignored && typeof part.text === "string" && part.text) parts.push({ type: "text", text: part.text, synthetic: true })
+    if (part.type === "text" && !part.ignored && typeof part.text === "string" && part.text) parts.push({ type: "text", text: part.text, ...(synthetic || part.synthetic ? { synthetic: true } : {}) })
     // Text files/directories already have their captured contents in persisted text parts.
     if (part.type === "file" && part.url && part.mime !== "text/plain" && part.mime !== "application/x-directory") parts.push({ type: "file", mime: part.mime, filename: part.filename, url: part.url })
   }
-  parts[0].metadata.opencodebot_reminder.partCount = parts.length
+  const variant = source.info.variant || source.info.model?.variant
   return {
     agent: source.info.agent,
     model: { providerID: source.info.model.providerID, modelID: source.info.model.modelID },
-    ...(source.info.model.variant ? { variant: source.info.model.variant } : {}),
+    ...(variant ? { variant } : {}),
     ...(source.info.system ? { system: source.info.system } : {}),
     ...(source.info.tools ? { tools: source.info.tools } : {}),
     ...(source.info.format ? { format: source.info.format } : {}),
     parts,
   }
+}
+
+export async function loadLatestPrompt(opencode, binding) {
+  const session = await opencode.getSession(binding.serverID, binding.sessionID, { directory: binding.directory })
+  let messages = []
+  let before = session.revert?.messageID
+  const cursors = new Set()
+  while (true) {
+    const page = await opencode.messagePage(binding.serverID, binding.sessionID, { directory: binding.directory, limit: 20, before })
+    // Only user input and logical-turn metadata are needed; release tool/output bytes.
+    const relevant = page.messages.filter((message) => !session.revert?.messageID || message.info.id < session.revert.messageID)
+    if (messages.length || relevant.some((message) => message.info?.role === "user")) {
+      messages = [...relevant.map((message) => ({ info: message.info, parts: message.info?.role === "user" ? message.parts : [] })), ...messages]
+    }
+    if (logicalTurnSliceReady(messages, undefined, Boolean(page.before)) || !page.before || cursors.has(page.before)) break
+    cursors.add(page.before)
+    before = page.before
+  }
+  const index = logicalTurnStartIndex(messages)
+  return index < 0 ? null : messages[index]
 }

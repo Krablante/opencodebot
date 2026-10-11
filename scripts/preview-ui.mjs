@@ -117,4 +117,4 @@ for (const language of ["ru", "en"]) {
   state.data = snapshot
 }
 console.log(`UI previews generated in ${output}`)
-function shell(body) { return `<!doctype html><html><head><meta charset="utf-8"><title>OpenCodeBot · Guide</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}${fontCss}@page{size:A4;margin:12mm}@media print{section:nth-of-type(5){font-size:15px;line-height:1.4}section blockquote{break-inside:avoid}}</style></head><body>${body}</body></html>` }
+function shell(body) { return `<!doctype html><html><head><meta charset="utf-8"><title>OpenCodeBot · Guide</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}${fontCss}@page{size:A4;margin:12mm}@media print{section:nth-of-type(5){font-size:14px;line-height:1.4}section blockquote{break-inside:avoid}}</style></head><body>${body}</body></html>` }

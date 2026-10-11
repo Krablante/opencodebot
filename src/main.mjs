@@ -192,6 +192,7 @@ const commandHandlers = createTelegramCommandHandlers({
   promptQueue,
   multipartPrompts,
   createPendingTopic,
+  repeatPrompt: promptRouter.repeatPrompt,
   discardAttachmentBatch: promptRouter.discardAttachmentBatch,
   discardTopicBuffers: promptRouter.discardTopicBuffers,
   detachBinding: sessionReconciler.detachBinding,

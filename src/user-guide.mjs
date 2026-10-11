@@ -49,6 +49,7 @@ const pages = {
       <tr><td><code>/q</code> или <code>/q status</code></td><td>Посмотреть очередь</td></tr>
       <tr><td><code>/q delete N</code></td><td>Убрать элемент очереди по номеру</td></tr>
       <tr><td><code>/kill</code></td><td>Остановить работу и очистить очередь</td></tr>
+      <tr><td><code>/repeat</code></td><td>Остановить, очистить очередь и дословно повторить последний промпт с вложениями</td></tr>
       <tr><td><code>/compact</code></td><td>Сжать контекст завершённой сессии</td></tr></table>
       <p><code>/export</code> присылает в эту тему Markdown-файл с промптами и финальными ответами всей текущей сессии. Подробности — на странице «Экспорт сессии».</p>
       <p>В длинном промпте достаточно одного <code>/q</code> в начале: части собираются в одну задачу после двух секунд тишины. В Rich Message команда может начинать абзац или заголовок; текст и фотографии идут вместе. Новый <code>/q</code> начинает отдельную задачу.</p>
@@ -128,6 +129,7 @@ const pages = {
       <tr><td><code>/q</code> or <code>/q status</code></td><td>View the queue</td></tr>
       <tr><td><code>/q delete N</code></td><td>Remove a queue item by number</td></tr>
       <tr><td><code>/kill</code></td><td>Stop and clear the queue</td></tr>
+      <tr><td><code>/repeat</code></td><td>Stop, clear the queue and resend the last prompt verbatim with attachments</td></tr>
       <tr><td><code>/compact</code></td><td>Compact an idle session</td></tr></table>
       <p><code>/export</code> sends a Markdown document with prompts and final answers from the entire current session to this topic. See the Session export guide page.</p>
       <p>One <code>/q</code> at the start is enough for a long prompt: parts become one task after two seconds of quiet. In a Rich Message, the command can start a paragraph or heading; text and photos stay together. A new <code>/q</code> starts a separate task.</p>

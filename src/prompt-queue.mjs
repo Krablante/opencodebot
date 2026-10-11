@@ -66,6 +66,10 @@ export class PromptQueue {
     return this.state(binding).busy
   }
 
+  setStopping(binding, stopping) {
+    this.state(binding).stopping = stopping
+  }
+
   markExpectedStop(binding, ttlMs = 15000) {
     this.state(binding).expectedStopUntil = Date.now() + ttlMs
   }
@@ -122,7 +126,7 @@ export class PromptQueue {
         } else state.idle = true
       }
     }
-    if (!state.busy && !state.compacting) {
+    if (!state.busy && !state.compacting && !state.stopping) {
       await this.sendNow(binding, value, files, metadata)
       return { status: "sent" }
     }
@@ -217,6 +221,7 @@ export class PromptQueue {
   }
 
   async drainIfReady(binding, state) {
+    if (state.stopping || this.hasExpectedStop(binding)) return { status: "waiting" }
     if (state.compacting || !state.idle || !state.terminalMirrored) return { status: "waiting" }
     state.busy = false
     if (!state.items.length) return { status: "idle" }
