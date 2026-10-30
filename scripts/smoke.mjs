@@ -498,17 +498,27 @@ async function smokeFinalVoiceFlow() {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-final-voice-smoke-"))
   const requests = []
   const opus = Buffer.concat([Buffer.from("OggS"), Buffer.alloc(24), Buffer.from("OpusHead"), Buffer.alloc(8)])
+  let speechFailure = null
   const server = createServer(async (request, response) => {
     let body = ""
     for await (const chunk of request) body += chunk
-    requests.push({ url: request.url, body: JSON.parse(body) })
+    requests.push({ url: request.url, body: JSON.parse(body), headers: request.headers })
     if (request.url === "/chat/completions") {
       response.writeHead(200, { "content-type": "application/json" })
       response.end(JSON.stringify({ choices: [{ message: { content: "Короткое итоговое сообщение." } }] }))
       return
     }
     if (request.url === "/audio/speech") {
-      response.writeHead(200, { "content-type": "audio/ogg" })
+      const failure = speechFailure
+      speechFailure = null
+      if (failure === "body") {
+        response.writeHead(200, { "content-type": "audio/ogg", "content-length": opus.length })
+        response.flushHeaders()
+        response.write(opus.subarray(0, 3))
+        setTimeout(() => response.destroy(), 10)
+        return
+      }
+      response.writeHead(200, { "content-type": "audio/ogg", ...(failure === "checksum" ? { "x-content-sha256": "0".repeat(64) } : {}) })
       response.end(opus)
       return
     }
@@ -563,6 +573,7 @@ async function smokeFinalVoiceFlow() {
               voices: ["xenia", "eugene"],
               defaultVoice: "xenia",
               responseFormat: "opus",
+              idempotentRequests: true,
             },
           },
         },
@@ -600,6 +611,7 @@ async function smokeFinalVoiceFlow() {
     assert.equal(requests[1].url, "/audio/speech")
     assert.equal(requests[1].body.voice, "xenia")
     assert.equal(requests[1].body.response_format, "opus")
+    assert.match(requests[1].headers["idempotency-key"], /^opencodebot-[a-f0-9]{64}$/)
     assert.equal(requests[1].body.input, "Пришло новое сообщение из топика, ти ти эс опенкод, на сервере, нюк.\n\nКороткое итоговое сообщение.")
     assert.equal(speakableVoiceMetadata("KFR101"), "кей эф эр 101")
     await wait(25)
@@ -644,6 +656,14 @@ async function smokeFinalVoiceFlow() {
     assert.equal(finalVoice.settings().enabled, true)
     await handlers.tts(commandMessage, "status")
     assert.match(replies.at(-1), /Reasoning: max/)
+    const profile = finalVoice.config.tts.profiles.silero
+    const beforeRetry = requests.length
+    speechFailure = "body"
+    assert.deepEqual((await finalVoice.createSpeech("Число 42 и Python.", profile, "xenia")).bytes, opus)
+    assert.equal(requests.length, beforeRetry + 2)
+    assert.equal(requests[beforeRetry].headers["idempotency-key"], requests[beforeRetry + 1].headers["idempotency-key"])
+    speechFailure = "checksum"
+    await assert.rejects(finalVoice.createSpeech("Проверка целостности.", profile, "xenia"), /SHA-256/)
     finalVoice.stop()
   } finally {
     await close()

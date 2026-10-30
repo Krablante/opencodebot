@@ -98,6 +98,7 @@ function normalizeProfiles(value, env) {
       speed: finiteNumber(rawProfile.speed, 1),
       timeoutMs: numberAtLeast(rawProfile.timeoutMs, 900_000, 1_000),
       maxResponseBytes: numberAtLeast(rawProfile.maxResponseBytes, 20 * 1024 * 1024, 1_024),
+      idempotentRequests: rawProfile.idempotentRequests === true,
     }
   }
   return profiles

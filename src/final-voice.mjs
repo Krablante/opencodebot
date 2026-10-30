@@ -2,6 +2,8 @@ import { logErrorEvent, logInfo, logWarn } from "./logger.mjs"
 import { t } from "./i18n/index.mjs"
 import { messageText, topicId } from "./telegram.mjs"
 import { normalizeTelegramRichMessage } from "./telegram-rich-message.mjs"
+import { createHash } from "node:crypto"
+import { setTimeout as delay } from "node:timers/promises"
 
 const FINAL_VOICE_STATE_LIMIT = 512
 const TELEGRAM_TEXT_LIMIT = 3900
@@ -283,7 +285,7 @@ export class FinalVoiceModule {
     const profile = this.config.tts.profiles[job.settings.profile]
     const summary = await this.createSummary(job.input, job.settings.prompt)
     const speechText = this.withIntro(summary, job)
-    const audio = await this.createSpeech(speechText, profile, job.settings.voice)
+    const audio = await this.createSpeech(speechText, profile, job.settings.voice, job.key)
     const sent = await this.telegram.sendVoice({
       chatId: job.chatId,
       topicId: job.topicId,
@@ -360,29 +362,43 @@ export class FinalVoiceModule {
     }
   }
 
-  async createSpeech(input, profile, voice) {
+  async createSpeech(input, profile, voice, requestKey = "") {
     const controller = this.requestController(profile.timeoutMs)
     try {
       const headers = { "content-type": "application/json" }
       if (profile.apiKey) headers.authorization = `Bearer ${profile.apiKey}`
-      const response = await fetch(joinEndpoint(profile.baseURL, "audio/speech"), {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          model: profile.model,
-          input,
-          voice,
-          response_format: profile.responseFormat,
-          speed: profile.speed,
-        }),
-        signal: controller.signal,
-      })
-      if (!response.ok) {
-        await response.body?.cancel()
-        throw new Error(`TTS provider returned HTTP ${response.status}`)
+      const body = JSON.stringify({ model: profile.model, input, voice, response_format: profile.responseFormat, speed: profile.speed })
+      if (profile.idempotentRequests) headers["idempotency-key"] = `opencodebot-${createHash("sha256").update(JSON.stringify([requestKey, body])).digest("hex")}`
+      for (let attempt = 0; ; attempt++) {
+        let response
+        try {
+          response = await fetch(joinEndpoint(profile.baseURL, "audio/speech"), { method: "POST", headers, body, signal: controller.signal })
+        } catch (error) {
+          if (!profile.idempotentRequests || attempt >= 2 || controller.signal.aborted) throw error
+          await delay((attempt + 1) * 1000, undefined, { signal: controller.signal })
+          continue
+        }
+        if (!response.ok) {
+          await response.body?.cancel()
+          const retry = Number(response.headers.get("retry-after") || 2)
+          if (profile.idempotentRequests && attempt < 2 && [429, 502, 503, 504].includes(response.status) && Number.isFinite(retry) && retry <= 30) {
+            await delay(Math.max(1, retry) * 1000, undefined, { signal: controller.signal })
+            continue
+          }
+          throw new Error(`TTS provider returned HTTP ${response.status}`)
+        }
+        let bytes
+        try {
+          bytes = await readLimited(response, profile.maxResponseBytes)
+        } catch (error) {
+          if (!profile.idempotentRequests || attempt >= 2 || controller.signal.aborted || !(error instanceof TypeError)) throw error
+          await delay((attempt + 1) * 1000, undefined, { signal: controller.signal })
+          continue
+        }
+        const expectedHash = response.headers.get("x-content-sha256")
+        if (expectedHash && (!/^[a-f0-9]{64}$/i.test(expectedHash) || createHash("sha256").update(bytes).digest("hex") !== expectedHash.toLowerCase())) throw new Error("TTS audio failed its SHA-256 check")
+        return validateAudio(bytes, response.headers.get("content-type"), profile.responseFormat)
       }
-      const bytes = await readLimited(response, profile.maxResponseBytes)
-      return validateAudio(bytes, response.headers.get("content-type"), profile.responseFormat)
     } finally {
       this.releaseController(controller)
     }

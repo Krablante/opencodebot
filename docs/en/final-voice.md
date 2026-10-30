@@ -60,6 +60,10 @@ Restart drops unfinished voice work. Successful deliveries retain bounded IDs; a
 
 The bot sends standard `model`, `input`, `voice`, `response_format` and `speed` fields to `/audio/speech`. OGG/Opus is preferred and requires `OggS` plus `OpusHead` signatures. MP3/M4A also require agreement between requested format, Content-Type and signature. Responses are read into a bounded buffer; oversized audio is aborted. WAV/PCM is not transcoded in the bot.
 
+For a provider that guarantees idempotency, such as Silero TTS Bridge 0.2+, set `idempotentRequests: true` in that TTS profile. The bot then sends a stable request key and retries temporary HTTP/network failures up to three attempts within the existing timeout, including a broken audio download. Leave this option off for providers without that contract. When supplied by the provider, `X-Content-SHA256` must match the audio before Telegram delivery.
+
+Silero owns common text normalization, fragment scheduling, saved synthesis and caching. The bot keeps its summary prompt, spoken intro and delivery queue. Blank-line intro separation remains intact. Saved provider jobs can survive a connection loss or bridge restart; this does not make unfinished bot-side Telegram deliveries persistent. Account for the provider's own text/audio retention policy.
+
 ## Operations
 
 Deploy/verify the TTS endpoint first, add private config/secrets, then enable automatic voice. Disable any old sender reacting to the same finals before `/tts on`, or both will send. Check one final and a manual `/speak`, then finals from two topics using the same global preferences. `/tts status` reports readiness and queue without probing providers. `/tts off` disables automatic use; `finalVoice.enabled=false` followed by restart disables all voice access.
