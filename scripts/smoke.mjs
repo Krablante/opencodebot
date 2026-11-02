@@ -569,7 +569,7 @@ async function smokeFinalVoiceFlow() {
           profiles: {
             silero: {
               baseURL: url,
-              model: "silero-ru-v5.5",
+              model: "silero-ru-v5.6",
               voices: ["xenia", "eugene"],
               defaultVoice: "xenia",
               responseFormat: "opus",
