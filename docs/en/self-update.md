@@ -1,10 +1,10 @@
 # Updates
 
-The upgrade to workshop state schema 2 requires manual deployment with a stopped-bot backup. The host runner blocks automatic updates across state-schema versions, because image rollback cannot reverse a state migration. Later updates within the same schema keep the normal update flow.
-
 [English](self-update.md) · [Русский](../ru/self-update.md) · [All languages](../README.md)
 
 The ordinary update path is `git pull --ff-only` and `npm run deploy:bot`. Optional Telegram approval automates the same bot-only rollout through a fixed Linux host runner. It never deploys or restarts OpenCodez, installed plugins or skills.
+
+The upgrade to workshop state schema 2 requires manual deployment with a stopped-bot backup. The host runner blocks automatic updates across state-schema versions, because image rollback cannot reverse a state migration. Later updates within the same schema keep the normal update flow.
 
 ## Configuration
 
@@ -24,6 +24,8 @@ An offer shows deployed/target revisions, grouped notes and GitHub comparison. *
 Notes come from the exact Git range: `feat:`, `fix:` and `perf:` become user-facing groups, other subjects collapse into maintenance. Eight entries are shown at most. GitHub releases remain the full published record; there is no duplicate hand-maintained changelog.
 
 The same card advances through verification, dependency installation, syntax, image build, restart and live health. Saved run/message identity lets the new bot finish the original card. A host run stops after 30 minutes; the bot marks stale progress interrupted after 35 minutes and releases its lock for retry.
+
+Updates belong to the whole installation. `/update` works in either workshop; scheduled offers appear in the default one. Simultaneous approvals start one run. Slow or failed Telegram status delivery is retried without parallel status messages or stopping the bot.
 
 Compose files and `scripts/apply-update.mjs`/`scripts/install-update-runner.mjs` require manual deployment. The offer lists paths and the appropriate `deploy:bot`/`deploy:all` plus runner installation when needed. Plugin/skill changes report the separate installed-copy follow-up.
 

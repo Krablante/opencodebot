@@ -30,6 +30,7 @@ class UpdateManager {
     this.statusPath = path.join(this.runtimeDir, "status.json")
     this.runnerInfoPath = path.join(this.runtimeDir, "runner.json")
     this.checkPromise = null
+    this.callbackOperation = Promise.resolve()
     this.scheduledRunning = false
     this.scheduleRetryAt = 0
     this.scheduleTimer = null
@@ -100,9 +101,16 @@ class UpdateManager {
     }
   }
 
-  async handleCallback(query) {
+  handleCallback(query) {
     const match = /^upd:(apply|later):([0-9a-f]{40})$/.exec(String(query?.data || ""))
     if (!match) return false
+    // Updating is installation-wide even when the offers live in different chats.
+    const operation = this.callbackOperation.then(() => this.handleOfferCallback(query, match))
+    this.callbackOperation = operation.catch(() => {})
+    return operation
+  }
+
+  async handleOfferCallback(query, match) {
     const [, action, targetSha] = match
     const chatId = query.message?.chat?.id
     const messageId = query.message?.message_id
@@ -126,7 +134,7 @@ class UpdateManager {
       await this.state.update((data) => {
         data.updates.dismissedSha = targetSha
         data.updates.dismissedDate = localDate
-        data.updates.offers = data.updates.offers.filter((candidate) => candidate.messageId !== messageId)
+        data.updates.offers = data.updates.offers.filter((candidate) => !(String(candidate.chatId) === String(chatId) && Number(candidate.messageId) === Number(messageId)))
       })
       await this.telegram.editMessageText({
         chatId,
@@ -354,7 +362,16 @@ class UpdateManager {
     void this.reconcileStatus()
   }
 
-  async reconcileStatus() {
+  reconcileStatus() {
+    // A slow Telegram edit can overlap several timer ticks. Keep one status
+    // delivery in flight and retry transport failures without stopping the bot.
+    this.statusPromise ||= this.reconcileCurrentStatus()
+      .catch((error) => console.error(`Update status delivery failed: ${friendlyError(error)}`))
+      .finally(() => { this.statusPromise = null })
+    return this.statusPromise
+  }
+
+  async reconcileCurrentStatus() {
     const run = this.state.data.updates?.activeRun
     if (!run) {
       clearInterval(this.statusTimer)

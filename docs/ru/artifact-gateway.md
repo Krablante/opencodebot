@@ -37,10 +37,11 @@ workstation photo, backup, , report.pdf
 
 ## API шлюза
 
-Всем endpoint нужен `Authorization: Bearer <artifact-token>`. `GET /artifacts/status` показывает готовность назначения. `POST /artifacts/send` принимает JSON текста/подписей до 64 КиБ:
+Всем endpoint нужен `Authorization: Bearer <artifact-token>`. `GET /artifacts/status` показывает готовность FILES основной мастерской. `POST /artifacts/send` принимает JSON текста/подписей до 64 КиБ:
 
 ```json
-{ "caption": "workstation my-app deploy log", "mode": "text", "text": "log excerpt" }
+{ "caption": "workstation my-app deploy log", "mode": "text", "text": "log excerpt",
+  "source": { "serverID": "workstation", "sessionID": "ses_example" } }
 ```
 
 Файлы идут потоком байтов, без JSON-путей и base64:
@@ -89,6 +90,7 @@ X-Opencodebot-Artifact-Meta: <base64url JSON>
 ```env
 OPENCODEBOT_ARTIFACT_GATEWAY_URL=http://gateway-host:8788
 OPENCODEBOT_ARTIFACT_TOKEN=same-private-artifact-token
+OPENCODEBOT_SERVER_ID=workstation
 ```
 
 Инструмент: `opencodebot_send_artifact({ path?, paths?, text?, caption, mode? })`. Относительные/POSIX/Windows/UNC пути и file URL разрешаются на хосте агента. Несколько путей дают подборку с читаемыми подписями. Сам шлюз не читает файловую систему агента.

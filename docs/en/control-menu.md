@@ -1,12 +1,14 @@
 # General menu
 
-[English](control-menu.md) · [Русский](../ru/control-menu.md)
+[English](control-menu.md) · [Русский](../ru/control-menu.md) · [All languages](../README.md)
 
 General contains one pinned Rich Message with embedded buttons. It offers New topic, Recent topics, Profiles, Settings and How to use. Working topics keep their ordinary conversation interface and topic commands. Bot API **10.3 or newer** is required; the Compose local API image is pinned to a supported version.
 
 Every configured workshop has its own panel, navigation, recent topics and answer count. Profiles and global settings are shared. Personal settings include a subscription to this workshop's finals, questions and failures; the final-DM switch and context depth remain personal across all chats. See [workshops](config-runtime.md#workshops).
 
 The panel moves to a new message every 24 hours. `/menu` moves it immediately. The new location is saved before the old panel is deleted. If Telegram refuses deletion, the old message is replaced with an inert notice and unpinned. Only the current panel can process its callbacks. Navigation and automatic status refresh edit that panel in place.
+
+A deleted panel is recreated in its own workshop. If Telegram cannot open one workshop's panel at startup, the bot keeps serving the others and retries that panel after one minute. Restore the bot's membership/rights if the group remains unavailable.
 
 Automatic status refresh consumes the existing OpenCodez event stream and skips identical menu content. Opening or explicitly refreshing Home/Recent topics performs the scoped backend lookup with existing backoff. There is no status polling timer or backend scan per tool event.
 
@@ -57,6 +59,8 @@ New profiles inherit OpenCodez System assignments and reasoning defaults unless 
 Saved short System names also work: the bot resolves an exact catalog ID first, then a matching local file, then a builtin. Each launch saves the resolved ID in its snapshot; existing profiles do not need to be recreated. A genuinely missing prompt still blocks creation.
 
 Edits affect future launches. Existing sessions retain their model and launch snapshot. `/reset` without arguments can use that snapshot when the named profile was deleted; it preserves the server and directory and leaves the previous OpenCodez session intact.
+
+Profile names are unique across workshops. Concurrent creation with the same name saves the first profile and asks the other operator to choose a different name.
 
 ## Topic and profile dialogs
 

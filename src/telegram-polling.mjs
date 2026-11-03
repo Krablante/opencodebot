@@ -173,6 +173,7 @@ export function createTelegramPolling({
 
     if (!configuredChatId && config.telegram.allowChatBootstrap) {
       await state.setChatId(message.chat.id)
+      await state.configureChats?.(config)
       await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("polling.chatConnected") })
     }
 

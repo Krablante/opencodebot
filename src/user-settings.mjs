@@ -56,9 +56,9 @@ export class UserSettings {
 
   async saveProfile(name, profile, previousName, restoring = false) {
     if (!/^[\p{L}\p{N}][\p{L}\p{N}_-]{0,39}$/u.test(name)) throw Object.assign(new Error("Use 1–40 letters, digits, _ or - for the profile name."), { code: "PROFILE_NAME" })
-    if (name !== previousName && this.data.profiles[name]) throw Object.assign(new Error("A profile with this name already exists."), { code: "PROFILE_EXISTS" })
-    if (!restoring && this.data.deletedProfiles[name]) throw Object.assign(new Error("This name is in Deleted. Restore it first or choose another name."), { code: "PROFILE_ARCHIVED" })
     await this.state.update((data) => {
+      if (name !== previousName && data.preferences.profiles[name]) throw Object.assign(new Error("A profile with this name already exists."), { code: "PROFILE_EXISTS" })
+      if (!restoring && data.preferences.deletedProfiles[name]) throw Object.assign(new Error("This name is in Deleted. Restore it first or choose another name."), { code: "PROFILE_ARCHIVED" })
       data.preferences.profiles[name] = structuredClone(profile)
       delete data.preferences.deletedProfiles[name]
       if (previousName && previousName !== name) {

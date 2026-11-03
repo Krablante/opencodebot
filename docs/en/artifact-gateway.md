@@ -36,10 +36,11 @@ Existing files are never silently overwritten. A collision fails with a rename i
 
 ## Gateway API
 
-All endpoints require `Authorization: Bearer <artifact-token>`. `GET /artifacts/status` reports destination readiness. `POST /artifacts/send` accepts JSON text/display metadata, up to 64 KiB:
+All endpoints require `Authorization: Bearer <artifact-token>`. `GET /artifacts/status` reports the default workshop's FILES readiness. `POST /artifacts/send` accepts JSON text/display metadata, up to 64 KiB:
 
 ```json
-{ "caption": "workstation my-app deploy log", "mode": "text", "text": "log excerpt" }
+{ "caption": "workstation my-app deploy log", "mode": "text", "text": "log excerpt",
+  "source": { "serverID": "workstation", "sessionID": "ses_example" } }
 ```
 
 Files use streaming bytes rather than JSON paths or base64:
@@ -88,6 +89,7 @@ Keep the token in the host's private environment:
 ```env
 OPENCODEBOT_ARTIFACT_GATEWAY_URL=http://gateway-host:8788
 OPENCODEBOT_ARTIFACT_TOKEN=same-private-artifact-token
+OPENCODEBOT_SERVER_ID=workstation
 ```
 
 The tool is `opencodebot_send_artifact({ path?, paths?, text?, caption, mode? })`. Local relative paths, POSIX/Windows/UNC paths and file URLs are resolved on the agent host. Multiple paths send a batch with human-readable path captions. The gateway never reads the agent's filesystem itself.

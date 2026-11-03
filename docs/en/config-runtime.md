@@ -64,6 +64,8 @@ General panels, service topics, recent-topic lists and answer counts are per cha
 
 Existing single-chat state migrates automatically to schema 2, preserving bindings, panels, destinations, pending launches and answer counts. Back up the stopped installation before the first upgrade. Rollback to single-chat code requires restoring that backup and its matching image; older code cannot read the new pending-topic keys.
 
+Startup refuses unsupported state versions before modifying state or journals. An incompatible image needs its matching backup or a build that supports the stored schema.
+
 Keys entered through `/setup` live in owner-only `provider-secrets.json` beside state. They override the corresponding provider credential and are filtered before inbox receipt. Include this file in private backups. [First run](first-run.md#audio) explains the Telegram input boundary.
 
 ## OpenCodez

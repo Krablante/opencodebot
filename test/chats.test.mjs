@@ -1,14 +1,19 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { StateStore } from "../src/state.mjs"
+import { StateStore, STATE_SCHEMA_VERSION } from "../src/state.mjs"
 import { ControlMenus } from "../src/control-menu.mjs"
 import { createRunAlerter } from "../src/run-alerts.mjs"
+import { createFinalNotifier } from "../src/final-notifications.mjs"
+import { createQuestionManager } from "../src/questions.mjs"
 import { startArtifactGateway } from "../src/artifacts-gateway.mjs"
 import { bindPendingTopicSession } from "../src/prompt-routing.mjs"
 import { createTelegramPolling } from "../src/telegram-polling.mjs"
+import { createUpdateManager } from "../src/update-manager.mjs"
+import { UserSettings } from "../src/user-settings.mjs"
+import { loadConfig } from "../src/config.mjs"
 import { OpencodebotArtifactsPlugin } from "../plugins/opencodebot-artifacts/src/index.js"
 
 const config = {
@@ -19,14 +24,14 @@ const config = {
   artifacts: { enabled: true, listenHost: "127.0.0.1", port: 0, token: "test", maxPayloadBytes: 65536, maxTextChars: 3400 },
 }
 
-async function fixture(t, legacy) {
+async function fixture(t, legacy, settings = config) {
   const root = await mkdtemp(path.join(os.tmpdir(), "opencodebot-chats-"))
   t.after(() => rm(root, { recursive: true, force: true }))
   const file = path.join(root, "state.json")
   if (legacy) await writeFile(file, JSON.stringify(legacy))
   const state = new StateStore(file)
   await state.load()
-  await state.configureChats(config)
+  await state.configureChats(settings)
   await state.initializeAnswerStats("UTC")
   return state
 }
@@ -56,6 +61,18 @@ test("legacy chat migration preserves panels, destinations, pending launches and
   assert.equal(reloaded.controlMenuMessage(-1001).messageId, 7)
   assert.deepEqual(reloaded.notificationUserIdsForChat(-1001, [11, 22]), [11])
   assert.deepEqual(reloaded.notificationUserIdsForChat(-1002, [11, 22]), [22])
+})
+
+test("workshop configuration rejects invalid numeric IDs before deduplication", async (t) => {
+  const state = await fixture(t)
+  const file = path.join(path.dirname(state.filePath), "config.json")
+  const write = (chatIds) => writeFile(file, JSON.stringify({ paths: { serversJson: path.resolve(import.meta.dirname, "../servers.example.json") }, telegram: { chatId: -1001, chatIds } }))
+  for (const chatIds of [[-1001, -9007199254740992], [-1001, -1.5], [-1001, 0], [-1001, 123]]) {
+    await write(chatIds)
+    assert.throws(() => loadConfig(file), /negative Telegram group IDs/)
+  }
+  await write(["-1001", -1002, -1001])
+  assert.deepEqual(loadConfig(file).telegram.chatIds, [-1001, -1002])
 })
 
 test("identical topic IDs have independent launch, reset, title, closure and service-topic state", async (t) => {
@@ -110,6 +127,62 @@ test("General panels with identical message IDs navigate independently and subsc
   assert.deepEqual(stored.telegram.chats["-1002"].notificationUserIds, ["22", "11"])
 })
 
+test("deleted panels recover in their own chat and a failed workshop cannot block startup", async (t) => {
+  const state = await fixture(t)
+  let unavailable = true
+  const edits = [], sends = []
+  const panels = new ControlMenus({ config, state, opencode: { sessionStatuses: async () => ({}) },
+    promptQueue: { status: () => [] },
+    telegram: { sendRichMessage: async (value) => {
+      if (value.chatId === -1001 && unavailable) throw new Error("Forbidden: bot was kicked from the supergroup chat")
+      sends.push(value); return { message_id: sends.length + 10 }
+    }, pinChatMessage: async () => {},
+    editRichMessage: async (value) => { edits.push(value); throw new Error("Bad Request: message to edit not found") },
+    deleteMessage: async () => {},
+    } })
+  t.after(() => panels.stop())
+  await panels.start()
+  assert.ok(panels.forChat(-1001).rotationTimer, "failed startup schedules a bounded retry")
+  assert.ok(state.controlMenuMessage(-1002), "the next workshop still starts")
+  const otherPanel = structuredClone(state.controlMenuMessage(-1002))
+  unavailable = false
+  await panels.forChat(-1001).start()
+  const count = edits.length
+  await panels.forChat(-1001).editMenu("settings", { id: 11 })
+  assert.equal(edits.length - count, 1, "a missing panel is cleared before its replacement is created")
+  assert.deepEqual(state.controlMenuMessage(-1002), otherPanel)
+  assert.deepEqual(Object.keys(state.data.telegram.chats).sort(), ["-1001", "-1002"])
+})
+
+test("unsupported state schemas fail before changing state or delivery journals", async (t) => {
+  const state = await fixture(t)
+  const future = JSON.stringify({ ...state.data, version: STATE_SCHEMA_VERSION + 1 })
+  const journal = '["a","local","ses_test","msg_kept"]\n'
+  await writeFile(state.filePath, future)
+  await writeFile(state.markerPath, journal)
+  await assert.rejects(new StateStore(state.filePath).load(), /state schema/i)
+  assert.equal(await readFile(state.filePath, "utf8"), future)
+  assert.equal(await readFile(state.markerPath, "utf8"), journal)
+  for (const invalid of ["null", "[]", '"not state"']) {
+    await writeFile(state.filePath, invalid)
+    await assert.rejects(new StateStore(state.filePath).load(), /Invalid state document/)
+    assert.equal(await readFile(state.filePath, "utf8"), invalid)
+    assert.equal(await readFile(state.markerPath, "utf8"), journal)
+  }
+})
+
+test("concurrent creation in the shared profile library never overwrites an existing profile", async (t) => {
+  const state = await fixture(t)
+  const settings = new UserSettings({ config: { ...config, defaultPrompt: { serverID: "local" }, promptProfiles: {}, artifacts: {} }, state })
+  await settings.initialize()
+  const first = { agent: "build", model: { providerID: "sample", modelID: "first" } }
+  const second = { agent: "plan", model: { providerID: "sample", modelID: "second" } }
+  const results = await Promise.allSettled([settings.saveProfile("shared", first), settings.saveProfile("shared", second)])
+  assert.deepEqual(results.map((result) => result.status), ["fulfilled", "rejected"])
+  assert.equal(results[1].reason.code, "PROFILE_EXISTS")
+  assert.deepEqual(settings.data.profiles.shared, first)
+})
+
 test("failure alerts follow workshop subscriptions independently of the final-DM switch", async (t) => {
   const state = await fixture(t)
   await state.disableFinalNotificationsFor(22)
@@ -117,6 +190,34 @@ test("failure alerts follow workshop subscriptions independently of the final-DM
   const alerter = createRunAlerter({ config, state, telegram: { sendMessage: async (message) => sent.push(message) } })
   await alerter.notify({ binding: { chatId: -1002, topicId: 42, serverID: "local", sessionID: "ses_second" }, alertKey: "failure", kind: "error" })
   assert.deepEqual(sent.map((message) => String(message.chatId)), ["22"])
+})
+
+test("finals and blocking questions use the same chat subscriptions and preserve the personal final switch", async (t) => {
+  const state = await fixture(t)
+  const binding = { chatId: -1002, topicId: 42, serverID: "local", sessionID: "ses_second" }
+  await state.bindTopic(binding)
+  for (const user of [11, 22]) await state.setFinalNotificationsEnabledFor(user, true)
+  const sent = []
+  const telegram = { sendMessage: async (message) => { sent.push(message); return { message_id: sent.length } },
+    sendRichMessage: async (message) => { sent.push(message); return { message_id: sent.length } } }
+  const opencode = { messages: async () => [] }
+  const notifier = createFinalNotifier({ config, state, telegram, opencode })
+  await notifier.notifyFinalAnswerReady(binding, { assistantMessageID: "msg_first", messageId: 5 })
+  assert.deepEqual(sent.map((message) => String(message.chatId)), ["22"])
+  sent.length = 0
+  await state.disableFinalNotificationsFor(22)
+  await notifier.notifyFinalAnswerReady(binding, { assistantMessageID: "msg_second", messageId: 6 })
+  assert.equal(sent.length, 0)
+  const questions = createQuestionManager({ config, state, telegram, opencode })
+  const ask = (id) => questions.handleEvent({ id: "local" }, binding, { type: "question.asked", properties: {
+    id, sessionID: binding.sessionID, questions: [{ question: "Proceed?", options: [{ label: "Yes" }] }],
+  } })
+  await ask("que_first")
+  assert.deepEqual(sent.map((message) => String(message.chatId)), ["-1002", "22"])
+  sent.length = 0
+  await state.setChatNotificationsFor(-1002, 22, false)
+  await ask("que_second")
+  assert.deepEqual(sent.map((message) => String(message.chatId)), ["-1002"])
 })
 
 test("one polling loop accepts both configured chats and rejects other groups", async (t) => {
@@ -141,6 +242,71 @@ test("one polling loop accepts both configured chats and rejects other groups", 
   const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(2000)])
   await polling.poll({ shouldStop: () => signal.aborted, signal })
   assert.deepEqual(handled.sort((a, b) => a - b), [-1002, -1001])
+})
+
+test("first-chat bootstrap seeds all recipients before a personal subscription changes", async (t) => {
+  const settings = { ...config, telegram: { ...config.telegram, chatId: null, chatIds: [], allowChatBootstrap: true },
+    finalNotifications: { ...config.finalNotifications, chatUserIds: {} } }
+  const state = await fixture(t, undefined, settings)
+  let fetched = false, handled = false
+  const signal = AbortSignal.timeout(2000)
+  const polling = createTelegramPolling({ config: { ...settings, paths: { statePath: state.filePath } }, state,
+    telegram: { sendMessage: async () => {}, getUpdates: async () => {
+      if (!fetched) { fetched = true; return [{ update_id: 1, message: {
+        chat: { id: -1001, type: "supergroup" }, from: { id: 11 }, message_id: 10, text: "/test",
+      } }] }
+      await new Promise((resolve) => setTimeout(resolve, 10)); return []
+    } },
+    commandHandlers: { handle: async () => { handled = true; return true } },
+    handleTopicLifecycleMessage: async () => false, extractTelegramFiles: () => [], hasPendingAttachmentBatch: () => false,
+    multipartPromptKey: () => "bootstrap", logError: (error) => { throw error },
+  })
+  await polling.poll({ shouldStop: () => handled, signal })
+  assert.deepEqual(state.notificationUserIdsForChat(-1001, [11, 22]), [11, 22])
+  await state.setChatNotificationsFor(-1001, 11, false)
+  assert.deepEqual(state.notificationUserIdsForChat(-1001, [11, 22]), [22])
+})
+
+test("update offers retain chat identity and simultaneous apply clicks create only one installation run", async (t) => {
+  const state = await fixture(t)
+  const baseSha = "a".repeat(40), targetSha = "b".repeat(40)
+  const offers = config.telegram.chatIds.map((chatId) => ({ chatId, messageId: 7, baseSha, targetSha, components: {} }))
+  await state.update((data) => { data.updates.offers = structuredClone(offers) })
+  const runtimeDir = path.join(path.dirname(state.filePath), "updates")
+  await mkdir(runtimeDir)
+  await writeFile(path.join(runtimeDir, "runner.json"), "{}")
+  const answers = []
+  const manager = createUpdateManager({ config: { ...config, updates: { runtimeDir, currentRevision: baseSha } }, state,
+    telegram: { answerCallbackQuery: async (value) => answers.push(value), editMessageText: async () => {} } })
+  t.after(() => manager.stop())
+  const callback = (chatId, action) => ({ id: String(chatId), from: { id: 11 }, message: { chat: { id: chatId }, message_id: 7 }, data: `upd:${action}:${targetSha}` })
+  await manager.handleCallback(callback(-1001, "later"))
+  assert.equal(state.data.updates.offers.length, 1)
+  assert.equal(state.data.updates.offers[0].chatId, -1002)
+  await state.update((data) => { data.updates.offers = structuredClone(offers) })
+  answers.length = 0
+  await Promise.all(config.telegram.chatIds.map((chatId) => manager.handleCallback(callback(chatId, "apply"))))
+  assert.equal(answers.filter((answer) => answer.showAlert).length, 1, "second apply is told an installation update is already running")
+  const request = JSON.parse(await readFile(path.join(runtimeDir, "request.json"), "utf8"))
+  assert.equal(request.id, state.data.updates.activeRun.id)
+  await manager.reconcileStatus()
+  manager.stop()
+  await writeFile(path.join(runtimeDir, "status.json"), JSON.stringify({ id: request.id, stage: "succeeded" }))
+  manager.telegram.editMessageText = manager.telegram.sendMessage = async () => { throw new Error("Telegram temporarily unavailable") }
+  await manager.reconcileStatus()
+  assert.equal(state.data.updates.activeRun.id, request.id, "failed status delivery remains retryable")
+  let begin, release, deliveries = 0
+  const started = new Promise((resolve) => { begin = resolve })
+  manager.telegram.editMessageText = async () => {
+    deliveries++; begin(); await new Promise((resolve) => { release = resolve })
+  }
+  const first = manager.reconcileStatus(), second = manager.reconcileStatus()
+  assert.equal(first, second)
+  await started
+  assert.equal(deliveries, 1)
+  release()
+  await first
+  assert.equal(state.data.updates.activeRun, null)
 })
 
 test("artifact plugin supplies session identity and the gateway routes files and text by session, including parents", async (t) => {
@@ -168,6 +334,12 @@ test("artifact plugin supplies session identity and the gateway routes files and
   await plugin.tool.opencodebot_send_artifact.execute({ path: artifact, caption: "routing", mode: "document" }, { sessionID: "ses_second" })
   assert.equal(sent.at(-1).chatId, -1002)
   assert.deepEqual(await readdir(spoolDir), [])
+  await state.configureChats({ ...config, telegram: { ...config.telegram, chatIds: [-1001] } })
+  await assert.rejects(plugin.tool.opencodebot_send_artifact.execute({ text: "removed workshop", caption: "routing", mode: "text" }, { sessionID: "ses_second" }), /inactive/)
+  await state.configureChats(config)
+  await state.patchChat(-1002, { artifactsTopic: null })
+  await assert.rejects(plugin.tool.opencodebot_send_artifact.execute({ text: "missing destination", caption: "routing", mode: "text" }, { sessionID: "ses_second" }), /FILES is not configured/)
+  await state.setArtifactsTopic({ chatId: -1002, topicId: 8 })
   await state.disableBinding("local", "ses_second", "closed")
   await assert.rejects(plugin.tool.opencodebot_send_artifact.execute({ text: "closed", caption: "routing", mode: "text" }, { sessionID: "ses_second" }), /inactive/)
   assert.equal(sent.length, 4)

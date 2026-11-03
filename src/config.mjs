@@ -39,8 +39,9 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
   const openCodePassword = pickValue(mergedEnv, config.opencode?.passwordEnvNames || [])
   const artifactToken = pickValue(mergedEnv, config.artifacts?.tokenEnvNames || defaultArtifacts.tokenEnvNames) || config.artifacts?.token
   const legacyChatId = config.telegram?.chatId ?? readFirstNumber(mergedEnv, ["OPENCODEBOT_CHAT_ID", "TELEGRAM_CHAT_ID"])
-  const chatIds = uniqueNumbers([legacyChatId, ...readNumberList(config.telegram?.chatIds, mergedEnv)].filter((id) => id != null))
-  if (chatIds.some((id) => !Number.isSafeInteger(id) || id >= 0)) throw new Error("telegram.chatIds must contain negative Telegram group IDs")
+  const requestedChatIds = [legacyChatId, ...readNumberList(config.telegram?.chatIds, mergedEnv)].filter((id) => id != null).map(Number)
+  if (requestedChatIds.some((id) => !Number.isSafeInteger(id) || id >= 0)) throw new Error("telegram.chatIds must contain safe negative Telegram group IDs")
+  const chatIds = uniqueNumbers(requestedChatIds)
   const chatId = legacyChatId == null ? chatIds[0] : Number(legacyChatId)
   if (chatId != null && (!Number.isSafeInteger(chatId) || chatId >= 0)) throw new Error("telegram.chatId must be a negative Telegram group ID")
   const servers = readServers(serversJsonPath)

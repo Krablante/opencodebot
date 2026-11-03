@@ -32,7 +32,12 @@ export class StateStore {
   async load({ promptProfiles = {}, chatId } = {}) {
     try {
       const text = await fs.readFile(this.filePath, "utf8")
-      this.data = { ...defaultState(), ...JSON.parse(text) }
+      const stored = JSON.parse(text)
+      if (!stored || typeof stored !== "object" || Array.isArray(stored)) throw new Error("Invalid state document; preserve it and restore a valid backup before restarting")
+      if (stored.version != null && (!Number.isSafeInteger(stored.version) || stored.version < 1 || stored.version > STATE_SCHEMA_VERSION)) {
+        throw new Error(`Unsupported state schema; this build reads versions 1–${STATE_SCHEMA_VERSION}. Restore a compatible backup or use the matching build.`)
+      }
+      this.data = { ...defaultState(), ...stored }
       this.data.bindings ||= []
       this.data.pendingTopics ||= {}
       this.data.pendingPrompts ||= []
@@ -366,7 +371,7 @@ export class StateStore {
     }
   }
 
-  async setControlMenuMessage({ chatId, messageId, createdAt = Date.now() } = {}) {
+  async setControlMenuMessage({ chatId = this.chatId, messageId, createdAt = Date.now() } = {}) {
     return this.update((data) => {
       const chat = telegramChat(data, chatId)
       chat.controlMenu = messageId ? { chatId, messageId: Number(messageId), createdAt } : null
@@ -1115,6 +1120,7 @@ function topicKey(chatId, topicId) {
 }
 
 function telegramChat(data, chatId) {
+  if (chatId == null) throw new Error("Telegram chat ID is required")
   data.telegram.chats ||= {}
   return data.telegram.chats[String(chatId)] ||= { chatId }
 }

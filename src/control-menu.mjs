@@ -74,12 +74,22 @@ export class ControlMenu {
 
   async start() {
     if (!this.chatId()) return null
-    const existing = this.state.controlMenuMessage(this.chatId())
-    const message = await this.ensureMenu("home", null, { replace: Boolean(existing && (!existing.createdAt || Date.now() - existing.createdAt >= 24 * 60 * 60_000)) })
-    if (existing) await this.pinMenu(message?.message_id)
-    this.scheduleRotation()
-    this.scheduleAnswerDayRefresh()
-    return message
+    clearTimeout(this.rotationTimer)
+    try {
+      const existing = this.state.controlMenuMessage(this.chatId())
+      const message = await this.ensureMenu("home", null, { replace: Boolean(existing && (!existing.createdAt || Date.now() - existing.createdAt >= 24 * 60 * 60_000)) })
+      if (existing) await this.pinMenu(message?.message_id)
+      this.scheduleRotation()
+      this.scheduleAnswerDayRefresh()
+      return message
+    } catch (error) {
+      // A removed group or temporary Telegram failure must not stop the poller
+      // and the other workshops. Reuse the panel's existing lifecycle timer.
+      logErrorEvent("control_menu.start.failed", error, { chatId: this.chatId() })
+      this.rotationTimer = setTimeout(() => this.start(), 60_000)
+      this.rotationTimer.unref?.()
+      return null
+    }
   }
 
   async open(message, page = "home", options = {}) {
@@ -386,7 +396,7 @@ export class ControlMenu {
       } catch (error) {
         if (isMessageNotModified(error)) return { chat: { id: existing.chatId }, message_id: existing.messageId }
         if (!isMissingMessage(error)) throw error
-        await this.state.setControlMenuMessage()
+        await this.state.setControlMenuMessage({ chatId: this.chatId() })
       }
     }
 
@@ -430,7 +440,7 @@ export class ControlMenu {
     } catch (error) {
       if (isMessageNotModified(error)) return null
       if (isMissingMessage(error)) {
-        await this.state.setControlMenuMessage()
+        await this.state.setControlMenuMessage({ chatId: this.chatId() })
         return this.ensureMenuUnlocked(page, actor)
       }
       throw error
