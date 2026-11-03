@@ -28,7 +28,8 @@ export function createFinalNotifier({ config, state, telegram, opencode }) {
   }
 
   async function deliverFinalAnswerReady(binding, { assistantMessageID, messageId }) {
-    const configuredUserIds = new Set((config.finalNotifications?.userIds || []).map(String))
+    const configured = config.finalNotifications?.userIds || []
+    const configuredUserIds = new Set((state.notificationUserIdsForChat?.(binding.chatId, configured) || configured).map(String))
     const userIds = state.finalNotificationUserIds().filter((userId) => (
       configuredUserIds.has(String(userId))
       && !state.finalNotificationSent(userId, binding.serverID, binding.sessionID, assistantMessageID)

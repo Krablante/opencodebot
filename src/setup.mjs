@@ -18,7 +18,7 @@ export class Setup {
   }
 
   async openCurrent(message) {
-    const chatId = this.state.chatId || this.config.telegram.chatId || message.chat.id
+    const chatId = message.chat.id
     const [chat, me] = await Promise.all([this.telegram.request("getChat", { chat_id: chatId }), this.telegram.getMe()])
     if (!chat.is_forum) return this.telegram.sendMessage({ chatId, topicId: topicId(message), text: this.text("Включи темы в настройках группы и снова запусти /setup.", "Enable topics in this group's settings and run /setup again.") })
     const rights = await this.telegram.request("getChatMember", { chat_id: chatId, user_id: me.id })
@@ -33,27 +33,27 @@ export class Setup {
     if (!this.state.chatId) await this.state.setChatId(chatId)
     await this.ensureTopic("files", chatId, message.from.id)
     await this.ensureTopic("audio", chatId, message.from.id)
-    if (this.speech.configured()) await this.speech.createOrRefreshMenu()
+    if (this.speech.configured()) await this.speech.createOrRefreshMenu({ chatId })
     await this.ensureNotifications(message.from.id)
-    if (!this.state.data.preferences.setupComplete) {
+    if (!this.state.chatRecord(chatId).setupComplete) {
       const panel = await this.onReady?.(message)
       await this.telegram.sendRichMessage({ chatId, topicId: 0, html: guidePage(0, getLanguage()).html
         + (panel?.message_id ? buttonRows([[{ text: this.text("Открыть меню и полный гайд", "Open the menu and full guide"), url: telegramMessageLink(chatId, panel.message_id) }]]) : "") })
-      await this.state.update((data) => { data.preferences.setupComplete = true })
+      await this.state.patchChat(chatId, { setupComplete: true })
     }
-    const status = this.statusHtml(me.username)
-    const existing = this.state.data.preferences.setupMenu
+    const status = this.statusHtml(me.username, chatId)
+    const existing = this.state.chatRecord(chatId).setupMenu
     if (existing?.messageId && String(existing.chatId) === String(chatId) && Number(message.message_id) === existing.messageId) {
       try { await this.telegram.editRichMessage({ chatId, messageId: existing.messageId, html: status }); return }
       catch (error) { if (/message is not modified/i.test(error.message)) return; if (!/message to edit not found|can't be edited/i.test(error.message)) throw error }
     }
     const sent = await this.telegram.sendRichMessage({ chatId, topicId: topicId(message), html: status })
-    await this.state.update((data) => { data.preferences.setupMenu = { chatId, messageId: sent.message_id, topicId: topicId(message) } })
+    await this.state.patchChat(chatId, { setupMenu: { chatId, messageId: sent.message_id, topicId: topicId(message) } })
     if (existing?.messageId) await this.telegram.deleteMessage({ chatId: existing.chatId, messageId: existing.messageId }).catch(() => {})
   }
 
   async ensureTopic(kind, chatId, userId) {
-    const current = kind === "files" ? this.state.artifactsTopic() : this.state.soundsTopic()
+    const current = kind === "files" ? this.state.artifactsTopic(chatId) : this.state.soundsTopic(chatId)
     if (current) return current
     const icon = await this.randomTopicIcon()
     const topic = await this.telegram.createForumTopic({ chatId, name: kind === "files" ? "FILES" : "AUDIO", iconCustomEmojiId: icon?.customEmojiId })
@@ -79,8 +79,8 @@ export class Setup {
     } catch { return false }
   }
 
-  statusHtml(username) {
-    const files = this.state.artifactsTopic(), audio = this.state.soundsTopic()
+  statusHtml(username, chatId = this.state.chatId) {
+    const files = this.state.artifactsTopic(chatId), audio = this.state.soundsTopic(chatId)
     const connections = Object.keys(this.state.data.preferences.artifactClients || {})
     const ready = this.config.artifacts.enabled && Boolean(this.config.artifacts.token)
     return `<h2>🔧 ${this.text("Подключения", "Connections")}</h2>` + menuTable([
@@ -153,7 +153,7 @@ export class Setup {
     const pending = this.state.data.preferences.audioInputs?.[String(message.from?.id)]
     const allowed = this.config.telegram.allowedUserIds.includes(Number(message.from?.id))
     const configuredChatId = this.state.chatId || this.config.telegram.chatId
-    if (configuredChatId && String(configuredChatId) !== String(message.chat?.id)) return scrubKeyReferences(update)
+    if (configuredChatId && !(this.state.hasChat?.(message.chat?.id) ?? String(configuredChatId) === String(message.chat?.id))) return scrubKeyReferences(update)
     const expected = allowed && pending && pending.expires >= Date.now() && String(pending.chatId) === String(message.chat?.id) && pending.topicId === topicId(message)
     if (!/^gsk_[A-Za-z0-9_-]+$/.test(value) && !(expected && value && message.reply_to_message?.message_id === pending.promptId && value !== "/cancel" && !value.startsWith("/"))) return scrubKeyReferences(update)
     let status = "unexpected"
@@ -194,7 +194,7 @@ export class Setup {
         const promptId = this.state.data.preferences.audioInputs?.[String(message.from.id)]?.promptId
         await this.state.update((data) => { delete data.preferences.audioInputs?.[String(message.from.id)] })
         if (promptId) await this.telegram.deleteMessage({ chatId: message.chat.id, messageId: promptId }).catch(() => {})
-        if (this.state.soundsTopic()) await this.speech.createOrRefreshMenu()
+        for (const chatId of this.state.chatIds()) if (this.state.soundsTopic(chatId)) await this.speech.createOrRefreshMenu({ chatId })
       }
       return true
     }

@@ -396,7 +396,7 @@ async function smokeDeliveryBounds() {
       promptAsync: async (_server, _session, value) => { payload = value },
     }
     const message = { chat: { id: -1001 }, from: { id: 42 }, message_thread_id: 1, message_id: 2 }
-    const currentPending = state.pendingTopic(1)
+    const currentPending = state.pendingTopic(1, -1001)
     const pair = await Promise.all([1, 2].map(() => bindPendingTopicSession({ state, opencode: backend, pending: currentPending, message })))
     assert.equal(created, 1)
     assert.equal(pair[0].sessionID, pair[1].sessionID)
@@ -2959,13 +2959,13 @@ async function smokeResetCommand() {
     assert.deepEqual(steps, ["abort", "multipart", "attachments", "detach"])
     assert.equal(state.findBinding("nuc", "ses_reset_old"), undefined)
     assert.equal(state.findAnyBindingByTopic(123, 456).disabledReason, "topic-reset")
-    assert.equal(state.pendingTopic(456).directory, binding.directory)
-    assert.equal(state.pendingTopic(456).promptProfileName, "gpt")
-    assert.deepEqual(state.pendingTopic(456).promptProfile, promptProfiles.gpt)
-    assert.equal(state.pendingTopic(456).title, preservedTopicTitle)
-    assert.equal(state.pendingTopic(456).topicBaseTitle, preservedTopicTitle)
-    assert.equal(state.pendingTopic(456).topicTitle, `${preservedTopicTitle} (nuc)`)
-    assert.equal(state.pendingTopic(456).titleSource, "user")
+    assert.equal(state.pendingTopic(456, 123).directory, binding.directory)
+    assert.equal(state.pendingTopic(456, 123).promptProfileName, "gpt")
+    assert.deepEqual(state.pendingTopic(456, 123).promptProfile, promptProfiles.gpt)
+    assert.equal(state.pendingTopic(456, 123).title, preservedTopicTitle)
+    assert.equal(state.pendingTopic(456, 123).topicBaseTitle, preservedTopicTitle)
+    assert.equal(state.pendingTopic(456, 123).topicTitle, `${preservedTopicTitle} (nuc)`)
+    assert.equal(state.pendingTopic(456, 123).titleSource, "user")
     assert.equal(promptQueue.status(binding).length, 0)
     assert.match(sent.at(-1).text, /Fresh session ready/)
     assert.match(sent.at(-1).text, /Profile: <code>gpt<\/code>/)
@@ -2991,8 +2991,8 @@ async function smokeResetCommand() {
     assert.deepEqual(steps, ["multipart", "attachments"])
     assert.match(sent.at(-1).text, /already waiting for its first prompt/)
     assert.match(sent.at(-1).text, /Profile: <code>terra<\/code>/)
-    assert.equal(state.pendingTopic(456).promptProfileName, "terra")
-    assert.deepEqual(state.pendingTopic(456).promptProfile, promptProfiles.terra)
+    assert.equal(state.pendingTopic(456, 123).promptProfileName, "terra")
+    assert.deepEqual(state.pendingTopic(456, 123).promptProfile, promptProfiles.terra)
 
     steps.length = 0
     await handlers.handle(
@@ -3001,16 +3001,16 @@ async function smokeResetCommand() {
       "123:456",
     )
     assert.deepEqual(steps, ["preflight:dima", "multipart", "attachments"])
-    assert.equal(state.pendingTopic(456).serverID, "dima")
-    assert.equal(state.pendingTopic(456).directory, "/home/dima")
-    assert.equal(state.pendingTopic(456).topicTitle, `${preservedTopicTitle} (dima)`)
+    assert.equal(state.pendingTopic(456, 123).serverID, "dima")
+    assert.equal(state.pendingTopic(456, 123).directory, "/home/dima")
+    assert.equal(state.pendingTopic(456, 123).topicTitle, `${preservedTopicTitle} (dima)`)
     assert.match(sent.at(-1).text, /Server: <code>nuc<\/code> → <code>dima<\/code>/)
     assert.match(sent.at(-1).text, /Directory: <code>\/home\/dima<\/code>/)
 
     const reloaded = new StateStore(statePath)
     await reloaded.load()
-    assert.equal(reloaded.pendingTopic(456).topicTitle, `${preservedTopicTitle} (dima)`)
-    assert.equal(reloaded.pendingTopic(456).titleSource, "user")
+    assert.equal(reloaded.pendingTopic(456, 123).topicTitle, `${preservedTopicTitle} (dima)`)
+    assert.equal(reloaded.pendingTopic(456, 123).titleSource, "user")
     assert.equal(reloaded.findAnyBindingByTopic(123, 456).disabled, true)
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -3117,7 +3117,7 @@ async function smokeCanonicalTopicMetadata() {
       topicTitle: "vault (dima)",
       topicServerSuffixManaged: true,
     })
-    assert.equal(state.pendingTopic(456).topicTitle, "vault (dima)")
+    assert.equal(state.pendingTopic(456, 123).topicTitle, "vault (dima)")
     assert.equal(state.topicRecord(123, 456).topicTitle, "vault (dima)")
     assert.equal(finalNotificationTopicSource(state.topicRecord(123, 456)).title, "vault (dima)")
     assert.ok(state.data.bindings.every((binding) => binding.topicTitle === "vault (dima)"))

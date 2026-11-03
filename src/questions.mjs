@@ -281,7 +281,8 @@ export function createQuestionManager({ config, state, telegram, opencode, backe
 
   async function notifyRecipients(binding, record) {
     const link = telegramMessageLink(binding.chatId, record.messageId)
-    for (const userID of config.finalNotifications?.userIds || []) {
+    const configured = config.finalNotifications?.userIds || []
+    for (const userID of state.notificationUserIdsForChat?.(binding.chatId, configured) || configured) {
       const value = String(userID)
       if (record.notifiedUserIds.includes(value)) continue
       try {

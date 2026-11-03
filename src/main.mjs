@@ -7,7 +7,7 @@ import { createBackendRequester } from "./backend-backoff.mjs"
 import { createTelegramCommandHandlers, telegramBotCommands } from "./commands.mjs"
 import { createFinalNotifier } from "./final-notifications.mjs"
 import { FinalVoiceModule } from "./final-voice.mjs"
-import { ControlMenu } from "./control-menu.mjs"
+import { ControlMenus } from "./control-menu.mjs"
 import { configureI18n, setLanguage } from "./i18n/index.mjs"
 import { OpenCodeClient } from "./opencode.mjs"
 import { createPromptRouter } from "./prompt-routing.mjs"
@@ -31,7 +31,7 @@ const config = loadConfig()
 assertRuntimeConfig(config)
 
 const state = new StateStore(config.paths.statePath)
-await state.load({ promptProfiles: config.promptProfiles })
+await state.load({ promptProfiles: config.promptProfiles, chatId: config.telegram.chatId })
 configureI18n({ state, defaultLanguage: config.ui.defaultLanguage })
 if (config.telegram.chatId && !state.chatId) await state.setChatId(config.telegram.chatId)
 
@@ -44,6 +44,7 @@ const botInfo = await telegram.getMe()
 const opencode = new OpenCodeClient(config, { signal: abort.signal })
 const settings = new UserSettings({ config, state, opencode })
 await settings.initialize()
+await state.configureChats(config)
 await state.initializeAnswerStats(config.ui.timeZone)
 const finalNotifier = createFinalNotifier({ config, state, telegram, opencode })
 const notifyFinalAnswerReady = finalNotifier.notifyFinalAnswerReady
@@ -121,8 +122,8 @@ const skippedBackendRequest = backendRequester.skipped
 const backendRequest = backendRequester.request
 const speech = new SpeechModule({ config: config.speech, telegram, state, uploadDir: config.paths.uploadsDir, attachmentSettings: config.attachments })
 const setup = new Setup({ config, state, telegram, settings, speech, randomTopicIcon,
-  enableGateway: () => { artifactGateway ||= startArtifactGateway({ config, state, telegram, signal: abort.signal }) },
-  onReady: (message) => controlMenu.ensureMenu("home", message.from),
+  enableGateway: () => { artifactGateway ||= startArtifactGateway({ config, state, telegram, opencode, signal: abort.signal }) },
+  onReady: (message) => controlMenu.forChat(message.chat.id).ensureMenu("home", message.from),
 })
 const launchMenu = new LaunchMenu({ config, state, telegram, opencode, settings, createSession: createPendingTopic })
 finalVoice = new FinalVoiceModule({ config: config.finalVoice, state, telegram, signal: abort.signal })
@@ -168,7 +169,7 @@ sessionReconciler = createSessionReconciler({
   disableTopicMirror: topicLifecycle.disableTopicMirror,
 })
 let refreshCommandMenu = async () => {}
-controlMenu = new ControlMenu({
+controlMenu = new ControlMenus({
   config,
   state,
   telegram,
@@ -246,7 +247,7 @@ const cleanupStaging = () => Promise.all([
 ]).catch(logError)
 await cleanupStaging()
 setInterval(cleanupStaging, 60 * 60 * 1000).unref?.()
-artifactGateway = startArtifactGateway({ config, state, telegram, signal: abort.signal })
+artifactGateway = startArtifactGateway({ config, state, telegram, opencode, signal: abort.signal })
 console.log(`[opencodebot] starting ${config.opencode.servers.length} OpenCodez event streams`)
 
 for (const server of config.opencode.servers) {

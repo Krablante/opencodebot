@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto"
+
 import { getLanguage } from "./i18n/index.mjs"
 import { escapeHtml, telegramMessageLink, topicId } from "./telegram.mjs"
 import { buttonRows, menuTable, richButton, localText } from "./menu-format.mjs"
@@ -9,6 +10,10 @@ const INPUT_TTL = 15 * 60_000
 const CREATED_CARD_TTL = 2 * 60_000
 const CARD_RETENTION = 48 * 60 * 60_000
 const MODELS_PER_PAGE = 100
+
+function inputKey(draft) {
+  return `${draft.chatId}:${draft.userId}`
+}
 
 // Short-lived, actor-owned drafts. Saved profiles and launch snapshots belong to UserSettings/StateStore.
 export class LaunchMenu {
@@ -100,7 +105,7 @@ export class LaunchMenu {
   }
 
   open(query, page = "new") {
-    const key = `actor:${query.from.id}`
+    const key = `actor:${query.message.chat.id}:${query.from.id}`
     const run = (this.lanes.get(key) || Promise.resolve()).catch(() => {}).then(() => this.openCurrent(query, page))
       .finally(() => { if (this.lanes.get(key) === run) this.lanes.delete(key) })
     this.lanes.set(key, run)
@@ -110,8 +115,8 @@ export class LaunchMenu {
   async openCurrent(query, page = "new") {
     this.expire()
     const userId = query.from.id
-    for (const draft of this.drafts.values()) if (draft.userId === userId) await this.close(draft)
-    for (const card of this.cards().filter((card) => card.userId === userId && !card.deleted)) await this.deleteCard(card)
+    for (const draft of this.drafts.values()) if (draft.userId === userId && String(draft.chatId) === String(query.message.chat.id)) await this.close(draft)
+    for (const card of this.cards().filter((card) => card.userId === userId && String(card.chatId) === String(query.message.chat.id) && !card.deleted)) await this.deleteCard(card)
     const serverID = this.config.defaultPrompt.serverID || this.config.opencode.servers[0].id
     const d = { id: randomBytes(4).toString("hex"), userId, chatId: query.message.chat.id, topicId: topicId(query.message),
       rev: 0, page, expires: Date.now() + INPUT_TTL, serverID,
@@ -177,8 +182,8 @@ export class LaunchMenu {
     }
     if (verb === "title") return this.ask(d, "title", this.text("Название темы", "Topic title"))
     if (verb === "randomtitle") {
-      const hadInput = this.inputs.get(d.userId)?.draftId === d.id
-      d.name = randomTopicTitle(); this.inputs.delete(d.userId); delete d.inputRequest
+      const hadInput = this.inputs.get(inputKey(d))?.draftId === d.id
+      d.name = randomTopicTitle(); this.inputs.delete(inputKey(d)); delete d.inputRequest
       if (hadInput) return this.sendCard(d)
       return
     }
@@ -279,7 +284,7 @@ export class LaunchMenu {
         promptProfileName: d.profileName || null, promptProfile: structuredClone(profile),
       })
       if (!topic?.message_thread_id) throw new Error("Topic was not created")
-      this.inputs.delete(d.userId)
+      this.inputs.delete(inputKey(d))
       d.page = "created"; d.topicLink = telegramMessageLink(d.chatId, topic.message_thread_id)
       return
     }
@@ -342,7 +347,7 @@ export class LaunchMenu {
 
   async sendCard(d) {
     const oldMessageId = d.messageId
-    const activeInput = this.inputs.get(d.userId)
+    const activeInput = this.inputs.get(inputKey(d))
     const input = d.inputRequest || (activeInput?.draftId === d.id ? activeInput : null)
     // Telegram cannot toggle Force Reply through an edit. A fresh card
     // activates each input request; retire the previous card only after success.
@@ -353,7 +358,7 @@ export class LaunchMenu {
     d.messageId = sent.message_id
     d.forceReply = Boolean(input)
     await this.rememberCard(d)
-    if (input) this.inputs.set(d.userId, { ...input, draftId: d.id, messageId: d.messageId })
+    if (input) this.inputs.set(inputKey(d), { ...input, draftId: d.id, messageId: d.messageId })
     delete d.inputRequest
     if (oldMessageId && oldMessageId !== d.messageId) await this.deleteCard(d, oldMessageId)
     return sent
@@ -373,7 +378,7 @@ export class LaunchMenu {
   async handleMessage(message) {
     const replyId = message.reply_to_message?.message_id
     const menuReply = this.cards().some((card) => String(card.chatId) === String(message.chat.id) && card.messageId === replyId)
-    const input = this.inputs.get(message.from?.id)
+    const input = this.inputs.get(`${message.chat.id}:${message.from?.id}`)
     const d = input && this.drafts.get(input.draftId)
     if (!d || d.expires < Date.now() || String(message.chat.id) !== String(d.chatId) || topicId(message) !== d.topicId) return menuReply
     const cancel = message.text === "/cancel"
@@ -394,7 +399,7 @@ export class LaunchMenu {
         }
       }
       await this.deleteInputMessage(d, message)
-      this.inputs.delete(d.userId)
+      this.inputs.delete(inputKey(d))
       await this.draw(d)
     } catch (error) {
       await this.deleteInputMessage(d, message)
@@ -420,7 +425,7 @@ export class LaunchMenu {
     const b = (text, action, style) => { d.allowedActions.add(action); return { text, callback_data: `launch:${d.id}:${d.rev}:${action}`, style } }
     const back = b(this.text("‹ Назад", "‹ Back"), d.editing ? "editback" : "new")
     const close = b(this.text("Закрыть", "Close"), "close")
-    const currentInput = this.inputs.get(d.userId)
+    const currentInput = this.inputs.get(inputKey(d))
     const input = d.inputRequest || (currentInput?.draftId === d.id ? currentInput : null)
     let body = "", rows = []
     if (d.page === "new") {
@@ -444,7 +449,7 @@ export class LaunchMenu {
       const pages = Math.max(1, Math.ceil(profiles.length / 12))
       d.profilePage = Math.max(0, Math.min(d.profilePage || 0, pages - 1))
       const start = d.profilePage * 12
-      body = `<h2>🎛 ${this.text("Профили", "Profiles")}</h2><p>${this.text("Сохранённые настройки запуска. Недавно использованные — первыми.", "Saved launch settings. Recently used profiles appear first.")}</p>` + menuTable(profiles.slice(start, start + 12).map(([name, p], i) => [richButton(b(`${name}${name === this.settings.data.defaultProfile ? " ★" : ""}`, `profile:${start + i}`)), `<b>${escapeHtml(p.model?.modelID || this.text("Автовыбор", "Automatic"))}</b><br>${escapeHtml(p.model?.variant || "default")}`]), [this.text("Профиль", "Profile"), this.text("Модель · reasoning", "Model · reasoning")])
+      body = `<h2>🎛 ${this.text("Профили", "Profiles")}</h2><p>${this.text("Общая библиотека всех мастерских. Изменения и выбор профиля по умолчанию действуют на будущие запуски во всех чатах. Недавно использованные — первыми.", "Shared by all workshops. Edits and the default profile affect future launches in every chat. Recently used profiles appear first.")}</p>` + menuTable(profiles.slice(start, start + 12).map(([name, p], i) => [richButton(b(`${name}${name === this.settings.data.defaultProfile ? " ★" : ""}`, `profile:${start + i}`)), `<b>${escapeHtml(p.model?.modelID || this.text("Автовыбор", "Automatic"))}</b><br>${escapeHtml(p.model?.variant || "default")}`]), [this.text("Профиль", "Profile"), this.text("Модель · reasoning", "Model · reasoning")])
       if (pages > 1) rows.push([...(d.profilePage ? [b("‹", `profilespage:${d.profilePage - 1}`)] : []), ...(d.profilePage + 1 < pages ? [b("›", `profilespage:${d.profilePage + 1}`)] : [])])
       if (!d.choosing) rows.push([b(this.text("Создать профиль", "Create profile"), "add", "primary"), b(this.text("Удалённые", "Deleted"), "deleted")])
       rows.push([back, close])
@@ -529,8 +534,8 @@ export class LaunchMenu {
 
   forgetDraft(d) {
     this.drafts.delete(d.id)
-    const input = this.inputs.get(d.userId)
-    if (input?.draftId === d.id) this.inputs.delete(d.userId)
+    const input = this.inputs.get(inputKey(d))
+    if (input?.draftId === d.id) this.inputs.delete(inputKey(d))
   }
 
   async close(d) { this.forgetDraft(d); await this.deleteCard(d) }

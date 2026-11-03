@@ -47,8 +47,7 @@ export function createTelegramPolling({
 
   function telegramCommandScopes() {
     const scopes = [null, { type: "all_private_chats" }, { type: "all_group_chats" }, { type: "all_chat_administrators" }]
-    const chatId = state.chatId || config.telegram.chatId
-    if (chatId) {
+    for (const chatId of state.chatIds?.() || [state.chatId || config.telegram.chatId].filter(Boolean)) {
       scopes.push({ type: "chat", chat_id: chatId }, { type: "chat_administrators", chat_id: chatId })
       for (const userID of config.telegram.allowedUserIds || []) scopes.push({ type: "chat_member", chat_id: chatId, user_id: userID })
     }
@@ -128,9 +127,8 @@ export function createTelegramPolling({
     } catch (error) {
       const message = update.message || update.callback_query?.message
       const actor = update.callback_query?.from || message?.from
-      const chatId = state.chatId || config.telegram.chatId
       if (!error.feedbackReported && message && isAllowedMessage({ from: actor }, config)
-        && String(chatId) === String(message.chat?.id)) {
+        && allowedChat(message.chat?.id)) {
         await telegram.sendMessage({ chatId: message.chat.id, topicId: topicId(message), text: t("polling.actionFailed") })
           .then(() => { error.feedbackReported = true }, () => {})
       }
@@ -140,8 +138,7 @@ export function createTelegramPolling({
 
   async function handleCallbackQuery(query) {
     const message = query.message || {}
-    const configuredChatId = state.chatId || config.telegram.chatId
-    if (configuredChatId && String(configuredChatId) !== String(message.chat?.id)) return
+    if (!allowedChat(message.chat?.id)) return
     if (!isAllowedMessage({ from: query.from }, config)) {
       await telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("polling.notAllowed"), showAlert: true }).catch(() => {})
       return
@@ -157,7 +154,7 @@ export function createTelegramPolling({
     }
     await cleanupOwnPinServiceMessage(message)
     const configuredChatId = state.chatId || config.telegram.chatId
-    if (configuredChatId && String(configuredChatId) !== String(message.chat.id)) return
+    if (!allowedChat(message.chat.id) && (configuredChatId || !config.telegram.allowChatBootstrap)) return
     if (configuredChatId && (await handleTopicLifecycleMessage(message))) return
     if (!isAllowedMessage(message, config)) return
     const richContent = normalizeTelegramRichMessage(message.rich_message)
@@ -277,7 +274,7 @@ export function createTelegramPolling({
   async function cleanupOwnPinServiceMessage(message) {
     if (config.mirror.deletePinServiceMessages === false) return
     const configuredChatId = state.chatId || config.telegram.chatId
-    if (!message?.pinned_message || String(message.chat?.id) !== String(configuredChatId)) return
+    if (!message?.pinned_message || !configuredChatId || !allowedChat(message.chat?.id)) return
     try {
       await telegram.deleteMessage({ chatId: message.chat.id, messageId: message.message_id })
       logInfo("telegram.pin_service_message.deleted", {
@@ -289,6 +286,10 @@ export function createTelegramPolling({
     } catch (error) {
       console.warn(`[opencodebot] failed to delete pin service message: ${error.message}`)
     }
+  }
+
+  function allowedChat(chatId) {
+    return state.hasChat ? state.hasChat(chatId) : String(state.chatId || config.telegram.chatId) === String(chatId)
   }
 
   return { poll, syncCommandMenu }
@@ -399,7 +400,7 @@ function updateRouting(update, state, config) {
   const bootstrapPending = !state.chatId && !config.telegram.chatId && config.telegram.allowChatBootstrap
   const lane = bootstrapPending ? "bootstrap" : `${chatId}:${currentTopicId}`
   const binding = state.findBindingByTopic?.(chatId, currentTopicId)
-  const pending = state.pendingTopic?.(currentTopicId)
+  const pending = state.pendingTopic?.(currentTopicId, chatId)
   const artifacts = state.isArtifactsTopic?.(chatId, currentTopicId)
   const sounds = state.isSoundsTopic?.(chatId, currentTopicId)
   const media = message.document || message.photo || message.video || message.animation || message.audio

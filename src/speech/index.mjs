@@ -59,8 +59,8 @@ export class SpeechModule {
   }
 
   async setCurrentTopic(message) {
-    const previous = this.state.soundsTopic()
-    const previousMenuMessageId = this.state.soundsMenuMessageId()
+    const previous = this.state.soundsTopic(message.chat.id)
+    const previousMenuMessageId = this.state.soundsMenuMessageId(message.chat.id)
     const nextTopicId = topicId(message)
     if (previousMenuMessageId && previous && (String(previous.chatId) !== String(message.chat.id) || Number(previous.topicId) !== Number(nextTopicId))) {
       await this.telegram.deleteMessage({ chatId: previous.chatId, messageId: previousMenuMessageId }).catch((error) => logErrorEvent("speech.menu.cleanup.failed", error, { chatId: previous.chatId, messageId: previousMenuMessageId }))
@@ -76,8 +76,8 @@ export class SpeechModule {
   }
 
   async clearCurrentTopic(message) {
-    const current = this.state.soundsTopic()
-    const menuMessageId = this.state.soundsMenuMessageId()
+    const current = this.state.soundsTopic(message.chat.id)
+    const menuMessageId = this.state.soundsMenuMessageId(message.chat.id)
     const cleared = await this.state.clearSoundsTopic(message.chat.id, topicId(message))
     if (cleared && current && menuMessageId) {
       await this.telegram.deleteMessage({ chatId: current.chatId, messageId: menuMessageId }).catch((error) => logErrorEvent("speech.menu.cleanup.failed", error, { chatId: current.chatId, messageId: menuMessageId }))
@@ -85,12 +85,12 @@ export class SpeechModule {
     return cleared
   }
 
-  status() {
+  status(chatId = this.state.chatId) {
     const model = this.selectedModel()
     return {
       enabled: this.enabled(),
       configured: this.configured(),
-      topic: this.state.soundsTopic(),
+      topic: this.state.soundsTopic(chatId),
       queueDepth: this.queue.length,
       active: this.active,
       model: model?.id || null,
@@ -125,28 +125,28 @@ export class SpeechModule {
   }
 
   async createOrRefreshMenu({ chatId, topicId: currentTopicId, messageId = null } = {}) {
-    const topic = this.state.soundsTopic()
+    const topic = this.state.soundsTopic(chatId)
     const targetChatId = chatId || topic?.chatId
     const targetTopicId = currentTopicId ?? topic?.topicId
     if (!targetChatId) throw new Error(t("speech.topicNotConfigured"))
     const text = this.menuText()
     const replyMarkup = this.menuMarkup()
-    const existingMessageId = messageId || this.state.soundsMenuMessageId()
+    const existingMessageId = messageId || this.state.soundsMenuMessageId(targetChatId)
     if (existingMessageId) {
       try {
         await this.telegram.editRichMessage({ chatId: targetChatId, messageId: existingMessageId, html: richView(text, replyMarkup) })
-        await this.state.setSoundsMenuMessageId(existingMessageId)
+        await this.state.setSoundsMenuMessageId(existingMessageId, targetChatId)
         return { message_id: existingMessageId }
       } catch (error) {
         if (/message is not modified/i.test(String(error?.message || error))) {
-          await this.state.setSoundsMenuMessageId(existingMessageId)
+          await this.state.setSoundsMenuMessageId(existingMessageId, targetChatId)
           return { message_id: existingMessageId }
         }
         logErrorEvent("speech.menu.edit.failed", error, { chatId: targetChatId, topicId: targetTopicId, messageId: existingMessageId })
       }
     }
     const sent = await this.telegram.sendRichMessage({ chatId: targetChatId, topicId: targetTopicId, html: richView(text, replyMarkup) })
-    await this.state.setSoundsMenuMessageId(sent?.message_id)
+    await this.state.setSoundsMenuMessageId(sent?.message_id, targetChatId)
     if (sent?.message_id) await this.telegram.pinChatMessage({ chatId: targetChatId, messageId: sent.message_id, disableNotification: true }).catch((error) => logErrorEvent("speech.menu.pin.failed", error, { chatId: targetChatId, messageId: sent.message_id }))
     return sent
   }
@@ -157,6 +157,10 @@ export class SpeechModule {
     const message = query.message || {}
     const chatId = message.chat?.id
     const currentTopicId = message.message_thread_id || 0
+    if (!this.state.isSoundsTopic(chatId, currentTopicId) || this.state.soundsMenuMessageId(chatId) !== message.message_id) {
+      await this.telegram.answerCallbackQuery({ callbackQueryId: query.id, text: t("polling.unknownAction"), showAlert: true })
+      return true
+    }
     try {
       if (data === "sounds:refresh") {
         await this.createOrRefreshMenu({ chatId, topicId: currentTopicId, messageId: message.message_id })

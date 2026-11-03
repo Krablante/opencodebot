@@ -11,7 +11,10 @@ Set these values in the OpenCodez runtime environment or pass them as plugin opt
 ```env
 OPENCODEBOT_ARTIFACT_GATEWAY_URL=http://gateway-host:8788
 OPENCODEBOT_ARTIFACT_TOKEN=replace-with-artifact-token
+OPENCODEBOT_SERVER_ID=workstation
 ```
+
+The plugin automatically includes the current session ID. `OPENCODEBOT_SERVER_ID` (or the `serverID` plugin option) must match this server's ID in the bot inventory. The gateway sends artifacts to FILES in the session's workshop, resolving child sessions through their parent when necessary. Unbound root sessions use the default workshop. An inactive binding fails instead of sending to another chat. Older clients without session metadata retain default-workshop delivery.
 
 Install or vendor this package in the OpenCodez environment, then reference the package directory. Example OpenCodez config entry:
 

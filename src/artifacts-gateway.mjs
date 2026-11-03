@@ -16,7 +16,7 @@ const PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"])
 const TELEGRAM_PHOTO_MAX_BYTES = 10 * 1024 * 1024
 const CLOUD_MULTIPART_MEMORY_LIMIT_BYTES = 32 * 1024 * 1024
 
-export function startArtifactGateway({ config, state, telegram, signal }) {
+export function startArtifactGateway({ config, state, telegram, opencode, signal }) {
   if (!config.artifacts?.enabled) return null
   let activeUploads = 0
   const server = createServer(async (request, response) => {
@@ -37,11 +37,6 @@ export function startArtifactGateway({ config, state, telegram, signal }) {
         sendJson(response, 404, { ok: false, error: "not_found" })
         return
       }
-      const target = state.artifactsTopic()
-      if (!target) {
-        sendJson(response, 409, { ok: false, error: "artifacts_topic_not_configured" })
-        return
-      }
       if (activeUploads >= 4) {
         response.setHeader("retry-after", "5")
         sendJson(response, 503, { ok: false, error: "gateway_busy", message: "Four artifact deliveries are active. Retry shortly." })
@@ -53,7 +48,10 @@ export function startArtifactGateway({ config, state, telegram, signal }) {
         ? await readFileStreamBody(request, config)
         : await readJsonBody(request, config.artifacts.maxPayloadBytes)
       let result
+      let target
       try {
+        target = await artifactTarget({ state, opencode, source: payload.source })
+        if (!target) throw publicError("artifacts_topic_not_configured", "FILES is not configured for this session's workshop.", 409)
         result = await sendArtifact({ config, telegram, target, payload })
         await recordArtifactClient(state, payload.source?.host, true)
       } finally {
@@ -82,6 +80,28 @@ export function startArtifactGateway({ config, state, telegram, signal }) {
   })
   if (signal) signal.addEventListener("abort", () => server.close(), { once: true })
   return server
+}
+
+async function artifactTarget({ state, opencode, source = {} }) {
+  if (!source.sessionID) return state.artifactsTopic()
+  let sessionID = String(source.sessionID)
+  const serverID = source.serverID ? String(source.serverID) : null
+  if (serverID && opencode && !opencode.servers.has(serverID)) throw publicError("unknown_source_server", "Artifact source server is not configured.", 409)
+  for (let depth = 0; depth < 16; depth++) {
+    const bindings = (state.data.bindings || []).filter((binding) => binding.sessionID === sessionID && (!serverID || binding.serverID === serverID))
+    if (bindings.length > 1) throw publicError("ambiguous_source_session", "Artifact source matches more than one server; configure the plugin's serverID.", 409)
+    if (bindings.length) {
+      const binding = bindings[0]
+      if (binding.disabled || (state.hasChat && !state.hasChat(binding.chatId))) throw publicError("inactive_source_session", "The source session's workshop or topic is inactive.", 409)
+      return state.artifactsTopic(binding.chatId)
+    }
+    if (!serverID || !opencode) return state.artifactsTopic()
+    const session = await opencode.getSession(serverID, sessionID, { directory: source.directory, timeoutMs: 5000 })
+      .catch(() => { throw publicError("source_session_unavailable", "Could not resolve the artifact source session.", 503) })
+    if (!session.parentID) return state.artifactsTopic()
+    sessionID = session.parentID
+  }
+  throw publicError("invalid_source_session", "Could not resolve the source session's parent chain.", 409)
 }
 
 async function recordArtifactClient(state, host, delivered) {

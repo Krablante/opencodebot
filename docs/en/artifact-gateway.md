@@ -2,7 +2,7 @@
 
 [English](artifact-gateway.md) · [Русский](../ru/artifact-gateway.md) · [All languages](../README.md)
 
-FILES has two independent directions. Agents stream local files/text to the bot's gateway, which posts them to one chosen topic. Telegram users drop files into that topic, and the bot saves them on a chosen OpenCodez server. Outbound agent delivery needs no SSH or Telegram token on the agent; incoming remote storage can use SSH.
+FILES has two independent directions. Agents stream local files/text to the bot's gateway, which posts them to their session's workshop. Telegram users drop files into that workshop's FILES, and the bot saves them on a chosen OpenCodez server. Outbound agent delivery needs no SSH or Telegram token on the agent; incoming remote storage can use SSH.
 
 ## Setup
 
@@ -16,7 +16,9 @@ Manual configuration:
   "artifactUploads": { "enabled": true, "root": "~/trash", "dateFolders": true } }
 ```
 
-Set a long random `OPENCODEBOT_ARTIFACT_TOKEN` in private environment, then run `/artifacts_here` in the destination. Running it elsewhere replaces the shared target and disables any agent binding in the new FILES topic. Ordinary text there shows dropbox help. Keep the gateway on trusted networks and match its listener to [Compose ports/mounts](docker.md).
+Set a long random `OPENCODEBOT_ARTIFACT_TOKEN` in private environment, then run `/artifacts_here` in the destination. Running it elsewhere replaces only this chat's target and disables any agent binding in the new FILES topic. Ordinary text there shows dropbox help. Keep the gateway on trusted networks and match its listener to [Compose ports/mounts](docker.md).
+
+The current plugin includes `source.sessionID` automatically. Set its `serverID` option or `OPENCODEBOT_SERVER_ID` to the bot inventory's server ID, particularly when servers can share session identifiers. The gateway follows the bound session to its chat; child sessions can resolve through their parent on that server. An inactive binding or missing FILES fails explicitly. Unbound root sessions and older clients without session identity use the default chat's FILES. Deploy the updated plugin on every agent host to enable automatic workshop routing.
 
 ## User-dropped files
 

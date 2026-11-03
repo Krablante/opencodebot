@@ -13,8 +13,42 @@ const MAX_VISIBLE_SESSIONS = 6
 const MIN_LENGTH_OPTIONS = [0, 200, 300, 500, 1000, 2000]
 const SESSION_STATUS_TIMEOUT_MS = 3000
 
+export class ControlMenus {
+  constructor(options) {
+    this.options = options
+    this.panels = new Map()
+    this.serverConnections = new Map()
+  }
+
+  forChat(chatId) {
+    const key = String(chatId)
+    if (!this.panels.has(key)) {
+      const panel = new ControlMenu({ ...this.options, chatId })
+      for (const [serverID, status] of this.serverConnections) panel.setServerConnection(serverID, status)
+      this.panels.set(key, panel)
+    }
+    return this.panels.get(key)
+  }
+
+  async start() {
+    for (const chatId of this.options.state.chatIds()) await this.forChat(chatId).start()
+  }
+
+  open(message, ...args) { return this.forChat(message.chat.id).open(message, ...args) }
+  handleCallback(query) { return this.forChat(query.message?.chat?.id).handleCallback(query) }
+  handleMessage(message) { return this.forChat(message.chat.id).handleMessage(message) }
+  observeStatus(binding, status) { this.forChat(binding.chatId).observeStatus(binding, status) }
+  scheduleStatusRefresh() { for (const panel of this.panels.values()) panel.scheduleStatusRefresh() }
+  setServerConnection(serverID, status) {
+    this.serverConnections.set(serverID, status)
+    for (const panel of this.panels.values()) panel.setServerConnection(serverID, status)
+  }
+  stop() { for (const panel of this.panels.values()) panel.stop() }
+}
+
 export class ControlMenu {
-  constructor({ config, state, telegram, opencode, promptQueue, finalVoice, launchMenu, setup, topicExists, refreshCommandMenu, backendRequester = createBackendRequester() }) {
+  constructor({ config, state, telegram, opencode, promptQueue, finalVoice, launchMenu, setup, topicExists, refreshCommandMenu, chatId, backendRequester = createBackendRequester() }) {
+    this.targetChatId = chatId
     this.config = config
     this.state = state
     this.telegram = telegram
@@ -40,7 +74,7 @@ export class ControlMenu {
 
   async start() {
     if (!this.chatId()) return null
-    const existing = this.state.controlMenuMessage()
+    const existing = this.state.controlMenuMessage(this.chatId())
     const message = await this.ensureMenu("home", null, { replace: Boolean(existing && (!existing.createdAt || Date.now() - existing.createdAt >= 24 * 60 * 60_000)) })
     if (existing) await this.pinMenu(message?.message_id)
     this.scheduleRotation()
@@ -76,7 +110,7 @@ export class ControlMenu {
   }
 
   async handleCurrentCallback(query, data) {
-    const current = this.state.controlMenuMessage()
+    const current = this.state.controlMenuMessage(this.chatId())
     if (!current || String(query.message?.chat?.id) !== String(current.chatId) || Number(query.message?.message_id) !== Number(current.messageId)) {
       await this.answer(query, t("controlMenu.stale"), true)
       return true
@@ -224,6 +258,13 @@ export class ControlMenu {
       await this.editMenuUnlocked("voice-advanced", query.from)
       return
     }
+    if (action.startsWith("subscribe:")) {
+      if (!this.notificationConfigured(query.from.id)) return this.answer(query, t("controlMenu.personal.notificationsUnavailable"), true)
+      await this.state.setChatNotificationsFor(this.chatId(), query.from.id, action.endsWith(":1"))
+      await this.answer(query, t("controlMenu.saved"))
+      await this.editMenuUnlocked("personal", query.from)
+      return
+    }
     if (action.startsWith("notify:")) {
       await this.setNotifications(query, action.endsWith(":1"))
       return
@@ -331,7 +372,7 @@ export class ControlMenu {
 
   async ensureMenuUnlocked(page = "home", actor, { replace = false } = {}) {
     this.rememberPage(page, actor)
-    const existing = this.state.controlMenuMessage()
+    const existing = this.state.controlMenuMessage(this.chatId())
     if (!replace && existing && String(existing.chatId) === String(this.chatId())) {
       const rendered = await this.render(page, actor)
       try {
@@ -372,7 +413,7 @@ export class ControlMenu {
 
   async editMenuUnlocked(page, actor, snapshot, options) {
     this.rememberPage(page, actor)
-    const current = this.state.controlMenuMessage()
+    const current = this.state.controlMenuMessage(this.chatId())
     if (!current) return this.ensureMenuUnlocked(page, actor)
     const rendered = await this.render(page, actor, snapshot, options)
     if (this.currentPage !== page || this.currentActor !== (actor || null)) return null
@@ -433,7 +474,7 @@ export class ControlMenu {
     const L = (ru, en) => localText(ru, en, getLanguage())
     const text = `<h2>✦ OpenCodeBot</h2>` + menuTable([
       [L("В работе", "Running"), String(busy)], [L("В очереди", "Queued"), String(queued)],
-      [L("Ответов сегодня", "Answers today"), String(this.state.answersToday())],
+      [L("Ответов сегодня", "Answers today"), String(this.state.answersToday(Date.now(), this.chatId()))],
     ].map(([label, value]) => [label, `<b>${value}</b>`])) + `<p>${this.serverSummary()}</p>` + this.answerStatsPeriod()
     return this.view(text, [
       [{ ...this.callback(L("+ Новая тема", "+ New topic"), "new"), style: "primary" }],
@@ -578,19 +619,21 @@ export class ControlMenu {
     const userId = Number(actor?.id)
     const configured = this.notificationConfigured(userId)
     const notifications = configured && this.state.finalNotificationsEnabledFor(userId)
+    const subscribed = configured && this.state.notificationUserIdsForChat(this.chatId(), [userId]).length > 0
     const contextTurns = this.state.contextTurnsForUser(userId, 3)
     const actorName = escapeHtml(actorLabel(actor))
     const notificationState = configured ? this.stateLabel(notifications) : t("controlMenu.unavailable")
-    return this.view([
-      t("controlMenu.personal.title", { user: actorName }),
-      t("controlMenu.scope.personal"),
-      "",
-      t("controlMenu.personal.notifications", { value: notificationState }),
-      t("controlMenu.personal.context", { value: contextTurns }),
-      "",
-      t("controlMenu.personal.hint"),
-    ].join("\n"), [
-      configured ? [this.callback(notifications ? t("controlMenu.button.disableNotifications") : t("controlMenu.button.enableNotifications"), `notify:${notifications ? 0 : 1}`)] : [],
+    const L = (ru, en) => localText(ru, en, getLanguage())
+    return this.view(`<h2>👤 ${L("Личные настройки", "Personal settings")}</h2><p><b>${actorName}</b> · ${L("выбор относится только к тебе", "these choices affect only you")}</p>`
+      + menuTable([
+        [L("События этой мастерской", "This workshop's events"), `<b>${this.stateLabel(subscribed)}</b>`],
+        [L("Финальные уведомления", "Final notifications"), `<b>${notificationState}</b>`],
+        [L("Глубина /context", "/context depth"), `<b>${contextTurns}</b>`],
+      ])
+      + `<p>${L("Подписка включает финалы, вопросы и ошибки этой мастерской. Можно подписаться на несколько чатов.", "A subscription includes this workshop's finals, questions and failures. You can subscribe to several chats.")}</p>`
+      + `<p>${L("Финальные уведомления включаются отдельно для всех выбранных мастерских. Числа ниже задают глубину /context во всех чатах.", "The final-notification switch applies across subscribed workshops. The numbers below set /context depth across all chats.")}</p>`, [
+      configured ? [this.callback(localText(subscribed ? "Не получать события этой мастерской" : "Получать события этой мастерской", subscribed ? "Unsubscribe from this workshop" : "Subscribe to this workshop", getLanguage()), `subscribe:${subscribed ? 0 : 1}`)] : [],
+      configured ? [this.callback(L(notifications ? "Выключить финальные уведомления" : "Включить финальные уведомления", notifications ? "Disable final notifications" : "Enable final notifications"), `notify:${notifications ? 0 : 1}`)] : [],
       ...rows(Array.from({ length: 10 }, (_, index) => {
         const value = index + 1
         return this.callback(`${value === contextTurns ? "✓ " : ""}${value}`, `context:${value}`)
@@ -603,7 +646,7 @@ export class ControlMenu {
     const mirrorEnabled = this.state.mirrorEnabled(this.config)
     const mode = this.state.mirrorMode()
     const language = getLanguage()
-    const sounds = this.state.soundsTopic()
+    const sounds = this.state.soundsTopic(this.chatId())
     const modeLabel = mode === "economy" ? t("controlMenu.system.modeEconomy") : t("controlMenu.system.modeFull")
     return this.view([
       t("controlMenu.system.title"),
@@ -767,7 +810,7 @@ export class ControlMenu {
 
   scheduleRotation() {
     clearTimeout(this.rotationTimer)
-    const createdAt = this.state.controlMenuMessage()?.createdAt || Date.now()
+    const createdAt = this.state.controlMenuMessage(this.chatId())?.createdAt || Date.now()
     this.rotationTimer = setTimeout(() => {
       this.ensureMenu("home", null, { replace: true }).catch((error) => {
         logErrorEvent("control_menu.rotation_failed", error)
@@ -805,7 +848,7 @@ export class ControlMenu {
   }
 
   chatId() {
-    return this.state.chatId || this.config.telegram.chatId
+    return this.targetChatId || this.state.chatId || this.config.telegram.chatId
   }
 
   isGeneralMessage(message) {

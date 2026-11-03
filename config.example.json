@@ -7,6 +7,7 @@
   },
   "telegram": {
     "chatId": null,
+    "chatIds": [],
     "allowChatBootstrap": true,
     "allowedUserIds": { "env": "OPENCODEBOT_ALLOWED_USER_IDS" },
     "token": { "env": "OPENCODEBOT_TOKEN" },
@@ -73,7 +74,8 @@
   },
   "finalNotifications": {
     "enabled": true,
-    "userIds": []
+    "userIds": [],
+    "chatUserIds": {}
   },
   "artifacts": {
     "enabled": false,

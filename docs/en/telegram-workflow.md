@@ -4,6 +4,8 @@
 
 Use General to create topics, choose profiles and change settings. Use a working topic to talk to the agent. Each topic follows one active OpenCodez session; the session and its history remain in OpenCodez.
 
+With several [workshops](config-runtime.md#workshops), creation uses the invoking chat and replies stay in that topic. Every allowed operator can continue the same session; writing in another workshop does not move or duplicate it. FILES, AUDIO and Recent topics belong to the current workshop. Profile edits and global settings are shared.
+
 ## Topics
 
 `/new` opens the topic wizard in an ordinary chat card. It shows a concrete profile, provider/model, reasoning, server and directory before creation. The default title is a historical or evocative Russian noun with random capitalization; **Another word**, **Title** and **Settings → Random topic names** control naming. The first ordinary prompt creates the backend session. The launch snapshot stays the one shown at creation, even if its named profile changes before that prompt.
@@ -121,6 +123,8 @@ Pending questions are recovered by the existing 15-second reconcile loop and aft
 ## Final notifications
 
 Open the private bot chat once. Final DMs are per-user and can be disabled; `/notify_on`, `/notify_off` and `/notify_status` affect only their caller. Blocking questions and run-failure alerts still arrive. A final DM is sent only after a concrete Telegram final-message ID exists, with recipient-specific durable dedupe. Historical restart catch-up does not backfill DMs.
+
+General → Settings → Notifications and context separately chooses whether this workshop's events reach you. This subscription applies to finals, blocking questions and failures; you may subscribe to multiple workshops. Another operator's subscription is unaffected. The final-DM switch controls only finals across your subscribed workshops.
 
 The DM links to the exact answer and shows the current topic name/icon, logical-turn duration, actual model/reasoning, aggregate input/output/cache tokens, quoted original request, a completed task list when available, and compact tool/patched-file counts. It does not repeat the answer. Child-session usage is excluded. `/debug_on` adds global timing/TPS/tool diagnostics; `/debug_off` removes them. TPS measures end-to-end model-step throughput after known tool intervals, not peak streaming speed.
 

@@ -12,7 +12,7 @@ export const OpencodebotArtifactsPlugin = async (_input, options = {}) => ({
   id: "opencodebot.artifacts",
   tool: {
     opencodebot_send_artifact: {
-      description: `Send a local artifact to the configured opencodebot Telegram artifacts topic.
+       description: `Send a local artifact to FILES in this session's opencodebot Telegram workshop (or the default workshop for an unbound session).
 
 Use this only when the user explicitly asks to send, upload, share, or forward something to Telegram/TG/opencodebot artifacts. The tool reads file paths locally on the host where this OpenCodez process is running, then streams file bytes to the central opencodebot gateway. It does not need or receive the Telegram bot token.`,
       args: {
@@ -40,7 +40,7 @@ Use this only when the user explicitly asks to send, upload, share, or forward s
           mode,
           caption,
           captionPaths: filePaths,
-          source: sourceMetadata(context),
+          source: sourceMetadata(context, options),
         }
         const responses = []
         if (args.text && (!filePaths.length || mode !== "text")) {
@@ -180,9 +180,11 @@ function contentTypeForPath(filePath) {
   }[ext] || "application/octet-stream"
 }
 
-function sourceMetadata(context) {
+function sourceMetadata(context, options) {
   return {
     host: os.hostname(),
+    sessionID: context?.sessionID,
+    serverID: options.serverID || process.env.OPENCODEBOT_SERVER_ID || undefined,
     directory: context?.directory,
     worktree: context?.worktree,
   }

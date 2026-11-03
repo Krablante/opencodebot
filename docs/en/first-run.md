@@ -1,5 +1,7 @@
 # First run and upgrades
 
+For several forum groups, register each [workshop](config-runtime.md#workshops) in private configuration and run `/setup` in each one. One bot process serves them all; it preserves the existing group's sessions and destinations.
+
 [English](first-run.md) · [Русский](../ru/first-run.md)
 
 Have a running OpenCodez server, Node 22+, a BotFather token and your numeric Telegram user ID ready. Run `npm run setup` in the checkout. The installer asks for the server URL, optional password, home directory and artifact gateway URL, then writes private configuration, generates the artifact token, and prepares local writable paths and Compose mounts. Existing files and server entries are preserved. A gateway URL must be reachable from the OpenCodez host; it is not necessarily the bot container's address.

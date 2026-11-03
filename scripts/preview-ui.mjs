@@ -22,6 +22,8 @@ const opencode = new OpenCodeClient(config)
 const settings = new UserSettings({ config, state, opencode })
 await settings.initialize()
 state.data.telegram.chatId = -1001000000000
+config.finalNotifications.userIds = [42]
+await state.configureChats(config)
 state.data.answerStats = { startedAt: Date.now() - 24 * 60 * 60_000, answers: Array.from({ length: 12 }, (_, i) => ({ key: `local:preview:answer-${i}`, at: Date.now() })) }
 await state.initializeAnswerStats(config.ui.timeZone)
 const queue = { status: () => [], isBusy: () => false }
@@ -46,6 +48,7 @@ for (const language of ["ru", "en"]) {
   configureI18n({ state, defaultLanguage: language })
   const home = menu.renderHome({ failedServers: new Set(), statuses: new Map() })
   const settingsView = menu.renderSettings()
+  const personal = menu.renderPersonal({ id: 42, first_name: language === "ru" ? "Участник" : "Operator" })
   state.data.telegram.chatId = -1001000000000
   state.data.bindings = (language === "ru"
     ? ["Обновление проекта", "Проверка сохранения контекста после автоматической компакции", "Фотографии и карта мест", "Исправление интерфейса", "Подготовка следующего релиза", "Планирование задач", "Старая тема"]
@@ -59,7 +62,7 @@ for (const language of ["ru", "en"]) {
   const servers = await launch.render({ ...draft, page: "servers" })
   const modelDraft = { ...draft, page: "models", editing: true, catalog, query: "", profile: config.promptProfiles.sol }
   const models = await launch.render(modelDraft)
-  for (const [name, html] of [["home", richView(home.text, home.replyMarkup)], ["settings", richView(settingsView.text, settingsView.replyMarkup)], ["recent", richView(recent.text, recent.replyMarkup)], ["new", topic], ["created", created], ["input", input], ["servers", servers], ["models", models]]) await fs.writeFile(path.join(output, `${name}-${language}.html`), shell(`${name === "home" ? "<style>main>table td:first-child{width:68%}main>table td:last-child{text-align:right}</style>" : ""}<main>${html}</main>`))
+  for (const [name, html] of [["home", richView(home.text, home.replyMarkup)], ["settings", richView(settingsView.text, settingsView.replyMarkup)], ["personal", richView(personal.text, personal.replyMarkup)], ["recent", richView(recent.text, recent.replyMarkup)], ["new", topic], ["created", created], ["input", input], ["servers", servers], ["models", models]]) await fs.writeFile(path.join(output, `${name}-${language}.html`), shell(`${name === "home" ? "<style>main>table td:first-child{width:68%}main>table td:last-child{text-align:right}</style>" : ""}<main>${html}</main>`))
   const questionCard = { requestID: "que_preview", status: "pending", revision: 1,
     questions: language === "ru" ? [
       { header: "Жест", question: "Под «тапами для движения» ты имеешь в виду протяжку пальцем по самому холсту или нажатия на кнопки?", options: [
@@ -85,18 +88,18 @@ for (const language of ["ru", "en"]) {
   await fs.writeFile(path.join(output, `guide-${language}.html`), shell(guide))
   // Render the real /session handler for its distinct user-facing states.
   const snapshot = structuredClone(state.data)
-  state.data.telegram.artifactsTopic = { chatId: state.chatId, topicId: 200, title: "FILES" }
-  state.data.telegram.soundsTopic = { chatId: state.chatId, topicId: 201, title: "AUDIO" }
+  state.chatRecord().artifactsTopic = { chatId: state.chatId, topicId: 200, title: "FILES" }
+  state.chatRecord().soundsTopic = { chatId: state.chatId, topicId: 201, title: "AUDIO" }
   const binding = { ...state.data.bindings[0], topicTitle: language === "ru" ? "Обновление проекта (local)" : "Project update (local)",
     sessionID: "ses_0123456789abcdefghijklmnopq", directory: "/home/operator/project", promptProfileName: "sol", promptProfile: config.promptProfiles.sol }
   for (const scenario of ["active", "pending", "disabled", "offline", "deleted", "files", "audio", "empty", "unknown-name"]) {
     state.data.bindings = [{ ...binding, disabled: ["pending", "disabled", "files", "audio"].includes(scenario),
       disabledReason: scenario === "disabled" ? "Telegram topic closed" : "topic-reset", topicId: scenario === "files" ? 200 : scenario === "audio" ? 201 : 100 }]
     if (!state.data.bindings[0].disabled) delete state.data.bindings[0].disabledReason
-    state.data.pendingTopics = scenario === "pending" ? { 100: { ...binding, sessionID: undefined } } : {}
+    state.data.pendingTopics = scenario === "pending" ? { [`${state.chatId}:100`]: { ...binding, sessionID: undefined } } : {}
     const targetTopicId = scenario === "files" ? 200 : scenario === "audio" ? 201 : scenario === "empty" ? 0 : 100
-    const knownFilesName = state.data.telegram.artifactsTopic.title
-    if (scenario === "unknown-name") state.data.telegram.artifactsTopic.title = null
+    const knownFilesName = state.chatRecord().artifactsTopic.title
+    if (scenario === "unknown-name") state.chatRecord().artifactsTopic.title = null
     const handlers = createTelegramCommandHandlers({ config, state, promptQueue: queue, multipartPrompts: { flushKey: async () => {} },
       opencode: {
         getSession: async () => {
@@ -112,7 +115,7 @@ for (const language of ["ru", "en"]) {
       } },
     })
     await handlers.handle({ chat: { id: state.chatId }, message_thread_id: targetTopicId, message_id: 42 }, { name: "session", args: "" })
-    state.data.telegram.artifactsTopic.title = knownFilesName
+    state.chatRecord().artifactsTopic.title = knownFilesName
   }
   state.data = snapshot
 }

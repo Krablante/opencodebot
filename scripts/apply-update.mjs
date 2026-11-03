@@ -63,6 +63,12 @@ async function main() {
     if (baseHasInbox !== targetHasInbox) {
       throw new Error("Telegram inbox migration requires manual deployment; automatic rollback cannot cross this storage boundary")
     }
+    const baseState = await capture("git", ["show", `${request.baseSha}:src/state.mjs`])
+    const targetState = await capture("git", ["show", `${request.targetSha}:src/state.mjs`])
+    const schema = (source) => Number(/export const STATE_SCHEMA_VERSION = (\d+)/.exec(source)?.[1] || 1)
+    if (schema(baseState) !== schema(targetState)) {
+      throw new Error("State schema migration requires manual deployment with a stopped-bot backup; automatic rollback cannot cross this storage boundary")
+    }
 
     const head = (await capture("git", ["rev-parse", "HEAD"])).trim()
     if (head !== request.targetSha) await run("git", ["merge", "--ff-only", request.targetSha])

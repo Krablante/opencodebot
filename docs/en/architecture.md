@@ -20,6 +20,7 @@ The [source map](development.md#source-map) identifies the owners. These are the
 - Reconcile and live recovery share per-session operation lanes. Duplicate fallback requests coalesce; primary events wait behind an active recovery rather than disappearing.
 - Rendering receives only identified main-session text/tool parts. Reasoning and unknown text deltas cannot enter Telegram. Hidden child sessions and exact normalized `opencode-see delegate` sessions stay private.
 - Preferences become Telegram-owned after one import. Installation configuration remains the owner of credentials, endpoints, mounts and provider limits.
+- One poller and one SSE per server serve every configured workshop. Pending launches use `chatId:topicId` keys; bindings remain unique by server/session and carry their chat/topic destination. `telegram.chats` stores each chat's panel, FILES/AUDIO, setup and notification subscriptions. General instances have independent navigation while reusing the transport, backend requester, settings and launch controller. Web discovery uses only the default chat for unbound sessions.
 
 The artifact gateway is an optional listener inside this process. The agent plugin reads a file on its own host and streams bytes with a separate token; gateway JSON never authorizes filesystem reads. Incoming FILES uploads use local mounts or SSH independently. Transcription and final voice call external providers; the bot image contains no inference runtime.
 

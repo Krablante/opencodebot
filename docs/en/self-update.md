@@ -1,5 +1,7 @@
 # Updates
 
+The upgrade to workshop state schema 2 requires manual deployment with a stopped-bot backup. The host runner blocks automatic updates across state-schema versions, because image rollback cannot reverse a state migration. Later updates within the same schema keep the normal update flow.
+
 [English](self-update.md) · [Русский](../ru/self-update.md) · [All languages](../README.md)
 
 The ordinary update path is `git pull --ff-only` and `npm run deploy:bot`. Optional Telegram approval automates the same bot-only rollout through a fixed Linux host runner. It never deploys or restarts OpenCodez, installed plugins or skills.

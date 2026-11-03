@@ -4,6 +4,8 @@
 
 OpenCodeBot turns Telegram forum topics into conversations with your OpenCodez agent. Create topics and profiles in General, send prompts and files from your phone, answer blocking questions, and receive progress and final replies. OpenCodez keeps execution, history and the web workspace.
 
+One bot can serve several forum groups as separate workshops. Each has its own General, topics, FILES, AUDIO and notification subscriptions; operators and launch profiles are shared. [Configure workshops](docs/en/config-runtime.md#workshops).
+
 🇬🇧 [English](README.md) · 🇷🇺 [Русский](README.ru.md) · 📚 [Documentation and languages](docs/README.md) · [Releases](https://github.com/Krablante/opencodebot/releases) · [MIT license](LICENSE)
 
 💬 **Session topics** · 🧰 **Compact progress** · 🎙️ **Optional voice** · 📎 **Artifact delivery**

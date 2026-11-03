@@ -3,6 +3,8 @@ import path from "node:path"
 
 import { isIgnoredSessionTitle } from "./internal-sessions.mjs"
 
+export const STATE_SCHEMA_VERSION = 2
+
 const MIRRORED_SESSION_BUCKET_LIMIT = 250
 const MAX_PROMPT_ORIGINS = 5_000
 // Arrays remain the storage format; indexes follow each retained array's lifetime.
@@ -27,7 +29,7 @@ export class StateStore {
     this.deferredDirty = false
   }
 
-  async load({ promptProfiles = {} } = {}) {
+  async load({ promptProfiles = {}, chatId } = {}) {
     try {
       const text = await fs.readFile(this.filePath, "utf8")
       this.data = { ...defaultState(), ...JSON.parse(text) }
@@ -47,10 +49,10 @@ export class StateStore {
       this.data.questionMessages ||= []
       this.data.seenSessions ||= []
       this.data.telegram ||= {}
+      this.data.telegram.chatId ??= chatId
       this.data.telegram.mirrorMode = normalizeMirrorMode(this.data.telegram.mirrorMode)
       this.data.telegram.contextTurnsByUser = normalizeContextTurnsByUser(this.data.telegram.contextTurnsByUser)
-      this.data.telegram.artifactsTopic ||= null
-      this.data.telegram.soundsTopic ||= null
+      const migratedChats = migrateTelegramChats(this.data)
       this.data.runtime ||= {}
       this.data.updates = normalizeUpdatesState(this.data.updates)
       await this.loadMirrorMarkerJournal()
@@ -59,7 +61,7 @@ export class StateStore {
       const reconciledTopicMetadata = reconcileTopicMetadata(this.data)
       const pruned = pruneState(this.data)
       await this.compactMirrorMarkerJournal()
-      if (removedMissingBindings || removedIgnoredRecords.total || reconciledTopicMetadata || pruned) await this.save()
+      if (migratedChats || removedMissingBindings || removedIgnoredRecords.total || reconciledTopicMetadata || pruned) await this.save()
       if (removedMissingBindings) console.info(`[opencodebot] removed ${removedMissingBindings} legacy missing-session binding${removedMissingBindings === 1 ? "" : "s"}`)
       if (removedIgnoredRecords.total) {
         console.info(`[opencodebot] removed ${removedIgnoredRecords.bindings} ignored-session binding${removedIgnoredRecords.bindings === 1 ? "" : "s"} and ${removedIgnoredRecords.pendingTopics} pending topic${removedIgnoredRecords.pendingTopics === 1 ? "" : "s"}`)
@@ -191,7 +193,51 @@ export class StateStore {
   }
 
   get chatId() {
-    return this.data.telegram.chatId ?? null
+    return this.data.telegram.chatId ?? Object.values(this.data.telegram.chats || {})[0]?.chatId ?? null
+  }
+
+  chatIds() {
+    return this.configuredChatIds?.length ? [...this.configuredChatIds] : [...new Set([this.chatId].filter(Boolean))]
+  }
+
+  hasChat(chatId) {
+    return this.chatIds().some((id) => String(id) === String(chatId))
+  }
+
+  chatRecord(chatId = this.chatId) {
+    return this.data.telegram.chats?.[String(chatId)] || (String(chatId) === String(this.chatId) ? this.data.telegram : {})
+  }
+
+  async patchChat(chatId, patch) {
+    return this.update((data) => Object.assign(telegramChat(data, chatId), patch))
+  }
+
+  async configureChats(config) {
+    this.configuredChatIds = [...new Set([config.telegram.chatId, ...(config.telegram.chatIds || [])].filter(Boolean))]
+    await this.update((data) => {
+      data.telegram.chatId = config.telegram.chatId || this.chatId
+      migrateTelegramChats(data)
+      for (const chatId of this.chatIds()) {
+        const chat = telegramChat(data, chatId)
+        chat.notificationUserIds ??= (config.finalNotifications.chatUserIds?.[String(chatId)]
+          || (String(chatId) === String(this.chatId) ? config.finalNotifications.userIds : [])).map(String)
+      }
+    })
+  }
+
+  notificationUserIdsForChat(chatId, configuredUserIds) {
+    const subscribed = this.chatRecord(chatId).notificationUserIds
+    return configuredUserIds.filter((userId) => !subscribed || subscribed.includes(String(userId)))
+  }
+
+  async setChatNotificationsFor(chatId, userId, enabled) {
+    return this.update((data) => {
+      const chat = telegramChat(data, chatId)
+      const users = new Set((chat.notificationUserIds || []).map(String))
+      if (enabled) users.add(String(userId))
+      else users.delete(String(userId))
+      chat.notificationUserIds = [...users]
+    })
   }
 
   // Telegram runtime and artifact target.
@@ -215,29 +261,29 @@ export class StateStore {
     this.answerKeys = new Set(stats.answers.map((answer) => answer.key))
     this.answerCounts = new Map()
     for (const answer of stats.answers) {
-      const day = this.answerDay(answer.at)
+      const day = `${answer.chatId ?? this.chatId}:${this.answerDay(answer.at)}`
       this.answerCounts.set(day, (this.answerCounts.get(day) || 0) + 1)
     }
     this.answerPruneDay = this.answerDay(now)
   }
 
   async recordDeliveredAnswer(binding, assistantMessageID, now = Date.now()) {
-    if (!assistantMessageID || String(binding.chatId) !== String(this.chatId)) return false
+    if (!assistantMessageID || !this.hasChat(binding.chatId)) return false
     const key = `${binding.serverID}:${binding.sessionID}:${assistantMessageID}`
     if (this.answerKeys.has(key)) return false
     return this.update((data) => {
-      const day = this.answerDay(now)
-      if (this.answerPruneDay !== day) this.rebuildAnswerStats(now)
+      if (this.answerPruneDay !== this.answerDay(now)) this.rebuildAnswerStats(now)
+      const day = `${binding.chatId}:${this.answerDay(now)}`
       if (this.answerKeys.has(key)) return false
-      data.answerStats.answers.push({ key, at: now })
+      data.answerStats.answers.push({ key, chatId: binding.chatId, at: now })
       this.answerKeys.add(key)
       this.answerCounts.set(day, (this.answerCounts.get(day) || 0) + 1)
       return true
     })
   }
 
-  answersToday(now = Date.now()) {
-    return this.answerDayFormatter ? this.answerCounts.get(this.answerDay(now)) || 0 : 0
+  answersToday(now = Date.now(), chatId = this.chatId) {
+    return this.answerDayFormatter ? this.answerCounts.get(`${chatId}:${this.answerDay(now)}`) || 0 : 0
   }
 
   nextAnswerDayAt(now = Date.now()) {
@@ -253,19 +299,20 @@ export class StateStore {
     return right
   }
 
-  artifactsTopic() {
-    return this.data.telegram.artifactsTopic || null
+  artifactsTopic(chatId = this.chatId) {
+    return this.chatRecord(chatId).artifactsTopic || null
   }
 
   isArtifactsTopic(chatId, topicId) {
-    const topic = this.artifactsTopic()
+    const topic = this.artifactsTopic(chatId)
     return Boolean(topic && String(topic.chatId) === String(chatId) && Number(topic.topicId || 0) === Number(topicId || 0))
   }
 
   async setArtifactsTopic({ chatId, topicId, title, setBy }) {
     return this.update((data) => {
       const now = new Date().toISOString()
-      data.telegram.artifactsTopic = {
+      const chat = telegramChat(data, chatId)
+      chat.artifactsTopic = {
         chatId,
         topicId,
         title: title || null,
@@ -277,13 +324,13 @@ export class StateStore {
         binding.disabledReason = "artifacts-topic"
         binding.disabledAt = now
       }
-      delete data.pendingTopics[String(topicId ?? 0)]
-      return data.telegram.artifactsTopic
+      delete data.pendingTopics[topicKey(chatId, topicId)]
+      return chat.artifactsTopic
     })
   }
 
-  soundsTopic() {
-    return this.data.telegram.soundsTopic || null
+  soundsTopic(chatId = this.chatId) {
+    return this.chatRecord(chatId).soundsTopic || null
   }
 
   speechModelId(defaultModelId = "") {
@@ -298,22 +345,22 @@ export class StateStore {
     return selected
   }
 
-  soundsMenuMessageId() {
-    return this.data.telegram.soundsMenuMessageId || null
+  soundsMenuMessageId(chatId = this.chatId) {
+    return this.chatRecord(chatId).soundsMenuMessageId || null
   }
 
-  async setSoundsMenuMessageId(messageId) {
+  async setSoundsMenuMessageId(messageId, chatId = this.chatId) {
     await this.update((data) => {
-      data.telegram.soundsMenuMessageId = messageId || null
+      telegramChat(data, chatId).soundsMenuMessageId = messageId || null
     })
     return messageId || null
   }
 
-  controlMenuMessage() {
-    const menu = this.data.telegram.controlMenu
+  controlMenuMessage(chatId = this.chatId) {
+    const menu = this.chatRecord(chatId).controlMenu
     if (!menu?.messageId) return null
     return {
-      chatId: menu.chatId ?? this.chatId,
+      chatId: menu.chatId ?? chatId,
       messageId: Number(menu.messageId),
       createdAt: menu.createdAt,
     }
@@ -321,43 +368,46 @@ export class StateStore {
 
   async setControlMenuMessage({ chatId, messageId, createdAt = Date.now() } = {}) {
     return this.update((data) => {
-      data.telegram.controlMenu = messageId ? { chatId, messageId: Number(messageId), createdAt } : null
-      return data.telegram.controlMenu
+      const chat = telegramChat(data, chatId)
+      chat.controlMenu = messageId ? { chatId, messageId: Number(messageId), createdAt } : null
+      return chat.controlMenu
     })
   }
 
   isSoundsTopic(chatId, topicId) {
-    const topic = this.soundsTopic()
+    const topic = this.soundsTopic(chatId)
     return Boolean(topic && String(topic.chatId) === String(chatId) && Number(topic.topicId || 0) === Number(topicId || 0))
   }
 
   async setSoundsTopic({ chatId, topicId, title, setBy }) {
     return this.update((data) => {
       const now = new Date().toISOString()
-      data.telegram.soundsTopic = {
+      const chat = telegramChat(data, chatId)
+      chat.soundsTopic = {
         chatId,
         topicId,
         title: title || null,
         setBy,
         setAt: now,
       }
-      data.telegram.soundsMenuMessageId = null
+      chat.soundsMenuMessageId = null
       for (const binding of data.bindings.filter((item) => String(item.chatId) === String(chatId) && Number(item.topicId || 0) === Number(topicId || 0))) {
         binding.disabled = true
         binding.disabledReason = "sounds-topic"
         binding.disabledAt = now
       }
-      delete data.pendingTopics[String(topicId ?? 0)]
-      return data.telegram.soundsTopic
+      delete data.pendingTopics[topicKey(chatId, topicId)]
+      return chat.soundsTopic
     })
   }
 
   async clearSoundsTopic(chatId, topicId) {
     return this.update((data) => {
-      const topic = data.telegram.soundsTopic
+      const chat = telegramChat(data, chatId)
+      const topic = chat.soundsTopic
       if (!topic || String(topic.chatId) !== String(chatId) || Number(topic.topicId || 0) !== Number(topicId || 0)) return false
-      data.telegram.soundsTopic = null
-      data.telegram.soundsMenuMessageId = null
+      chat.soundsTopic = null
+      chat.soundsMenuMessageId = null
       return true
     })
   }
@@ -365,11 +415,12 @@ export class StateStore {
   // Topic/session bindings and reconcile windows.
 
   findBinding(serverID, sessionID) {
-    return this.data.bindings.find((binding) => !binding.disabled && binding.serverID === serverID && binding.sessionID === sessionID)
+    const binding = this.data.bindings.find((binding) => !binding.disabled && binding.serverID === serverID && binding.sessionID === sessionID)
+    return binding && (!this.configuredChatIds?.length || this.hasChat(binding.chatId)) ? binding : undefined
   }
 
   bindings() {
-    return this.data.bindings.filter((binding) => !binding.disabled)
+    return this.data.bindings.filter((binding) => !binding.disabled && (!this.configuredChatIds?.length || this.hasChat(binding.chatId)))
   }
 
   findBindingByTopic(chatId, topicId) {
@@ -384,13 +435,14 @@ export class StateStore {
     return canonicalTopicRecord(this.data, chatId, topicId)
   }
 
-  pendingTopic(topicId) {
-    return this.data.pendingTopics[String(topicId ?? 0)]
+  pendingTopic(topicId, chatId = this.chatId) {
+    return this.data.pendingTopics[topicKey(chatId, topicId)]
   }
 
   async setChatId(chatId) {
     return this.update((data) => {
       data.telegram.chatId = chatId
+      telegramChat(data, chatId)
     })
   }
 
@@ -459,7 +511,7 @@ export class StateStore {
       }
       if (existing >= 0) data.bindings[existing] = { ...data.bindings[existing], ...normalized }
       else data.bindings.push(normalized)
-      delete data.pendingTopics[String(binding.topicId ?? 0)]
+      delete data.pendingTopics[topicKey(binding.chatId, binding.topicId)]
     })
   }
 
@@ -533,7 +585,7 @@ export class StateStore {
   async updateTopicMetadata(chatId, targetTopicId, metadata = {}) {
     return this.update((data) => {
       const records = [...topicRecords(data, chatId, targetTopicId),
-        ...[data.telegram.artifactsTopic, data.telegram.soundsTopic].filter((topic) => topic && topicMatches(topic, chatId, targetTopicId))]
+        ...[telegramChat(data, chatId).artifactsTopic, telegramChat(data, chatId).soundsTopic].filter((topic) => topic && topicMatches(topic, chatId, targetTopicId))]
       if (!records.length) return false
       return applyTopicMetadata(records, metadata, { includeTitle: true })
     })
@@ -566,8 +618,8 @@ export class StateStore {
 
   async addPendingTopic(topicId, pending) {
     return this.update((data) => {
-      const record = { createdAt: new Date().toISOString(), ...pending }
-      data.pendingTopics[String(topicId ?? 0)] = record
+      const record = { createdAt: new Date().toISOString(), chatId: this.chatId, ...pending, topicId }
+      data.pendingTopics[topicKey(record.chatId, topicId)] = record
       applyTopicMetadata(topicRecords(data, record.chatId, topicId), record, { includeTitle: true })
     })
   }
@@ -587,6 +639,7 @@ export class StateStore {
       const topicBaseTitle = profile?.topicBaseTitle || current.topicBaseTitle || current.topicTitle || current.title || "New session"
       const pending = compactObject({
         chatId: current.chatId,
+        topicId: current.topicId,
         topicTitle,
         topicBaseTitle,
         topicServerSuffixManaged: profile?.topicServerSuffixManaged === true,
@@ -600,15 +653,15 @@ export class StateStore {
         promptProfile: profile?.promptProfile || current.promptProfile,
         createdAt: now,
       })
-      data.pendingTopics[String(current.topicId ?? 0)] = pending
+      data.pendingTopics[topicKey(current.chatId, current.topicId)] = pending
       applyTopicMetadata(topicRecords(data, current.chatId, current.topicId), pending, { includeTitle: true, now })
       return { binding: { ...current }, pending: { ...pending } }
     })
   }
 
-  async updatePendingTopicProfile(topicId, profile) {
+  async updatePendingTopicProfile(topicId, profile, chatId = this.chatId) {
     return this.update((data) => {
-      const pending = data.pendingTopics[String(topicId ?? 0)]
+      const pending = data.pendingTopics[topicKey(chatId, topicId)]
       if (!pending) return null
       if (Object.hasOwn(profile, "promptProfileName")) pending.promptProfileName = profile.promptProfileName
       if (Object.hasOwn(profile, "promptProfile")) pending.promptProfile = profile.promptProfile
@@ -629,9 +682,9 @@ export class StateStore {
     })
   }
 
-  async removePendingTopic(topicId) {
+  async removePendingTopic(topicId, chatId = this.chatId) {
     return this.update((data) => {
-      delete data.pendingTopics[String(topicId ?? 0)]
+      delete data.pendingTopics[topicKey(chatId, topicId)]
     })
   }
 
@@ -959,8 +1012,7 @@ export class StateStore {
         binding.disabledReason = reason
         binding.disabledAt = now
       }
-      const pending = data.pendingTopics[String(topicId)]
-      if (pending && String(pending.chatId || data.telegram.chatId) === String(chatId)) delete data.pendingTopics[String(topicId)]
+      delete data.pendingTopics[topicKey(chatId, topicId)]
       return bindings
     })
   }
@@ -1005,9 +1057,9 @@ export function promptHash(text) {
 
 function defaultState() {
   return {
-    version: 1,
+    version: STATE_SCHEMA_VERSION,
     ui: {},
-    telegram: { mirrorMode: "economy", contextTurnsByUser: {}, artifactsTopic: null, soundsTopic: null, controlMenu: null },
+    telegram: { mirrorMode: "economy", contextTurnsByUser: {}, chats: {} },
     bindings: [],
     pendingTopics: {},
     pendingPrompts: [],
@@ -1056,6 +1108,52 @@ function normalizeContextTurnsByUser(value) {
 
 function sessionKey(serverID, sessionID) {
   return `${serverID}:${sessionID}`
+}
+
+function topicKey(chatId, topicId) {
+  return `${chatId}:${Number(topicId ?? 0)}`
+}
+
+function telegramChat(data, chatId) {
+  data.telegram.chats ||= {}
+  return data.telegram.chats[String(chatId)] ||= { chatId }
+}
+
+function migrateTelegramChats(data) {
+  let changed = data.version !== STATE_SCHEMA_VERSION
+  data.version = STATE_SCHEMA_VERSION
+  if (data.telegram.chatId) {
+    const chat = telegramChat(data, data.telegram.chatId)
+    for (const field of ["artifactsTopic", "soundsTopic", "soundsMenuMessageId", "controlMenu"]) {
+      if (!Object.hasOwn(data.telegram, field)) continue
+      chat[field] ??= data.telegram[field]
+      delete data.telegram[field]
+      changed = true
+    }
+    if (data.preferences) {
+      for (const field of ["setupComplete", "setupMenu"]) {
+        if (!Object.hasOwn(data.preferences, field)) continue
+        chat[field] ??= data.preferences[field]
+        delete data.preferences[field]
+        changed = true
+      }
+    }
+    for (const answer of data.answerStats?.answers || []) {
+      if (answer.chatId != null) continue
+      answer.chatId = data.telegram.chatId
+      changed = true
+    }
+  }
+  for (const [key, pending] of Object.entries(data.pendingTopics)) {
+    if (key.includes(":")) continue
+    pending.chatId ??= data.telegram.chatId
+    if (!pending.chatId) throw new Error("A legacy pending topic has no Telegram chat; restore the configured default chat before migration")
+    pending.topicId = Number(key)
+    data.pendingTopics[topicKey(pending.chatId, pending.topicId)] = pending
+    delete data.pendingTopics[key]
+    changed = true
+  }
+  return changed
 }
 
 function finalNotificationKey(userID, serverID, sessionID, assistantMessageID) {
@@ -1177,22 +1275,24 @@ function removeBindingState(data, binding, { createPending = false, promptProfil
   const serverID = String(binding.serverID)
   const sessionID = String(binding.sessionID)
   const mirrorKey = sessionMirrorKey(serverID, sessionID)
-  const topicKey = String(binding.topicId ?? 0)
+  const pendingKey = topicKey(binding.chatId, binding.topicId)
   const activeReplacement = data.bindings.some((item) => (
     item !== binding
     && !item.disabled
     && topicMatches(item, binding.chatId, binding.topicId)
   ))
-  const specialTopic = [data.telegram?.artifactsTopic, data.telegram?.soundsTopic].some((topic) => topicMatches(topic, binding.chatId, binding.topicId))
+  const chat = telegramChat(data, binding.chatId)
+  const specialTopic = [chat.artifactsTopic, chat.soundsTopic].some((topic) => topicMatches(topic, binding.chatId, binding.topicId))
   let pendingCreated = false
 
-  if (createPending && !activeReplacement && !specialTopic && !data.pendingTopics?.[topicKey]) {
+  if (createPending && !activeReplacement && !specialTopic && !data.pendingTopics?.[pendingKey]) {
     const fallbackProfile = compactObject({ agent: binding.agent, model: binding.model })
     const nextProfile = promptProfile || binding.promptProfile || (Object.keys(fallbackProfile).length ? fallbackProfile : undefined)
     const now = new Date().toISOString()
     data.pendingTopics ||= {}
-    data.pendingTopics[topicKey] = compactObject({
+    data.pendingTopics[pendingKey] = compactObject({
       chatId: binding.chatId,
+      topicId: binding.topicId,
       topicTitle: binding.topicTitle || binding.title,
       topicBaseTitle: binding.topicBaseTitle || binding.title,
       topicServerSuffixManaged: binding.topicServerSuffixManaged === true,
@@ -1280,7 +1380,7 @@ function findLatestBindingByTopic(bindings, chatId, topicId, { activeOnly = fals
 
 function topicRecords(data, chatId, topicId) {
   const records = data.bindings.filter((binding) => topicMatches(binding, chatId, topicId))
-  const pending = data.pendingTopics?.[String(topicId ?? 0)]
+  const pending = data.pendingTopics?.[topicKey(chatId, topicId)]
   if (pending && String(pending.chatId) === String(chatId)) records.push(pending)
   return records
 }
@@ -1317,7 +1417,7 @@ function latestTitleRecord(records) {
 function canonicalTopicRecord(data, chatId, topicId) {
   const records = topicRecords(data, chatId, topicId)
   if (!records.length) return undefined
-  const pending = data.pendingTopics?.[String(topicId ?? 0)]
+  const pending = data.pendingTopics?.[topicKey(chatId, topicId)]
   const context =
     (pending && String(pending.chatId) === String(chatId) ? pending : undefined) ||
     findLatestBindingByTopic(data.bindings, chatId, topicId, { activeOnly: true }) ||
@@ -1400,8 +1500,8 @@ function reconcileTopicMetadata(data) {
     if (!groups.has(key)) groups.set(key, [])
     groups.get(key).push(binding)
   }
-  for (const [topicId, pending] of Object.entries(data.pendingTopics || {})) {
-    const key = `${String(pending.chatId ?? data.telegram?.chatId ?? "")}:${Number(topicId || 0)}`
+  for (const pending of Object.values(data.pendingTopics || {})) {
+    const key = topicKey(pending.chatId, pending.topicId)
     if (!groups.has(key)) groups.set(key, [])
     groups.get(key).push(pending)
   }

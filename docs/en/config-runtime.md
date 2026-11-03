@@ -37,7 +37,32 @@ GROQ_API_KEY=optional-transcription-key
 OPENROUTER_API_KEY=optional-transcription-key
 ```
 
-`telegram.chatId` selects the forum group. With no configured chat, `telegram.allowChatBootstrap=true` lets the first allowed group message bind it in state. For a shared installation, set the intended chat and operator IDs explicitly. Opening the bot's private chat permits notifications; explicit notification opt-outs persist.
+`telegram.chatId` selects the default forum group. `telegram.chatIds` adds explicitly allowed workshops. With neither configured, `telegram.allowChatBootstrap=true` lets the first allowed group message bind one group in state. Opening the bot's private chat permits notifications; explicit notification opt-outs persist.
+
+## Workshops
+
+Run one process with one bot token for all workshops. Add the bot as an administrator in each forum group, with topic-management, pinning and deletion rights. Register the group IDs in private configuration, restart the bot, then run `/setup` in each group. Setup creates or reuses that group's FILES and AUDIO. All allowed operators can work in every configured group.
+
+```json
+{
+  "telegram": {
+    "chatId": -1001111111111,
+    "chatIds": [-1001111111111, -1002222222222],
+    "allowChatBootstrap": false
+  },
+  "finalNotifications": {
+    "chatUserIds": { "-1001111111111": [123456789], "-1002222222222": [987654321] }
+  }
+}
+```
+
+`chatId` remains compatible with single-group installations and is included in the allowed list. Without it, the first `chatIds` entry is the default. New unbound web sessions appear only there. A bound session always stays in its original workshop, including when another operator writes or work continues in the web UI.
+
+General panels, service topics, recent-topic lists and answer counts are per chat. Profiles, the launch default, provider keys, language, mirror settings and voice settings remain shared. This organizes conversations without isolating server or filesystem access.
+
+`finalNotifications.chatUserIds` seeds each chat's personal subscriptions once. The default chat initially uses configured notification recipients; additional chats start without subscribers unless seeded. In General → Settings → Notifications and context, each operator can subscribe to this workshop's finals, questions and failures, independently of other operators. The existing final-DM switch remains personal and global; disabling it leaves subscribed question/failure alerts enabled.
+
+Existing single-chat state migrates automatically to schema 2, preserving bindings, panels, destinations, pending launches and answer counts. Back up the stopped installation before the first upgrade. Rollback to single-chat code requires restoring that backup and its matching image; older code cannot read the new pending-topic keys.
 
 Keys entered through `/setup` live in owner-only `provider-secrets.json` beside state. They override the corresponding provider credential and are filtered before inbox receipt. Include this file in private backups. [First run](first-run.md#audio) explains the Telegram input boundary.
 

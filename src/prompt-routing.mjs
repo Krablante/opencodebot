@@ -19,7 +19,7 @@ export async function bindPendingTopicSession({ state, opencode, pending, messag
   return runSingleFlight(creations, `${message.chat.id}:${topicId(message)}`, async () => {
     const existing = state.findBindingByTopic?.(message.chat.id, topicId(message))
     if (existing) return existing
-    if (state.pendingTopic && state.pendingTopic(topicId(message)) !== pending) throw new Error(t("prompt.noBinding"))
+    if (state.pendingTopic && state.pendingTopic(topicId(message), message.chat.id) !== pending) throw new Error(t("prompt.noBinding"))
     return createPendingTopicSession({ state, opencode, pending, message, text, files })
   })
 }
@@ -221,7 +221,7 @@ export function createPromptRouter({ config, state, telegram, opencode, renderer
     const rewind = resolveReplyRewind(message, binding)
     if (rewind.error) return { message, rewindError: rewind.error }
     if (binding) return { message, binding, rewind: rewind.origin ? rewind : undefined }
-    const pending = state.pendingTopic(topicId(message))
+    const pending = state.pendingTopic(topicId(message), message.chat.id)
     if (pending) return { message, pending }
     return null
   }

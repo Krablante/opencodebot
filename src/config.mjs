@@ -38,7 +38,11 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
   const allowedUserIds = uniqueNumbers(readNumberList(config.telegram?.allowedUserIds, mergedEnv))
   const openCodePassword = pickValue(mergedEnv, config.opencode?.passwordEnvNames || [])
   const artifactToken = pickValue(mergedEnv, config.artifacts?.tokenEnvNames || defaultArtifacts.tokenEnvNames) || config.artifacts?.token
-  const chatId = config.telegram?.chatId ?? readFirstNumber(mergedEnv, ["OPENCODEBOT_CHAT_ID", "TELEGRAM_CHAT_ID"])
+  const legacyChatId = config.telegram?.chatId ?? readFirstNumber(mergedEnv, ["OPENCODEBOT_CHAT_ID", "TELEGRAM_CHAT_ID"])
+  const chatIds = uniqueNumbers([legacyChatId, ...readNumberList(config.telegram?.chatIds, mergedEnv)].filter((id) => id != null))
+  if (chatIds.some((id) => !Number.isSafeInteger(id) || id >= 0)) throw new Error("telegram.chatIds must contain negative Telegram group IDs")
+  const chatId = legacyChatId == null ? chatIds[0] : Number(legacyChatId)
+  if (chatId != null && (!Number.isSafeInteger(chatId) || chatId >= 0)) throw new Error("telegram.chatId must be a negative Telegram group ID")
   const servers = readServers(serversJsonPath)
   const defaultPrompt = { ...config.defaultPrompt,
     serverID: servers.length === 1 ? servers[0].id : config.defaultPrompt?.serverID || servers[0].id }
@@ -61,6 +65,7 @@ export function loadConfig(configPath = process.env.OPENCODEBOT_CONFIG || defaul
     },
     telegram: {
       chatId,
+      chatIds,
       allowChatBootstrap: config.telegram?.allowChatBootstrap === true,
       autocreateTopics: true,
       mirrorEnabled: true,
@@ -145,6 +150,7 @@ function normalizeFinalNotifications(value = {}) {
   return {
     enabled: value.enabled !== false,
     userIds: uniqueNumbers(value.userIds || []),
+    chatUserIds: Object.fromEntries(Object.entries(value.chatUserIds || {}).map(([chatId, users]) => [chatId, uniqueNumbers(users)])),
     maxSentMarkers: defaultFinalNotifications.maxSentMarkers,
   }
 }

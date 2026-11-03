@@ -8,7 +8,7 @@ export function createRunAlerter({ config, state, telegram, logError = () => {} 
   async function notify({ binding, alertKey, kind, detail, topicMessageId, sessionUrl }) {
     if (!binding || !alertKey || !recipients.length) return 0
     let delivered = 0
-    for (const userID of recipients) {
+    for (const userID of state.notificationUserIdsForChat?.(binding.chatId, recipients) || recipients) {
       if (state.runAlertSent(userID, alertKey)) continue
       try {
         await telegram.sendMessage({

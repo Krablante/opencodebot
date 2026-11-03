@@ -35,7 +35,7 @@ export function createTopicLifecycle({ config, state, telegram, opencode, settin
       if (prior?.topicId) return { message_thread_id: prior.topicId }
     }
     const directory = requestedDirectory || opencode.defaultNewSessionDirectory(serverID)
-    const chatId = state.chatId || message.chat.id
+    const chatId = message.chat.id
     const topicIcon = await randomTopicIcon()
     const titleFields = managedTopicTitle(title, serverID, opencode.servers)
     const topic = await telegram.createForumTopic({ chatId, name: titleFields.topicTitle, iconCustomEmojiId: topicIcon?.customEmojiId })
@@ -60,7 +60,7 @@ export function createTopicLifecycle({ config, state, telegram, opencode, settin
         return true
       }
       const binding = state.findBindingByTopic(message.chat.id, topicId(message))
-      const pending = binding ? null : state.pendingTopic(topicId(message))
+      const pending = binding ? null : state.pendingTopic(topicId(message), message.chat.id)
       const record = state.topicRecord(message.chat.id, topicId(message)) || binding || pending
       if (record && metadata.title) {
         const expectedTitle = managedTopicTitle(topicBaseTitle(record), record.serverID, opencode.servers).topicTitle

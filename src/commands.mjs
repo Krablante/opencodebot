@@ -648,7 +648,7 @@ export function createTelegramCommandHandlers({
 
     const binding = state.findBindingByTopic(message.chat.id, currentTopicId)
     if (!binding) {
-      const pending = state.pendingTopic(currentTopicId)
+      const pending = state.pendingTopic(currentTopicId, message.chat.id)
       if (!pending) {
         await telegram.sendMessage({
           chatId: message.chat.id,
@@ -676,7 +676,7 @@ export function createTelegramCommandHandlers({
         title: titleFields.topicBaseTitle,
         titleSource: "user",
         ...titleFields,
-      })
+      }, message.chat.id)
       const { multipart: discardedMultipart, attachments: discardedAttachments } = await discardBufferedTopic(message, promptKey)
       const discarded = [
         discardedMultipart ? t("commands.reset.discardedMultipart") : null,
@@ -847,7 +847,7 @@ export function createTelegramCommandHandlers({
   }
 
   async function handleSoundsStatus(message) {
-    const status = speech?.status?.() || { enabled: false, configured: false, topic: null, queueDepth: 0, active: 0 }
+    const status = speech?.status?.(message.chat.id) || { enabled: false, configured: false, topic: null, queueDepth: 0, active: 0 }
     const providers = status.providers?.map((provider) => provider.configured
       ? t("commands.speech.providerConfigured", { label: escapeHtml(provider.label) })
       : t("commands.speech.providerMissing", { label: escapeHtml(provider.label), envHtml: escapeHtml(provider.apiKeyEnv) }))
@@ -971,7 +971,7 @@ export function createTelegramCommandHandlers({
       chatId: message.chat.id,
       topicId: currentTopicId,
       title: message.forum_topic_created?.name || message.reply_to_message?.forum_topic_created?.name
-        || (state.isArtifactsTopic(message.chat.id, currentTopicId) ? state.artifactsTopic().title : null)
+        || (state.isArtifactsTopic(message.chat.id, currentTopicId) ? state.artifactsTopic(message.chat.id).title : null)
         || existing?.topicTitle || null,
       setBy: message.from?.id,
     })
@@ -1000,14 +1000,14 @@ export function createTelegramCommandHandlers({
     const thisIsSoundsTopic = state.isSoundsTopic(message.chat.id, currentTopicId)
     const serviceTopic = thisIsArtifactsTopic || thisIsSoundsTopic
     const activeBinding = serviceTopic ? null : state.findBindingByTopic(message.chat.id, currentTopicId)
-    const candidate = !serviceTopic && !activeBinding ? state.pendingTopic(currentTopicId) : null
+    const candidate = !serviceTopic && !activeBinding ? state.pendingTopic(currentTopicId, message.chat.id) : null
     const pending = candidate && String(candidate.chatId) === String(message.chat.id) ? candidate : null
     const previousBinding = serviceTopic ? null : state.findAnyBindingByTopic(message.chat.id, currentTopicId)
     const storedBinding = activeBinding || (!pending ? previousBinding : null)
     const serverID = storedBinding?.serverID || pending?.serverID
     const server = serverID ? config.opencode.servers.find((item) => item.id === serverID) : null
-    const artifactsTopic = state.artifactsTopic()
-    const soundsTopic = state.soundsTopic()
+    const artifactsTopic = state.artifactsTopic(message.chat.id)
+    const soundsTopic = state.soundsTopic(message.chat.id)
     let session = null
     let sessionError = null
     let status = pending ? L("Ожидает первого запроса", "Waiting for the first prompt") : L("Нет активной сессии", "No active session")
