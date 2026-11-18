@@ -115,12 +115,14 @@ The OpenCodez URL and file-transfer destination are separate. A Linux container 
 
 | Profile | Provider/model | Reasoning |
 | --- | --- | --- |
-| `sol` | `openai/gpt-6.1-sol` | `high` |
-| `solm` | `openai/gpt-6.1-sol` | `medium` |
-| `solx` | `openai/gpt-6.1-sol` | `xhigh` |
+| `sol` | `openai/gpt-6.2-sol` | `high` |
+| `solm` | `openai/gpt-6.2-sol` | `medium` |
+| `solx` | `openai/gpt-6.2-sol` | `xhigh` |
 | `d4flash` | `deepseek/deepseek-flash` | `max` |
 
-A profile contains `agent`, `model.providerID`, `model.modelID`, optional `model.variant` and optional `opencodezSystem`. Sol's built-in System requires OpenCodez `1.18.33+opencodez.1` or newer. Provider availability and supported variants come from the selected server's catalog; a catalog entry does not prove quota or paid access.
+A profile contains `agent`, `model.providerID`, `model.modelID`, optional `model.variant` and optional `opencodezSystem`. The GPT-6.2 Sol model and built-in System ship with OpenCodez `1.18.33+opencodez.8` and later. The selected server's catalog supplies available models and reasoning levels. Account access and quota depend on the provider.
+
+On the first start after updating to OpenCodeBot 0.5.2, saved profiles that still match the old built-ins move to their successors with the same reasoning levels. This covers the Sol presets, `gpt6` and `gpt6m` (GPT-6.2 Astra), and `terra` (GPT-6.1 Terra). A matching profile in Deleted gets the new model when restored. Custom profiles and per-topic snapshots keep their saved settings.
 
 The wizard saves the displayed launch snapshot, including a topic-only reasoning override. The first prompt and a retry of unfinished setup use that snapshot even if someone edits the named profile meanwhile. Model selection updates both the OpenCodez composer and Telegram prompt payload. `/reset` resolves the current named profile, or uses the retained snapshot if that profile was deleted. To change a failed launch's settings, edit/select a profile and explicitly reset the topic.
 

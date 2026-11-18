@@ -31,12 +31,17 @@ const voice = new FinalVoiceModule({ config: config.finalVoice, state, telegram:
 const menu = new ControlMenu({ config, state, opencode, promptQueue: queue, finalVoice: voice })
 menu.serverConnections = new Map(config.opencode.servers.map((server) => [server.id, server.id === "backup" ? "unavailable" : "available"]))
 const launch = new LaunchMenu({ config, state, opencode, settings })
-const catalog = { entries: [], models: Object.values(config.promptProfiles).map((p) => ({ id: p.model.modelID, name: p.model.providerID === "openai" ? "GPT-6.1 Sol" : "DeepSeek V4.1 Flash", providerID: p.model.providerID, providerName: p.model.providerID, family: p.model.providerID === "openai" ? "Sol" : "DeepSeek", variants: p.model.providerID === "openai" ? ["medium", "high", "xhigh"] : ["low", "high", "max"] })).filter((m, i, list) => list.findIndex((other) => other.id === m.id) === i) }
+const catalog = {
+  entries: [
+    { id: "builtin:codex_gpt_6_2_sol", name: "Codex · GPT-6.2 Sol" },
+    { id: "builtin:default", name: "OpenCode" },
+  ],
+  models: [
+    { id: "gpt-6.2-sol", name: "GPT-6.2 Sol", providerID: "openai", providerName: "OpenAI", family: "Sol", variants: ["low", "medium", "high", "xhigh", "max"] },
+    { id: "deepseek-flash", name: "DeepSeek V4.1 Flash", providerID: "deepseek", providerName: "DeepSeek", family: "DeepSeek", variants: ["low", "high", "max"] },
+  ],
+}
 settings.catalog = async () => catalog
-catalog.entries = [
-  { id: "builtin:codex_gpt_6_1_sol", name: "Codex · GPT-6.1 Sol" },
-  { id: "builtin:default", name: "OpenCode" },
-]
 
 const font = await fs.readFile(process.env.OPENCODEBOT_PREVIEW_FONT || "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf").catch(() => null)
 const boldFont = await fs.readFile(process.env.OPENCODEBOT_PREVIEW_BOLD_FONT || "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf").catch(() => null)

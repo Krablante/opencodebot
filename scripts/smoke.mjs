@@ -134,7 +134,7 @@ async function smokeWorkspacePreferences() {
     const state = new StateStore(path.join(root, "state.json"))
     await state.load()
     configureI18n({ state, defaultLanguage: "en" })
-    const catalog = { entries: [{ id: "builtin:codex_gpt_6_1_sol", name: "Codex · GPT-6.1 Sol" }], models: [{ providerID: "openai", id: "gpt-6.1-sol", name: "GPT-6.1 Sol", family: "Sol", variants: ["medium", "high", "xhigh"] }] }
+    const catalog = { entries: [{ id: "builtin:codex_gpt_6_2_sol", name: "Codex · GPT-6.2 Sol" }], models: [{ providerID: "openai", id: "gpt-6.2-sol", name: "GPT-6.2 Sol", family: "Sol", variants: ["low", "medium", "high", "xhigh", "max"] }] }
     const backend = { server: () => ({}), request: async () => catalog, defaultNewSessionDirectory: () => "/workspace" }
     const settings = new UserSettings({ config: c, state, opencode: backend })
     await settings.initialize()
@@ -174,16 +174,16 @@ async function smokeWorkspacePreferences() {
       deleteMessage: async () => {}, request: async () => {},
     }
     const launch = new LaunchMenu({ config: c, state, opencode: backend, settings, telegram, createSession: async (_message, value) => {
-      assert.equal(value.promptProfile.model.modelID, "gpt-6.1-sol")
-      assert.equal(value.promptProfile.opencodezSystem, "builtin:codex_gpt_6_1_sol")
+      assert.equal(value.promptProfile.model.modelID, "gpt-6.2-sol")
+      assert.equal(value.promptProfile.opencodezSystem, "builtin:codex_gpt_6_2_sol")
       return { message_thread_id: 90 }
     } })
     for (const profileName of ["sol", "solm", "solx"]) {
       const preview = { serverID: "local", directory: "C:\\Users\\Example User", profileName }
       await launch.prepareLaunch(preview)
       assert.equal(preview.launchReady, true, "Shipped short System names resolve against the real builtin catalog shape")
-      assert.equal(preview.launchProfile.opencodezSystem, "builtin:codex_gpt_6_1_sol")
-      assert.equal(settings.data.profiles[profileName].opencodezSystem, "codex_gpt_6_1_sol", "Preparing a launch preserves the saved profile")
+      assert.equal(preview.launchProfile.opencodezSystem, "builtin:codex_gpt_6_2_sol")
+      assert.equal(settings.data.profiles[profileName].opencodezSystem, "codex_gpt_6_2_sol", "Preparing a launch preserves the saved profile")
     }
     const draft = await launch.open({ from: { id: 42 }, message: { chat: { id: -1001 } } }, "profiles")
     const count = messages.length
@@ -243,6 +243,9 @@ async function smokeWorkspacePreferences() {
     const migrated = new UserSettings({ config: oldConfig, state: old, opencode: backend })
     await migrated.initialize()
     assert.ok(migrated.data.profiles.luna)
+    assert.equal(migrated.data.profiles.solmax.model.modelID, "gpt-6.2-sol")
+    assert.equal(migrated.data.profiles.gpt6.model.modelID, "gpt-6.2-astra")
+    assert.equal(migrated.data.profiles.terra.model.modelID, "gpt-6.1-terra")
     assert.equal(old.data.bindings[0].promptProfile.model.modelID, "gpt-6-luna")
     await migrated.deleteProfile("luna")
     await migrated.initialize()

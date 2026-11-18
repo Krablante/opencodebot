@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { withRequestTimeout } from "./request-timeout.mjs"
 import { randomBytes } from "node:crypto"
+import { importFormerPromptProfiles, upgradeBuiltInPromptProfiles } from "./config/prompt-profiles.mjs"
 
 // Telegram owns preferences after the one-time import. Configuration stays an installation seed.
 export class UserSettings {
@@ -16,13 +17,20 @@ export class UserSettings {
   async initialize() {
     if (!this.state.data.preferences) {
       const existing = Boolean(this.state.data.bindings?.length || this.state.controlMenuMessage())
-      const profiles = { ...(existing ? migratedDefaults() : {}), ...this.config.promptProfiles }
+      const profiles = { ...(existing ? importFormerPromptProfiles() : {}), ...this.config.promptProfiles }
       const defaultName = Object.entries(profiles).find(([, p]) => JSON.stringify(p.model) === JSON.stringify(this.config.defaultPrompt.model))?.[0]
       await this.state.update((data) => {
-        data.preferences = { version: 1, profiles, deletedProfiles: {}, defaultProfile: defaultName || (existing ? null : "sol"), defaultLaunch: structuredClone(this.config.defaultPrompt), recentProfiles: [] }
+        data.preferences = { version: 2, profiles, deletedProfiles: {}, defaultProfile: defaultName || (existing ? null : "sol"), defaultLaunch: structuredClone(this.config.defaultPrompt), recentProfiles: [] }
         for (const binding of data.bindings || []) {
           if (binding.promptProfileName && !binding.promptProfile) binding.promptProfile = structuredClone(profiles[binding.promptProfileName] || { agent: binding.agent, model: binding.model })
         }
+      })
+    } else if (this.data.version === 1) {
+      await this.state.update((data) => {
+        const preferences = data.preferences
+        upgradeBuiltInPromptProfiles(preferences.profiles)
+        upgradeBuiltInPromptProfiles(preferences.deletedProfiles)
+        preferences.version = 2
       })
     }
     this.apply()
@@ -182,16 +190,5 @@ export class UserSettings {
       this.config.speech.models.push({ id: "groq/whisper-large-v3-turbo", apiProvider: "groq", apiModel: "whisper-large-v3-turbo",
         label: "Whisper Large V3 Turbo", provider: "Groq", language: inherited.language ?? null, temperature: inherited.temperature ?? 0, responseFormat: inherited.responseFormat || "json", prompt: inherited.prompt || "" })
     }
-  }
-}
-
-function migratedDefaults() {
-  const model = (id, variant, system) => ({ agent: "build", model: { providerID: "openai", modelID: id, variant }, opencodezSystem: system })
-  return {
-    d4pro: { agent: "build", model: { providerID: "deepseek", modelID: "deepseek-v4-pro", variant: "max" }, opencodezSystem: "default" },
-    luna: model("gpt-6-luna", "xhigh", "codex_gpt_6_luna"), lunah: model("gpt-6-luna", "high", "codex_gpt_6_luna"), lunamax: model("gpt-6-luna", "max", "codex_gpt_6_luna"),
-    terra: model("gpt-5.6-terra", "xhigh", "codex_gpt_5_6_luna_terra"),
-    gpt6: model("gpt-6-astra", "high", "codex_gpt_6_astra"), gpt6m: model("gpt-6-astra", "medium", "codex_gpt_6_astra"),
-    solh: model("gpt-6.1-sol", "high", "codex_gpt_6_1_sol"), solmax: model("gpt-6.1-sol", "max", "codex_gpt_6_1_sol"),
   }
 }

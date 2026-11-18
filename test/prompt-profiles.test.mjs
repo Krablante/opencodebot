@@ -1,22 +1,22 @@
 import assert from "node:assert/strict"
+import { mkdtemp, rm } from "node:fs/promises"
 import { createServer } from "node:http"
+import { tmpdir } from "node:os"
+import path from "node:path"
 import test from "node:test"
 
 import { applyPromptProfile, parseNewTopicArgs, parseResetArgs, parseResetProfileArg } from "../src/prompt-profiles.mjs"
 import { normalizePromptProfiles } from "../src/config/prompt-profiles.mjs"
 import { OpenCodeClient, profileFromMessages } from "../src/opencode.mjs"
 import { LaunchMenu } from "../src/launch-menu.mjs"
+import { StateStore } from "../src/state.mjs"
 import { baseTitleFromTelegramTitle, managedTopicTitle } from "../src/topic-titles.mjs"
+import { UserSettings } from "../src/user-settings.mjs"
 
 test("built-in prompt profiles use current models, variants, and System prompts", () => {
   const profiles = normalizePromptProfiles()
 
   assert.deepEqual(Object.keys(profiles).sort(), ["d4flash", "sol", "solm", "solx"])
-  assert.deepEqual(profiles.sol, {
-    agent: "build",
-    model: { providerID: "openai", modelID: "gpt-6.1-sol", variant: "high" },
-    opencodezSystem: "codex_gpt_6_1_sol",
-  })
   assert.deepEqual(profiles.d4flash, {
     agent: "build",
     model: { providerID: "deepseek", modelID: "deepseek-flash", variant: "max" },
@@ -25,8 +25,8 @@ test("built-in prompt profiles use current models, variants, and System prompts"
   for (const [name, variant] of [["solm", "medium"], ["sol", "high"], ["solx", "xhigh"]]) {
     assert.deepEqual(profiles[name], {
       agent: "build",
-      model: { providerID: "openai", modelID: "gpt-6.1-sol", variant },
-      opencodezSystem: "codex_gpt_6_1_sol",
+      model: { providerID: "openai", modelID: "gpt-6.2-sol", variant },
+      opencodezSystem: "codex_gpt_6_2_sol",
     })
   }
   assert.deepEqual(profileFromMessages([{ info: { role: "user", agent: "build", model: profiles.sol.model } }]), {
@@ -35,12 +35,64 @@ test("built-in prompt profiles use current models, variants, and System prompts"
   })
 })
 
+test("startup upgrades saved built-ins once and preserves custom profiles and topic snapshots", async (context) => {
+  const dir = await mkdtemp(path.join(tmpdir(), "opencodebot-profiles-"))
+  context.after(() => rm(dir, { recursive: true, force: true }))
+  const filePath = path.join(dir, "state.json")
+  const state = new StateStore(filePath)
+  await state.load()
+  const previous = (modelID, variant, opencodezSystem) => ({ agent: "build", model: { providerID: "openai", modelID, variant }, opencodezSystem })
+  const sol = previous("gpt-6.1-sol", "high", "codex_gpt_6_1_sol")
+  const solm = previous("gpt-6.1-sol", "medium", "file:my-sol")
+  const solx = previous("gpt-6.1-sol", "low", "codex_gpt_6_1_sol")
+  await state.update((data) => {
+    data.preferences = {
+      version: 1,
+      profiles: { sol, solm, solx, copy: sol, gpt6m: previous("gpt-6-astra", "medium", "codex_gpt_6_astra") },
+      deletedProfiles: {
+        solmax: previous("gpt-6.1-sol", "max", "builtin:codex_gpt_6_1_sol"),
+        terra: previous("gpt-5.6-terra", "xhigh", "codex_gpt_5_6_luna_terra"),
+      },
+      defaultProfile: "sol",
+      defaultLaunch: { agent: "build" },
+      recentProfiles: ["solx", "sol"],
+    }
+  })
+  await state.bindTopic({ chatId: -1001, topicId: 12, serverID: "local", sessionID: "ses_test", promptProfileName: "sol", promptProfile: sol })
+  await state.addPendingTopic(13, { chatId: -1001, serverID: "local", promptProfileName: "sol", promptProfile: sol })
+  const start = async () => {
+    const loaded = new StateStore(filePath)
+    await loaded.load()
+    const config = { promptProfiles: normalizePromptProfiles(), defaultPrompt: { serverID: "local" }, artifacts: {}, finalNotifications: { userIds: [1] } }
+    const settings = new UserSettings({ config, state: loaded })
+    await settings.initialize()
+    return settings
+  }
+  const settings = await start()
+  assert.deepEqual(settings.data.profiles.sol, normalizePromptProfiles().sol)
+  assert.equal(settings.config.defaultPrompt.model.modelID, "gpt-6.2-sol")
+  assert.deepEqual(settings.data.profiles.gpt6m, previous("gpt-6.2-astra", "medium", "codex_gpt_6_2_astra"))
+  assert.deepEqual(settings.data.profiles.solm, solm)
+  assert.deepEqual(settings.data.profiles.solx, solx)
+  assert.deepEqual(settings.data.profiles.copy, sol)
+  assert.deepEqual(settings.data.recentProfiles, ["solx", "sol"])
+  assert.deepEqual(settings.state.data.bindings[0].promptProfile, sol)
+  assert.deepEqual(settings.state.pendingTopic(13, -1001).promptProfile, sol)
+  assert.deepEqual(settings.data.deletedProfiles.terra, previous("gpt-6.1-terra", "xhigh", "codex_gpt_6_1_terra"))
+  assert.equal(settings.data.profiles.solmax, undefined)
+  await settings.restoreProfile("solmax")
+  assert.deepEqual(settings.data.profiles.solmax, previous("gpt-6.2-sol", "max", "builtin:codex_gpt_6_2_sol"))
+
+  await settings.saveProfile("sol", sol, "sol")
+  assert.deepEqual((await start()).data.profiles.sol, sol)
+})
+
 test("launch System names resolve to catalog IDs while missing prompts remain blocked", async () => {
   const profiles = normalizePromptProfiles()
   const catalog = {
-    models: [{ providerID: "openai", id: "gpt-6.1-sol", variants: ["medium", "high", "xhigh"] }],
+    models: [{ providerID: "openai", id: "gpt-6.2-sol", variants: ["low", "medium", "high", "xhigh", "max"] }],
     entries: [
-      { id: "builtin:codex_gpt_6_1_sol", name: "Codex · GPT-6.1 Sol" },
+      { id: "builtin:codex_gpt_6_2_sol", name: "Codex · GPT-6.2 Sol" },
       { id: "builtin:review", name: "Builtin review" },
       { id: "file:review", name: "My review" },
       { id: "saved:review", name: "Saved review" },
@@ -48,8 +100,8 @@ test("launch System names resolve to catalog IDs while missing prompts remain bl
   }
   const menu = new LaunchMenu({ settings: { catalog: async () => catalog } })
   for (const [name, expected] of [
-    ["codex_gpt_6_1_sol", "builtin:codex_gpt_6_1_sol"],
-    ["builtin:codex_gpt_6_1_sol", "builtin:codex_gpt_6_1_sol"],
+    ["codex_gpt_6_2_sol", "builtin:codex_gpt_6_2_sol"],
+    ["builtin:codex_gpt_6_2_sol", "builtin:codex_gpt_6_2_sol"],
     ["review", "file:review"],
     ["builtin:review", "builtin:review"],
     ["saved:review", "saved:review"],
@@ -84,7 +136,7 @@ test("/new resolves a profile and preserves an unknown token as title text", asy
   }, "nuc", "ses_test", parsed.promptProfile)
   assert.deepEqual(calls, [
     ["model", "nuc", "ses_test", profiles.sol.model, {}],
-    ["system", "nuc", "ses_test", "codex_gpt_6_1_sol", {}],
+    ["system", "nuc", "ses_test", "codex_gpt_6_2_sol", {}],
   ])
   assert.equal(parseNewTopicArgs("nuc custom-token old-chat", options).title, "custom-token old-chat")
 })
@@ -144,11 +196,11 @@ test("OpenCodez System selection sends the current minimal payload", async (cont
 
   const address = server.address()
   const client = new OpenCodeClient({ opencode: { servers: [{ id: "test", url: `http://127.0.0.1:${address.port}` }], password: "test" } })
-  await client.selectSystemPrompt("test", "ses_test", "codex_gpt_6_1_sol")
+  await client.selectSystemPrompt("test", "ses_test", "codex_gpt_6_2_sol")
 
   assert.deepEqual(received, {
     method: "POST",
     url: "/opencodez/prompts/select",
-    body: { sessionID: "ses_test", name: "codex_gpt_6_1_sol" },
+    body: { sessionID: "ses_test", name: "codex_gpt_6_2_sol" },
   })
 })
